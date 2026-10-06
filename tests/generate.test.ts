@@ -114,6 +114,14 @@ test('a retry that returns good art is used', async () => {
   expect(system.species.find(s => s.id === 'sys1:f0')!.isProcedural).toBe(false)
 })
 
+test('the retry names what was wrong with each sprite', async () => {
+  const fauna = Array.from({ length: FAUNA }, (_, i) => species(i, GENERATION.faunaStages, i === 0 ? BAD_ART : ART))
+  const model = fakeModel([{ ok: true, text: reply({ fauna }) }, { ok: true, text: '{"species": []}' }])
+  await run(model.complete)
+  expect(model.prompts[1]!.prompt).toContain('stage 1: expected 7 rows, got 1')
+  expect(model.prompts[1]!.prompt).toContain('row 1 is 10 wide, expected 14')
+})
+
 test('banned, non-ASCII and overlong names are replaced', async () => {
   const fauna = Array.from({ length: FAUNA }, (_, i) => species(i, GENERATION.faunaStages))
   fauna[0] = { ...fauna[0]!, name: 'Starfleet Hound' }

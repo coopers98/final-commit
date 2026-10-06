@@ -138,8 +138,8 @@ When an epic is charted, **one** `$.model.complete` call generates the full ecos
 ### 5.2 Art validation
 
 1. Each sprite is a fixed **14 x 7** grid of monospace-safe characters.
-2. Validator checks dimensions, character width (no wide or ambiguous-width glyphs), and non-empty silhouette.
-3. On failure: retry that species up to 2 times; then fall back to a procedurally assembled sprite from a parts library.
+2. Validator checks dimensions, character width (no wide or ambiguous-width glyphs), and a silhouette of at least 5 non-space cells (a first-stage hatchling is often drawn that small).
+3. On failure: retry that species up to 2 times, telling the model what was wrong with each sprite; then fall back to a procedurally assembled sprite from a parts library.
 4. Each sprite declares anchors: `head`, `neck`, `hand`, `orbit`. Attachments render on top at these anchors in code.
 
 ### 5.3 Privacy filter

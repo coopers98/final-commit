@@ -46,6 +46,14 @@ test('an empty silhouette fails', async () => {
   expect(validateSprite(Array(7).fill(' '.repeat(14))).ok).toBe(false)
 })
 
+test('a small first-stage hatchling passes; fewer cells than the minimum fail', async () => {
+  const blank = ' '.repeat(14)
+  const hatchling = [blank, blank, '     v        ', '    (o>       ', '     ^^       ', blank, blank]
+  expect(validateSprite(hatchling)).toEqual({ ok: true })
+  const speck = [blank, blank, '    (o>       ', blank, blank, blank, blank]
+  expect(validateSprite(speck)).toEqual({ ok: false, errors: ['silhouette is empty or too sparse'] })
+})
+
 test('non-array input fails without throwing', async () => {
   for (const bad of [null, undefined, 'abc', 42, [1, 2, 3], {}]) expect(validateSprite(bad).ok).toBe(false)
 })

@@ -26,13 +26,15 @@ const SYSTEM_PROMPT = [
   '- Never use anything from the Star Trek franchise (ships, organizations, species, characters, devices) in any name or text: no Enterprise, Starfleet, Tricorder, Holodeck, Warp Core, Klingon, Vulcan, Romulan, Borg, Gorn, Tribble.',
   '- Never name anything after Anthropic or Claude.',
   `- Every sprite is exactly ${SPRITE.rows} strings of exactly ${SPRITE.cols} characters, printable ASCII only (no tabs, no Unicode, no box-drawing characters). Pad with spaces.`,
+  `- Every sprite, a first-stage hatchling included, has at least ${SPRITE.minSilhouetteCells} non-space characters.`,
   `- Anchors are {x, y} cells inside the sprite: x 0 to ${SPRITE.cols - 1}, y 0 to ${SPRITE.rows - 1}.`,
   `- Names are one or two plain ASCII words, at most ${GENERATION.maxNameLength} characters.`,
 ].join('\n')
 
 const ART_RETRY_PROMPT = [
   'You redraw ASCII sprites for a terminal game. Reply with one JSON object and nothing else.',
-  `Each sprite is exactly ${SPRITE.rows} strings of exactly ${SPRITE.cols} characters, printable ASCII only, padded with spaces.`,
+  `Each sprite is exactly ${SPRITE.rows} strings of exactly ${SPRITE.cols} characters, printable ASCII only, padded with spaces, with at least ${SPRITE.minSilhouetteCells} non-space characters.`,
+  'Each creature lists what was wrong with its last drawing: fix those problems.',
 ].join('\n')
 
 const count = (slots: Record<Tier, number>) => TIERS.reduce((n, t) => n + slots[t], 0)
@@ -98,19 +100,25 @@ function cleanText(v: unknown, fallback: string): string {
   return isBanned(s) ? fallback : s
 }
 
-function stagesFrom(v: unknown, expected: number): Sprite[] | undefined {
-  if (!Array.isArray(v) || v.length !== expected) return undefined
-  if (!v.every(rows => validateSprite(rows).ok)) return undefined
-  return v.map(rows => ({ rows: rows as string[] }))
+/** The stages when every sprite passes; otherwise what was wrong, for the retry to fix. */
+function stagesFrom(v: unknown, expected: number): { stages: Sprite[] } | { problems: string[] } {
+  if (!Array.isArray(v)) return { problems: ['stages missing'] }
+  if (v.length !== expected) return { problems: [`expected ${expected} stages, got ${v.length}`] }
+  const problems = v.flatMap((rows, i) => {
+    const check = validateSprite(rows)
+    return check.ok ? [] : check.errors.map(err => `stage ${i + 1}: ${err}`)
+  })
+  return problems.length > 0 ? { problems } : { stages: v.map(rows => ({ rows: rows as string[] })) }
 }
 
-type Draft = { species: Species; needsArt: boolean }
+type Draft = { species: Species; needsArt: boolean; problems: string[] }
 
 function draftSpecies(raw: unknown, id: string, kind: 'fauna' | 'flora', tier: Tier, rng: Rng): Draft {
   const item = isObject(raw) ? raw : {}
   const expected = kind === 'fauna' ? GENERATION.faunaStages : GENERATION.floraStages
   const { name, replaced } = cleanName(item.name, rng)
-  const stages = stagesFrom(item.stages, expected)
+  const art = stagesFrom(item.stages, expected)
+  const stages = 'stages' in art ? art.stages : undefined
   const anchors = validateAnchors(item.anchors).ok ? (item.anchors as Anchors) : DEFAULT_ANCHORS
   const species: Species = {
     id, kind, tier, name,
@@ -120,7 +128,7 @@ function draftSpecies(raw: unknown, id: string, kind: 'fauna' | 'flora', tier: T
     anchors,
     isProcedural: replaced && stages === undefined,
   }
-  return { species, needsArt: stages === undefined }
+  return { species, needsArt: stages === undefined, problems: 'problems' in art ? art.problems : [] }
 }
 
 function proceduralSystemName(rng: Rng): string {
@@ -167,6 +175,7 @@ export async function generateSystem(args: {
       name: d.species.name,
       description: d.species.readout,
       stages: d.species.kind === 'fauna' ? GENERATION.faunaStages : GENERATION.floraStages,
+      problems: d.problems,
     }))
     const retry = await complete({
       system: ART_RETRY_PROMPT,
@@ -180,11 +189,11 @@ export async function generateSystem(args: {
       const draft = failing.find(d => d.species.id === item.id)
       if (!draft) continue
       const expected = draft.species.kind === 'fauna' ? GENERATION.faunaStages : GENERATION.floraStages
-      const stages = stagesFrom(item.stages, expected)
-      if (stages) {
-        draft.species = { ...draft.species, stages }
+      const art = stagesFrom(item.stages, expected)
+      if ('stages' in art) {
+        draft.species = { ...draft.species, stages: art.stages }
         draft.needsArt = false
-      }
+      } else draft.problems = art.problems
     }
   }
 

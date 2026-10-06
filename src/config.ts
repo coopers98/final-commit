@@ -68,8 +68,8 @@ export const CELLS: Record<Cell, { bonus: number; label: string }> = {
 // SPEC 7.1
 export const CONTAINMENT_CAP = 0.98
 
-// SPEC 5.2
-export const SPRITE = { cols: 14, rows: 7, maxArtRetries: 2, minSilhouetteCells: 8 } as const
+// SPEC 5.2. A first-stage hatchling is often drawn in 5 to 7 cells: the minimum admits it.
+export const SPRITE = { cols: 14, rows: 7, maxArtRetries: 2, minSilhouetteCells: 5 } as const
 
 // SPEC 7.3 (shape), DEFAULT (numbers)
 export type LatticeTwist = 'none' | 'shift' | 'reverse' | 'break' | 'flicker'
