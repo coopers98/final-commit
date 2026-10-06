@@ -8,19 +8,22 @@ import type { On } from 'claude-code'
 const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const SEED = '42'
 
-type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[] }
+type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[] }
 
 function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string> } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
-  const w: World = { clock, commands: [], toasts: [], status: [], prompts: [] }
+  const w: World = { clock, commands: [], toasts: [], status: [], prompts: [], opened: [] }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => {
     w.commands.push(e.name)
     return { value: { command: e.name } }
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_$, e) => {
+    w.opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', (_$, e) => {
     w.toasts.push(e.text)
@@ -348,4 +351,67 @@ test('the Bash observer reads a piped run\'s summary from the tool output', asyn
   await run($, 'mission', 'NOVA-2')
   await $.tool.call({ tool: 'Bash', command: 'npm test 2>&1 | tail -5' } as never)
   expect((await run($, 'mission', 'complete')).text).toContain('Reinforced Cells +1')
+})
+
+test('a finished mission shows a report that stays until dismissed, and Enter goes to containment', async ($, on) => {
+  const w = world(on)
+  const opened = w.opened
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await run($, 'mission', 'complete')
+  expect(opened.at(-1)).toBe('fc-report')
+  const ui = await $.ui.mount(PANE('fc-report'))
+  await w.clock.advance(60_000)
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('Mission NOVA-2 complete')
+  expect(texts).toContain('Encounter!')
+  expect(texts.join(' ')).toContain('Enter: contain now')
+  await ui.input({ key: 'report', text: '', kind: 'submit' })
+  expect(opened.at(-1)).toBe('fc-lattice')
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['Nothing to report.'])
+  await ui.unmount()
+})
+
+test('leaving the report keeps the encounter waiting', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await run($, 'mission', 'complete')
+  const ui = await $.ui.mount(PANE('fc-report'))
+  await ui.unmount()
+  expect((await run($, 'contain')).text).toBe('Opened containment.')
+})
+
+test('a mission with no encounter says why in its report', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await run($, 'mission', 'complete') // the first mission always has one
+  await run($, 'mission', 'NOVA-3')
+  await run($, 'mission', 'complete')
+  const ui = await $.ui.mount(PANE('fc-report'))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('An encounter is already waiting: /contain.')
+  expect(texts).toContain('Enter or Esc: close')
+  await ui.unmount()
+})
+
+test('typing r on the report contains with a Reinforced Cell', async ($, on) => {
+  const w = world(on)
+  on('tool.call', () => ({ result: { stdout: ' 3 pass\n 0 fail\n' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await run($, 'mission', 'complete')
+  const ui = await $.ui.mount(PANE('fc-report'))
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Reinforced Cell (1)')
+  await ui.input({ key: 'report', text: 'r', kind: 'submit' })
+  await ui.unmount()
+  const lattice = await $.ui.mount(PANE('fc-lattice'))
+  expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('throw Reinforced Cell')
+  await lattice.unmount()
 })

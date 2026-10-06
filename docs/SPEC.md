@@ -287,6 +287,7 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 | **Band above prompt** | Active companion sprite (animated idle), mood, tiny mission indicator |
 | **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then a system being charted (`/ charting NOVA-1 42s`, a spinner and seconds), then the mission, then the system, within 22 columns (section 2, constraint 5). A charting interrupted by a hot reload is reported by a toast at the next start, never left spinning |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
+| **Report pane** | Opens on `/mission complete` and `/epic complete` and stays until dismissed (a toast vanishes before a long name is read): commits, test runs, cells earned, and the creature that turned up with its sprite. Enter goes straight to containment (`r` then Enter uses a Reinforced Cell); Esc leaves the encounter waiting. |
 | **Specimen Bay pane** (`/bay`) | Collection grid, set companion, catalog completion per system. v1: a list, and `/bay companion N` |
 | **Dossier pane** (`/dossier`) | Puzzle accuracy |
 

@@ -33,6 +33,16 @@ export type MoodState = {
   lastActivityAt: number
 }
 
+/** The report a finished mission or survey shows until dismissed. */
+export type ReportView = {
+  title: string
+  lines: string[]
+  /** The creature that turned up, if one did. */
+  encounter: { heading: string; sprite: string[] } | null
+  /** Reinforced Cells held after the mission, offered for containing from the report. */
+  reinforced: number
+}
+
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
 
@@ -50,6 +60,7 @@ declare module 'claude-code' {
       /** In session state, so it outlives a hot reload that kills the charting itself. */
       charting: ChartingEntry[]
       epicForm: EpicFormView | null
+      report: ReportView | null
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null

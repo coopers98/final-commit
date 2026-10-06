@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
-import type { BandView, ChartingEntry, LatticeView } from '../../types'
+import type { BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
 import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell } from '../config'
 import { attemptContainment } from '../game'
 import type { Rng } from '../rng'
@@ -15,6 +15,9 @@ import { advance, createLattice, latticeBonus, press, renderBar, renderLocks, ty
 // advanced on the plugin's clock and judged at the time each key arrives.
 
 export const LATTICE_PANE = 'fc-lattice'
+/** Opened by hooks/register.tsx after a mission or survey; drawn here so Enter can open containment. */
+export const REPORT_PANE = 'fc-report'
+const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
 const view = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
@@ -190,7 +193,55 @@ async function open($: EngineInterface, args: string): Promise<string> {
   return 'Opened containment.'
 }
 
+/** Enter on the report: close it, and go straight to containment when a creature is waiting. `r` picks a Reinforced Cell. */
+async function dismissReport($: EngineInterface, typed: string) {
+  const r = await read($, report)
+  // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
+  await update($, report, () => null)
+  await $.ui.close({ id: REPORT_PANE })
+  if (r?.encounter) await open($, typed.trim().toLowerCase() === 'r' ? 'reinforced' : '')
+}
+
 export function wireLattice(on: On): void {
+  on('ui.close', { id: REPORT_PANE }, async ($, e, next) => {
+    // Esc: the encounter, if any, keeps waiting for /contain.
+    await update($, report, () => null)
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: REPORT_PANE }, async ($, e) => {
+    const elements = $.ui.resolve(e)
+    const { Box, Text, Button } = elements
+    const Input = 'Input' in elements ? elements.Input : undefined
+    const r = await read($, report)
+    const width = e.props.bodyColumns
+    if (!r) return <Text dimColor>Nothing to report.</Text>
+    const hints = r.encounter
+      ? ['Enter: contain now', ...(r.reinforced > 0 ? [`r Enter: use a Reinforced Cell (${r.reinforced})`] : []), 'Esc: later']
+      : ['Enter or Esc: close']
+    // A short terminal clips from the top: the sprite first, the essentials last.
+    return (
+      <Box flexDirection="column">
+        {r.encounter?.sprite.map(row => (
+          <Text>{row}</Text>
+        ))}
+        <Text bold>{fit(r.title, width)}</Text>
+        {r.lines.map(line => (
+          <Text>{fit(line, width)}</Text>
+        ))}
+        {r.encounter && <Text bold>{fit(r.encounter.heading, width)}</Text>}
+        {hintLines(hints, width).map(line => (
+          <Text dimColor>{line}</Text>
+        ))}
+        {Input ? (
+          <Input key="report" autoFocus label="Enter" onInput={() => {}} onSubmit={(value: string) => void dismissReport($, value)} />
+        ) : (
+          <Button key="report" label={r.encounter ? 'Contain now' : 'Close'} onPress={() => void dismissReport($, '')} />
+        )}
+      </Box>
+    )
+  })
+
   on('command.run', { command: 'contain' }, async ($, e) => ({ text: await open($, e.args) }))
 
   on('ui.close', { id: LATTICE_PANE }, async ($, e, next) => {

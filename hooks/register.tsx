@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, ChartingEntry, EpicFormView } from '../types'
+import type { BandView, ChartingEntry, EpicFormView, ReportView } from '../types'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
 import { CHARTING, COMPANION, GENERATION, GIT, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash } from '../src/detect/git'
-import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission } from '../src/game'
+import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
@@ -19,8 +19,11 @@ import type { Complete } from '../src/world/generate'
 // panes, the band and the status line.
 
 export const EPIC_PANE = 'fc-epic'
+/** The report pane is drawn and dismissed in src/contain/lattice.tsx, which can open containment from it. */
+export const REPORT_PANE = 'fc-report'
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const form = atom({ plugin: 'final-commit', key: 'epicForm' } as const, null as EpicFormView | null)
+const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
@@ -113,12 +116,27 @@ async function submitForm($: EngineInterface, value: string) {
   void chart($, f.key, f.title, value.trim())
 }
 
+/**
+ * Shows an outcome: its report in a pane that stays until dismissed (a toast
+ * vanishes before a long name is read), or its toast where no pane can open.
+ */
+async function announce($: EngineInterface, out: Outcome) {
+  if (out.report) {
+    const r = out.report
+    await update($, report, () => r)
+    const placed = await $.ui.open({ id: REPORT_PANE, title: r.title, focus: true, closeOnEscape: true })
+    if (placed.isPlaced) return
+    await update($, report, () => null)
+  }
+  if (out.toast) $.ui.toast(out.toast)
+}
+
 async function epic($: EngineInterface, args: string): Promise<{ text: string }> {
   if (!(await read($, ready))) return NOT_READY
   if (args.trim().toLowerCase() === 'complete') {
     const out = await completeEpic(await deps($))
-    if (out.toast) $.ui.toast(out.toast)
     await refresh($)
+    await announce($, out)
     return { text: out.text }
   }
   const key = parseEpicKey(args)
@@ -134,8 +152,8 @@ async function mission($: EngineInterface, args: string): Promise<{ text: string
   const arg = args.trim()
   const d = await deps($)
   const out = arg.toLowerCase() === 'complete' ? await completeMission(d) : await startMission({ ...d, issueKey: arg })
-  if (out.toast) $.ui.toast(out.toast)
   await refresh($)
+  await announce($, out)
   return { text: out.text }
 }
 

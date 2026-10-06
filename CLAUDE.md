@@ -37,6 +37,8 @@ At runtime:
 
 - A `Client` gets keys only after a mouse click; take keys with a focused pane's `autoFocus` `Input` (`onInput` sees each change; a burst can arrive as one).
 - A plugin's own `$.ui.close` does not run its own `ui.close` hook: clear pane state yourself.
+- A plugin's own `$.command.run` skips that plugin's own hooks, so it cannot run its own commands: call the function directly (same file).
+- Edits made during the session's own turn reload the mod when the turn ends, not before.
 - Slash command arguments and output go into the transcript the model reads.
 - In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic.
 

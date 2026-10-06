@@ -1,4 +1,5 @@
-import { CELLS, ENCOUNTER, REWARDS, type Cell } from './config'
+import type { ReportView } from '../types'
+import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { testVerdictFromOutput, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
@@ -19,7 +20,19 @@ import { type Complete, type EpicInput, generateSystem } from './world/generate'
 // `text` is what a slash command prints. The model reads it, so it stays a
 // short factual line (CLAUDE.md rule 1). Flavor goes in `toast`.
 
-export type Outcome = { text: string; toast?: string }
+/**
+ * `report` is the pane a finished mission or survey shows until dismissed
+ * (game flavor is fine there: panes never reach the model).
+ */
+export type Outcome = { text: string; toast?: string; report?: ReportView }
+
+function encounterHeading(species: Species | undefined, pending: PendingEncounter): { heading: string; sprite: string[] } {
+  const spec = TIER_SPECS[pending.tier]
+  return {
+    heading: `${spec.glyph} ${species?.name ?? 'Something'} (${spec.label})${pending.attachment ? ` +${pending.attachment.item}` : ''}`,
+    sprite: species?.stages[0]?.rows ?? [],
+  }
+}
 /** `day` is the host-local calendar date (YYYY-MM-DD) for the daily soft cap (SPEC 4.3). */
 export type GameDeps = { repo: Repo; now: number; rng: Rng; day?: string }
 
@@ -133,8 +146,18 @@ export async function completeEpic(deps: GameDeps): Promise<Outcome> {
   if (await repo.pending()) return { text: 'An encounter is already waiting. Resolve it with /contain, then complete the epic.' }
   await repo.saveSystem({ ...system, status: 'surveyed', surveyedAt: now })
   await repo.patchMeta(m => ({ ...m, activeEpicKey: null }))
-  await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
-  return { text: `Surveyed epic ${system.epicKey}. Encounter waiting.`, toast: `System surveyed: ${system.name}. Something rare stirs. /contain` }
+  const pending = await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
+  const species = system.species.find(s => s.id === pending.speciesId)
+  return {
+    text: `Surveyed epic ${system.epicKey}. Encounter waiting.`,
+    toast: `System surveyed: ${system.name}. Something rare stirs. /contain`,
+    report: {
+      title: `System surveyed: ${system.name}`,
+      lines: [`Epic ${system.epicKey} complete.`, 'Something rare stirs.'],
+      encounter: encounterHeading(species, pending),
+      reinforced: (await repo.inventory()).reinforced,
+    },
+  }
 }
 
 export async function startMission(deps: GameDeps & { issueKey: string }): Promise<Outcome> {
@@ -181,16 +204,26 @@ export async function completeMission(deps: GameDeps): Promise<Outcome> {
 
   const hasPending = (await repo.pending()) !== undefined
   const underCap = today < ENCOUNTER.dailySoftCap
+  const reinforced = (await repo.inventory()).reinforced
+  const lines = [
+    `Commits ${done.commits} · Test runs ${done.testRuns}${done.testRuns > 0 ? (done.testsGreen ? ' · green' : ' · not green') : ''}`,
+    ...notes,
+  ]
   if (system && !hasPending && underCap && shouldEncounter(ctx, rng)) {
     const pending = await createEncounter(deps, system, quality)
     await repo.patchMeta(m => ({ ...m, encountersToday: { day, count: today + 1 } }))
-    const species = system.species.find(s => s.id === pending.speciesId)!
+    const species = system.species.find(s => s.id === pending.speciesId)
     return {
       text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''} Encounter waiting.`,
-      toast: `Encounter! ${species.name} (${pending.tier}) detected. /contain`,
+      toast: `Encounter! ${species?.name ?? 'Something'} (${pending.tier}) detected. /contain`,
+      report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), reinforced },
     }
   }
-  return { text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''}` }
+  const why = hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
+  return {
+    text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''}`,
+    report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why], encounter: null, reinforced },
+  }
 }
 
 /**
