@@ -22,7 +22,23 @@ Tests, fixtures, docs, and examples use invented projects only (issue key prefix
 
 - Played over SSH/tmux, sometimes from a phone. Design for a 40-column minimum, no mouse, no images, possibly no audio.
 - Load the `plugin-authoring` skill before writing or debugging hooks. Grep the generated `claude-code` types for exact signatures; do not guess the API.
-- Commands: `claude plugin validate .`, `tsc -p .`, `claude plugin test .`
+- Commands: `npm run types` (once per Claude Code version), `npm run typecheck`, `npm run validate`, `npm test`. Play: `claude --plugin-dir .`.
+
+## Engine rules learned the hard way (2.1.291)
+
+The validator enforces these, and the docs do not state them:
+
+- `$` reaches only top-level functions of the same file. Never pass `$` or `$.noun` across an import; a same-file adapter may return closures over `$` (see any `repoOf`). Hooks registered by a helper `wireX(on)` are fine if its return value is unused.
+- One unmatched `session.start` hook per plugin.
+- A `types` contract file exports types only (no `export {}`).
+- Surface element tables are a union: narrow with `'Input' in elements`; mobile has no `Input`.
+
+At runtime:
+
+- A `Client` gets keys only after a mouse click; take keys with a focused pane's `autoFocus` `Input` (`onInput` sees each change; a burst can arrive as one).
+- A plugin's own `$.ui.close` does not run its own `ui.close` hook: clear pane state yourself.
+- Slash command arguments and output go into the transcript the model reads.
+- In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic.
 
 ## Rules
 
@@ -35,4 +51,4 @@ Tests, fixtures, docs, and examples use invented projects only (issue key prefix
 
 ## Current phase
 
-v1: playable loop. First task: public repo guardrails (SPEC 15.6) before any game code.
+v1 "First Diffling" slice is playable (SPEC 12). Next: v2 automatic detection (Jira `WorkSource`).

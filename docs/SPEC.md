@@ -4,7 +4,7 @@
 
 A Claude Code mod that turns real development work into a sci-fi exploration game. Epics are star systems. Missions are units of work. Finishing work triggers encounters with **Difflings**, procedurally generated alien flora and fauna that you contain, collect, and raise as companions. Optional puzzles built from your own diffs boost containment odds and double as interview prep.
 
-Status: design spec, pre-v1. Repository: github.com/coopers98/final-commit (public). Last updated 2026-10-06.
+Status: v1 "First Diffling" slice implemented (section 12). Repository: github.com/coopers98/final-commit (public). Last updated 2026-10-06.
 
 Not affiliated with or endorsed by Anthropic or Paramount. Claude Code is a product of Anthropic.
 
@@ -36,13 +36,15 @@ Not affiliated with or endorsed by Anthropic or Paramount. Claude Code is a prod
 | Save data | `$.store` on the host. One save regardless of client device. |
 | Required on the host | Claude Code, `git`, `php` CLI (puzzle answer verification), Jira access (MCP connector or API token). |
 
-### Remote terminal constraints (verified against the mod API, Claude Code 2.1.289)
+### Remote terminal constraints (verified against the mod API, Claude Code 2.1.291)
 
-1. **Audio:** `$.audio.play` uses `afplay` on macOS; a Linux terminal has no player and plays nothing. On a Linux host, sounds are silent. Fallbacks: toasts, status line flashes, and (to verify) emitting a terminal bell that the client terminal maps to a sound or visual.
+1. **Audio:** `$.audio.play` uses `afplay` on macOS; a Linux terminal has no player and plays nothing. On a Linux host, sounds are silent. The mod API has no way to emit a terminal bell (checked on 2.1.291), so alerts are visual: toasts and the status line.
 2. **Latency:** keypresses travel over SSH. A LAN or mesh VPN adds a few ms; cellular adds 50 to 150 ms with jitter. The containment mini-game must calibrate for this (section 7.3).
-3. **Focus:** mouse clicks may not pass through tmux/SSH. Interactive screens open as **focused dialog panes** (`focus`, `closeOnEscape`, `holdToasts`) so they take keys without a click.
+3. **Focus:** mouse clicks may not pass through tmux/SSH. Interactive screens open from a slash command as **focused dialog panes** (`focus`, `closeOnEscape`, `holdToasts`) holding an `autoFocus` `Input`, which receives every keystroke without a click (verified in tmux at 100 and 40 columns). A `Client` element receives keys only after a mouse click, so it is never used for input. A focused pane with nothing focusable in it sends keys to the main prompt.
 4. **Images:** kitty graphics through tmux is unreliable. All art is ASCII/Unicode text.
-5. **Width:** a pane opened unprompted only seats at 144+ columns. On narrow terminals, the bridge opens via command; the band, status line, and mini-game must render at 40 columns minimum.
+5. **Width:** a pane opened unprompted only seats at 144+ columns, so every pane opens from a command. The band, status line, and mini-game render at 40 columns minimum. The engine prefixes the status line with the plugin's name (about 18 cells), so the mod's own status text is at most 22.
+6. **Height:** a short terminal clips a pane from the top. Panes put decoration first and essentials last, and the band steps aside while a game pane is open.
+7. **Transcript:** a slash command's arguments and its output text are recorded in the transcript the model reads. Commands therefore never take work text as arguments (epic text is typed into a pane) and print only short factual lines; game flavor goes in toasts, panes, the band and the status line.
 
 ---
 
@@ -93,9 +95,11 @@ Detection is automatic. Jira is the source of truth; git and session activity ar
 
 ### 4.3 Anti-farming
 
-1. A Done issue only rolls an encounter if it has **attached work**: commits on its branch or session activity tied to its key. Administrative closures count toward epic progress only.
-2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff.
-3. Soft cap of 2 encounters per calendar day (host local time, configurable).
+1. A Done issue only rolls an encounter if it has **attached work**: commits on its branch or session activity tied to its key. Administrative closures count toward epic progress only. (v2: needs Jira.)
+2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. (v2.)
+3. Soft cap of 2 encounters per calendar day (host local time, configurable). **Enforced in v1** for mission encounters; epic surveys and developer-mode encounters are exempt.
+4. **v1:** a branch only starts a mission when its key belongs to the active epic's project and that mission was never completed, so checkouts cannot pay out twice.
+5. **v1:** a test run counts as passing only when the Bash result can show the runner's exit status: piped (`| tail`), guarded (`|| true`) or backgrounded runs can clear "tests passing" but never set it. Failed commits are not counted.
 
 ### 4.4 Access options
 
@@ -108,7 +112,9 @@ The adapter is an interface (`WorkSource`) so either backend, or a future GitHub
 
 ### 4.5 Manual overrides
 
-`/epic`, `/mission`, `/mission complete` exist for testing and for work not tracked in Jira.
+`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work not tracked in Jira. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost.
+
+Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
 ---
 
@@ -139,6 +145,16 @@ When an epic is charted, **one** `$.model.complete` call generates the full ecos
 ### 5.3 Privacy filter
 
 Before any epic text or code reaches a prompt: strip string literals, fixture data, and anything matching PHI-like patterns (names, DOBs, MRNs, SSN shapes). Required for regulated codebases (healthcare, finance). On by default; opt-out only. Prompts receive structure, not data.
+
+v1 filters epic prose (`src/puzzle/privacy-filter.ts`); the code filter for puzzles (literals in code, fixtures) comes with v3. The `privacyMode` setting:
+
+| Mode | Replaces |
+|---|---|
+| `standard` | Quoted text, issue keys, URLs, emails, IPs and hostnames, phone numbers, SSN-, date- and ID-shaped values (including labelled record numbers), ages, ZIP codes, names after a title or a role word (`Dr.`, `patient`), long numbers. |
+| `strict` (default) | Everything in `standard`, plus every capitalized word not on a short allowlist of common title words and technical acronyms. |
+| `off` | Nothing. |
+
+The epic key never enters a prompt. Known limit: a lowercase name in plain prose cannot be told from an ordinary word in any mode.
 
 ### 5.4 Closed systems
 
@@ -222,9 +238,11 @@ A needle sweeps across a bar; press **Space** inside the green zone to seal a lo
 | Anomaly | 5 | Very narrow | Erratic | Zone flickers |
 
 - Each sealed lock adds containment bonus; center hits add a precision bonus.
-- **Latency calibration:** one-time `/calibrate` (press Space on a beat 8 times); measured median offset is stored per client and applied as hit-window shift. Recalibrate prompt if the client changes (detect via terminal size/env heuristics).
-- **Escape** pauses, never fails.
-- Implementation: a `Client` element in a focused dialog pane; `every(ms)` frame clock for the needle, `onKey` for input.
+- **One seal per pass:** after a seal, presses miss until the needle has left the zone, so mashing Space or holding it down cannot win. Each miss costs bonus (section 16).
+- **Latency calibration:** one-time `/calibrate` (press Space on a beat 8 times); measured median offset is stored per device and applied as hit-window shift. A device is the attached tmux client (its tty and terminal type) when under tmux, else `TERM` plus the SSH client address; it is stored only as a salted hash. Containment suggests `/calibrate` when the current device has no measurement.
+- **Escape** pauses, never fails: the encounter stays waiting and `/contain` resumes it.
+- **Enter** throws the cell early, with whatever bonus the sealed locks have earned.
+- Implementation: the model is pure (`src/contain/lattice-model.ts`) and runs in the plugin on a 40 ms `$.clock.every` timer; the focused pane's `Input` delivers Space presses (a burst of key repeats can arrive as one change), each judged at the time it arrives. Surfaces without `Input` (mobile) get Seal and Throw buttons.
 
 ---
 
@@ -266,9 +284,9 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 |---|---|
 | **Bridge pane** (`/bridge`) | Active system, current mission, hull (test pass rate), shields (lint), fuel (context remaining), crew status, captain's log tail |
 | **Band above prompt** | Active companion sprite (animated idle), mood, tiny mission indicator |
-| **Status line** | `★ NOVA-142 · Kepler-7b · 2 cells` style summary |
+| **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then the mission, then the system, within 22 columns (section 2, constraint 5) |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
-| **Specimen Bay pane** (`/bay`) | Collection grid, set companion, catalog completion per system |
+| **Specimen Bay pane** (`/bay`) | Collection grid, set companion, catalog completion per system. v1: a list, and `/bay companion N` |
 | **Dossier pane** (`/dossier`) | Puzzle accuracy |
 
 ### 9.1 Crew (subagents)
@@ -329,27 +347,29 @@ type PuzzleStat   = { category: string; attempts: number; correct: number; lastS
 ## 11. Mod structure
 
 ```
-final-commit/
-  .claude-plugin/plugin.json        name, version, description, types, userConfig
-  hooks/hooks.json                  { "modules": ["./register.tsx"] }
-  hooks/register.tsx                wires events to modules below
-  src/
-    detect/       WorkSource interface, jira-mcp.ts, jira-rest.ts, git.ts
-    world/        generate.ts (system gen), validate-art.ts, parts-library.ts
-    encounter/    roll.ts, rarity.ts, attachments.ts
-    contain/      lattice.tsx (mini-game), calibrate.tsx, resolve.ts
-    puzzle/       generate.ts, verify.ts, privacy-filter.ts, stats.ts
-    bridge/       pane.tsx, band.tsx, status.ts, alerts.ts, crew.ts
-    store/        schema.ts, migrate.ts, repo.ts
-  types/index.d.ts                  PluginState contract
-  tests/                            *.test.ts (claude plugin test)
-  assets/sounds/                    optional; macOS clients only
-docs/SPEC.md
-CLAUDE.md
+.claude-plugin/plugin.json        name, version, description, types, userConfig
+hooks/hooks.json                  { "modules": ["./register.tsx"] }
+hooks/register.tsx                core wiring: session start, /epic, /mission, /encounter, Bash observer
+types/index.d.ts                  $.state contract (views the panes and band draw)
+src/
+  config.ts                       every tuning number (section 16)
+  rng.ts, runtime.ts              seeded PRNG; pure helpers shared by wiring files
+  game.ts                         game actions over the save (pure)
+  store/                          schema.ts, repo.ts, migrate.ts
+  detect/git.ts                   branch -> issue key, Bash command signals
+  world/                          generate.ts, validate-art.ts, parts-library.ts
+  encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
+  contain/                        lattice-model.ts, calibrate-math.ts, resolve.ts (pure);
+                                  lattice.tsx, calibrate.tsx (panes)
+  puzzle/privacy-filter.ts        section 5.3
+  bridge/                         status.ts, bay.ts (pure); band.tsx, bay-pane.tsx
+tests/                            *.test.ts(x) (claude plugin test)
 ```
 
-Validate: `claude plugin validate .`  Type check: `tsc -p .`  Test: `claude plugin test .`
-Load during dev: `claude --plugin-dir <path>` or hot reload in session.
+The engine's validator only lets `$` reach top-level functions of the file that uses it, so each wiring file (`hooks/register.tsx`, `src/contain/*.tsx`, `src/bridge/*-pane.tsx`) has its own small store adapter; everything else is pure and takes plain values.
+
+Validate: `npm run validate`  Type check: `npm run types && npm run typecheck` (local only: the engine's API declarations are not redistributable, so CI has no types)  Test: `npm test`
+Load during dev: `claude --plugin-dir .`
 
 Public repository rules: see section 15.
 
@@ -358,6 +378,9 @@ Public repository rules: see section 15.
 ## 12. Roadmap
 
 ### v1: Playable loop (target: first Diffling in week one)
+
+The "First Diffling" slice is implemented: every item below except the Bridge pane, flora harvesting and Stasis/Singularity Cells (only Standard and Reinforced exist). Every behavior is covered by `claude plugin test`; containment, calibration, the band and the epic form were also played live in tmux.
+
 - Public repo guardrails in place before the first code commit (section 15.6)
 - Store schema + migrations
 - Manual `/epic`, `/mission`, `/mission complete` + git branch detection
@@ -400,15 +423,17 @@ Public repository rules: see section 15.
 | D7 | Audio on headless hosts | Assume none: visual alerts are primary |
 | D9 | License | MIT |
 | D8 | Phone play expected? | Yes: calibration required in v1 |
+| D10 | Does the first completed mission guarantee an encounter? | Decided: yes (onboarding; otherwise about 8 missions at 12%) |
+| D11 | Privacy filter default | Decided: `strict` |
 
 ---
 
 ## 14. Verify during v1
 
-1. Whether a mod can emit a terminal bell (BEL) that reaches the SSH client.
-2. Frame clock smoothness of `every(ms)` over SSH + tmux at 30 to 60 ms intervals.
-3. Focused dialog pane behavior inside tmux (keys captured without mouse).
-4. `$.store` behavior under concurrent sessions on one host (two tmux windows).
+1. Whether a mod can emit a terminal bell (BEL) that reaches the SSH client. **Answered: no API for it (2.1.291).**
+2. Frame clock smoothness of `every(ms)` over SSH + tmux at 30 to 60 ms intervals. **Answered for local tmux:** a plugin timer at 33 ms redrew a pane about 29 times a second; a `Client`'s own clock ran at about 49 ms per 40 ms tick. Not yet measured over cellular SSH.
+3. Focused dialog pane behavior inside tmux (keys captured without mouse). **Answered:** see section 2, constraint 3.
+4. `$.store` behavior under concurrent sessions on one host (two tmux windows). Open.
 
 ---
 
@@ -422,7 +447,7 @@ This repository is public from the first commit. Git history is permanent: anyth
 |---|---|---|
 | Secrets | Jira API tokens, MCP credentials, any API key | Secret `userConfig` fields (stored by Claude Code, not the repo) |
 | Work data | Real epic titles, issue keys, ticket text, code from employer or client projects | Nowhere. Tests and docs use invented projects (key prefix `NOVA-`) |
-| Regulated data | Anything PHI-like, even in a fixture or screenshot | Nowhere |
+| Regulated data | Anything PHI-like, even in a fixture or screenshot | Nowhere. The privacy filter's own tests need PHI *shapes*; they use values that are synthetic by construction (SSN 000-00-0000, 555-01xx phone numbers, example.com, names like "Testperson") |
 | Personal infrastructure | Hostnames, Tailscale names, IPs, usernames, local paths | `CLAUDE.local.md` (gitignored) |
 | Save data | `$.store` exports, debug dumps, generated systems from real epics | Gitignored `.final-commit/` directory if ever written to disk |
 | Logs | Transcripts, model prompts or responses containing work content | Gitignored or not written at all |
@@ -471,3 +496,24 @@ Users' own work flows into model prompts. The README must state plainly:
 | `.github/dependabot.yml` | Dependency updates |
 | `scripts/denylist-check.sh`, `scripts/hooks/` | Denylist check and local git hooks (section 15.2 items 2 and 3) |
 | `CLAUDE.local.md.example` | Template for machine-specific notes |
+
+---
+
+## 16. Tuning defaults (v1)
+
+The spec left these numbers open. They are the playtest defaults, approved 2026-10-06, and live in `src/config.ts` with every other tuning number.
+
+| Item | Default |
+|---|---|
+| Mission quality `q` (0 to 1) | `0.5` if tests ran and passed during the mission, plus `0.5` for a clean Tactical review (v2), so at most 0.5 in v1 |
+| Quality shift on rarity | Non-Common encounter weights times `1 + 0.5 * q`, renormalized |
+| Quality bonus on containment | `+0.10 * q` |
+| Epic survey encounter | Quality 0.5, no Commons |
+| Reinforced Cells for a green mission | 1 |
+| Lattice bonus | Up to `+20%` for all locks (`0.20 * sealed / locks`), `+2%` per center hit, `-3%` per miss, between 0 and `+25%` |
+| Lattice zones | Fraction of the 30-cell bar: wide 0.30, medium 0.18, narrow 0.10, very narrow 0.06; center = middle 30% of the zone |
+| Lattice speeds | One sweep: slow 2000 ms, medium 1400 ms, fast 900 ms, erratic 700 ms with +/-35% jitter; frame every 40 ms |
+| Lattice twists | Exotic reverses with probability 0.6 per second; Anomaly zone flickers every 300 ms, visible 70% of the time |
+| Calibration | 8 beats 750 ms apart after a 1 s lead-in; offset = median press error, clamped to +/-400 ms |
+| Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
+| Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |

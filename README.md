@@ -11,35 +11,68 @@ from your own diffs improve your odds and double as interview practice.
 It runs entirely in the terminal: ASCII art, keyboard only, 40 columns
 minimum, playable over SSH and tmux, including from a phone.
 
-**Status: pre-alpha.** There is no playable code yet. The design is in
-[docs/SPEC.md](docs/SPEC.md).
+**Status: pre-alpha.** The first playable slice works: chart an epic, run
+missions, meet and contain Difflings, keep a companion. Jira sync, puzzles and
+crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
-Not yet available. Install instructions will be added with the first
-playable release.
+There is no release yet. To play from a clone, see
+[Running the mod while developing](#running-the-mod-while-developing).
+
+## How to play
+
+| Command | What it does |
+|---|---|
+| `/epic NOVA-1` | Opens a form for the epic's title and description, then charts it as a star system in the background. |
+| `/mission NOVA-12` | Starts a mission. Checking out a branch like `feature/NOVA-12-x` (in the epic's project) starts it too. |
+| `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. |
+| `/contain [reinforced]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. |
+| `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
+| `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
+| `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
 
 ## What data the mod sends, and where
 
 The game is built from your own work, so some of it is sent to a model.
 
-**What is sent to the model:**
-
-- epic titles and descriptions, to theme each star system
-- filtered code excerpts from your diffs, to build puzzles
+**What is sent to the model:** the epic title and description you type into
+the `/epic` form, after the privacy filter, in one request per epic (plus up
+to two follow-up requests that redraw creature art; those carry generated
+names and descriptions, not your text). The issue key is never sent. The
+default model is Opus; you can pick Sonnet or Haiku in `/config`.
 
 **Where it goes:** only through your own Claude Code session and account.
-The mod makes no network calls other than to your configured Jira instance.
+The mod makes no other network calls.
+
+**What stays local:** the mod watches the Bash commands Claude runs in your
+session (to notice branch switches, commits and test runs), runs `git` to read
+the current branch, and reads `TERM`, `TMUX` and `SSH_CONNECTION` to tell your
+devices apart for calibration (stored only as a salted hash). Saved game data,
+including your issue keys, stays in Claude Code's plugin store on this machine.
+
+**What the model sees in the transcript:** slash commands and their output
+are part of the session the model reads. That is why `/epic` takes only the
+key and asks for the title in a form, and why command output is short and
+factual (`Mission NOVA-12 complete.`). Issue keys you type in commands are
+visible to the model.
 
 **No telemetry. No analytics.** No data leaves your machine except as
 described above.
 
-**Privacy filter, on by default.** Before any epic text or code reaches a
-prompt, the filter strips string literals, fixture data, and PHI-like patterns
-(names, dates of birth, medical record numbers, SSN-shaped values), so prompts
-receive structure rather than data. You can turn it off, but it is never off
-unless you do so. Options for stricter rules will be documented here when the
-filter ships.
+**Privacy filter, on by default.** Before epic text reaches a prompt, the
+filter replaces quoted text, issue keys, URLs, emails, IPs and hostnames,
+phone numbers, SSN-, date- and ID-shaped values, ages, ZIP codes, and names
+after a title (`Dr.`) or a role word (`patient`). The setting is `privacyMode`
+in `/config`:
+
+- `strict` (the default) also replaces every capitalized word that is not a
+  common title word or technical acronym, which catches most names.
+- `standard` keeps capitalized words, for better system theming.
+- `off` sends the text as typed.
+
+Known limit: a name written in lowercase in plain prose ("ask jane") cannot
+be told from an ordinary word, in any mode. Keep names out of epic titles.
 
 **Your responsibility:** check whether your employer permits sending work
 content through Claude Code before pointing this mod at work projects.
@@ -90,6 +123,22 @@ scripts/denylist-check.sh files      # tracked files
 scripts/denylist-check.sh history    # every commit message
 gitleaks git --redact --config .gitleaks.toml .
 ```
+
+### Running the mod while developing
+
+```sh
+npm install
+npm run types       # copy your Claude Code API declarations (never committed)
+npm run typecheck
+npm test
+claude --plugin-dir .
+```
+
+`claude --plugin-dir .` starts a session with the mod loaded from this folder;
+edits reload when the folder goes quiet. Set `devMode` in `/config` to get
+`/encounter`, which forces an encounter for playtesting. A numeric
+`FINAL_COMMIT_SEED` environment variable makes every roll reproducible (the
+tests use it).
 
 Machine-specific notes go in `CLAUDE.local.md` (gitignored). Start from
 `CLAUDE.local.md.example`.
