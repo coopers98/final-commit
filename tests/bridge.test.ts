@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { STATUS } from '../src/config'
 import { bayRows } from '../src/bridge/bay'
-import { besideLines } from '../src/bridge/band'
+import { besideLines, trimSprite } from '../src/bridge/band'
 import { chartingText, statusText } from '../src/bridge/status'
 import { orphanedCharts } from '../src/runtime'
 import type { StarSystem } from '../src/store/schema'
@@ -78,4 +78,11 @@ test('the band puts one fact per line beside the sprite, cut to the space left o
   expect(besideLines(v, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content', 'NOVA-142'])
   expect(besideLines(v, 8)).toEqual(['Glornaxi', 'uncommon', 'content', 'NOVA-142'])
   expect(besideLines({ ...v, mission: null }, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content'])
+})
+
+test('the band trims a sprite to its drawing', async () => {
+  const blank = ' '.repeat(14)
+  const rows = [blank, blank, '     ()()     ', '    (o.o)~    ', '     ^ ^      ', blank, blank]
+  expect(trimSprite(rows)).toEqual([' ()() ', '(o.o)~', ' ^ ^  '])
+  expect(trimSprite(Array(7).fill(blank))).toEqual([])
 })

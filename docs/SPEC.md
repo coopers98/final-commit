@@ -308,7 +308,7 @@ Crew are real subagent types via `$.agent`. Their prompts are working instructio
 
 ### 9.3 Companion
 
-- One active Diffling shown in the band: the sprite at the right edge, its name, tier, mood and mission one per line to its left. With too few rows for the sprite, one line.
+- One active Diffling shown in the band as a compact block at the right edge: the sprite trimmed to its drawing, its name, tier, mood and mission one per line beside it. The rest of the band is left to whatever draws beneath (the engine, other plugins). With too few rows for the sprite, one line.
 - The band is drawn again after a `/clear`, which resets session state without a session start.
 - Reacts to events: build pass (eats), stack trace (flinches), idle 10+ min (sleeps).
 - Earns XP from completed missions; evolves at levels 10 and 25.
