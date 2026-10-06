@@ -37,6 +37,7 @@ There is no release yet. To play from a clone, see
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
 | `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
 | `/bridge` | The bridge: the active system and mission, hull (this session's test pass rate), shields (the last lint or type-check), fuel (context window left) and the latest captain's log. |
+| Crew | Three read-only subagents Claude (or you) can dispatch: `final-commit:engineering` runs and explains tests, `final-commit:science` answers questions about the code, `final-commit:tactical` reviews your branch for security issues before a push. A clean Tactical review after your last commit raises the mission's quality (better odds of rarer Difflings). |
 | `/captains-log` | Writes a short summary of the session (standup notes) and shows it in a pane. The last 20 are kept. |
 
 A failed test run, or a failed tool call other than a shell command, during a
@@ -54,7 +55,9 @@ names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
 `/captains-log` asks your session's own model to summarize the session it
 already holds; the mod adds only a fixed instruction, and the summary is
-stored locally.
+stored locally. The crew subagents read your code the way any Claude Code
+subagent does, through your session's model and only when dispatched; the mod
+supplies only their instructions.
 
 **Where it goes:** only through your own Claude Code session and account.
 The mod makes no other network calls.

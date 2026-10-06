@@ -4,6 +4,8 @@ import type { BandView, CalibrationView, ChartingEntry, EpicFormView, LatticeVie
 import { NO_ALERT, redAlert } from '../src/bridge/alert'
 import { NO_GAUGES } from '../src/bridge/bridge'
 import { wireBridge } from '../src/bridge/bridge-pane'
+import { wireCrew } from '../src/crew/crew-wire'
+import { CREW_SPECS, ROLES } from '../src/crew/roster'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
@@ -276,6 +278,18 @@ async function prepareSession($: EngineInterface) {
   if (await read($, ready)) await refresh($)
 }
 
+/** SPEC 9.1: the crew as agent types the Agent tool can dispatch (`final-commit:<role>`). */
+async function registerCrew($: EngineInterface) {
+  for (const role of ROLES) {
+    const spec = CREW_SPECS[role]
+    try {
+      await $.agent.register({ name: spec.name, description: spec.description, prompt: spec.prompt, tools: spec.tools, maxTurns: spec.maxTurns })
+    } catch (err) {
+      $.ui.log(`final-commit: crew ${role} not registered: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+    }
+  }
+}
+
 async function startSession($: EngineInterface) {
   await prepareSession($)
   await $.command.register({ name: 'epic', description: 'Chart an epic as a star system, or survey it', argumentHint: '<KEY> | complete' })
@@ -285,6 +299,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
   await $.command.register({ name: 'bridge', description: 'Open the bridge: system, mission, hull, shields, fuel' })
   await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
+  await registerCrew($)
   if (settings.devMode) await $.command.register({ name: 'encounter', description: 'Force an encounter (developer mode)' })
   // Idle animation (SPEC 9.3): a short blink every few seconds.
   $.clock.every(COMPANION.blinkEveryMs, () => {
@@ -337,6 +352,7 @@ export const register: Register = (on, options) => {
   wireCalibration(on)
   wireBay(on)
   wireBridge(on)
+  wireCrew(on)
 
   on('session.start', async ($, e, next) => {
     await startSession($)

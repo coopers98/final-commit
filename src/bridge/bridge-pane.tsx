@@ -2,6 +2,7 @@ import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 import type { BandView } from '../../types'
 import { NO_ALERT } from './alert'
+import { NO_CREW } from '../crew/roster'
 import { bridgeRows, NO_GAUGES, type BridgeData } from './bridge'
 import { createRepo, type Repo } from '../store/repo'
 
@@ -9,6 +10,7 @@ export const BRIDGE_PANE = 'fc-bridge'
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const gauges = atom({ plugin: 'final-commit', key: 'gauges' } as const, NO_GAUGES)
 const alert = atom({ plugin: 'final-commit', key: 'alert' } as const, NO_ALERT)
+const crew = atom({ plugin: 'final-commit', key: 'crew' } as const, NO_CREW)
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 
 function repoOf($: EngineInterface): Repo {
@@ -46,6 +48,7 @@ async function gather($: EngineInterface): Promise<BridgeData> {
     gauges: await read($, gauges),
     ...(fuel !== undefined ? { fuel } : {}),
     ...(log ? { log } : {}),
+    crew: await read($, crew),
     isPending: (await repo.pending()) !== undefined,
     isAlert: (await $.clock.now()) < (await read($, alert)).until,
   }

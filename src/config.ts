@@ -149,3 +149,6 @@ export const CAPTAINS_LOG = { keep: 20, maxLines: 12 } as const
 
 // DEFAULT: the Bridge pane (SPEC 9). Gauge bar width in cells, and log lines shown from the newest entry.
 export const BRIDGE = { gaugeCells: 10, logLines: 3 } as const
+
+// DEFAULT: crew subagents (SPEC 9.1). The most turns each officer takes.
+export const CREW = { maxTurns: { engineering: 40, science: 40, tactical: 40 } } as const

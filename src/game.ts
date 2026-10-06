@@ -222,6 +222,7 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
   const reinforced = (await repo.inventory()).reinforced
   const lines = [
     `Commits ${done.commits} · Test runs ${done.testRuns}${done.testRuns > 0 ? (done.testsGreen ? ' · green' : ' · not green') : ''}`,
+    ...(done.tacticalClean ? ['Tactical review: all clear'] : []),
     ...notes,
   ]
   if (system && attachedWork && !hasPending && underCap && shouldEncounter(ctx, rng)) {
@@ -292,7 +293,22 @@ export async function recordBash(
     commits: mission.commits + deps.commits,
     testRuns: mission.testRuns + (signals.isTestRun ? 1 : 0),
     testsGreen: signals.isTestRun ? passed : mission.testsGreen,
+    // A commit after a Tactical review is code nobody reviewed.
+    tacticalClean: deps.commits > 0 ? false : mission.tacticalClean,
   })
+}
+
+/**
+ * A Tactical review finished during the mission (SPEC 9.1). A clean verdict
+ * counts toward quality only once the mission has a commit to review; any
+ * later commit clears it again (recordBash).
+ */
+export async function recordTactical(deps: { repo: Repo; verdict: 'clean' | 'issues' }): Promise<{ counted: boolean }> {
+  const mission = await deps.repo.activeMission()
+  if (!mission) return { counted: false }
+  const clean = deps.verdict === 'clean' && mission.commits > 0
+  await deps.repo.saveActiveMission({ ...mission, tacticalClean: clean })
+  return { counted: clean }
 }
 
 export async function forceEncounter(deps: GameDeps): Promise<Outcome> {

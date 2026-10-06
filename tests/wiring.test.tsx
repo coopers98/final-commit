@@ -8,14 +8,19 @@ import type { On } from 'claude-code'
 const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const SEED = '42'
 
-type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[] }
+type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[] }
 
 function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string> } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
-  const w: World = { clock, commands: [], toasts: [], status: [], prompts: [], opened: [] }
+  const w: World = { clock, commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [] }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('agent.register', (_$, e) => {
+    w.agents.push(e.name)
+    return { value: { agent: `final-commit:${e.name}` } } as never
+  })
   on('command.register', (_$, e) => {
     w.commands.push(e.name)
     return { value: { command: e.name } }
@@ -556,4 +561,66 @@ test('/bridge opens a pane with the system, mission, hull, shields and fuel', as
   expect(texts.some(t => /^Fuel +\[#+-+\] 75%$/.test(t))).toBe(true)
   for (const t of texts) expect([...t].length).toBeLessThanOrEqual(40)
   await pane.unmount()
+})
+
+/** A crew officer spawned through the Agent tool, then its run finishing with `answer`. */
+async function crewRun($: any, role: string, agentId: string, answer: string, isAborted = false) {
+  await $.agent.spawn({ prompt: 'review', description: 'review', subagentType: `final-commit:${role}` })
+  await $.turn.complete({ agentId, answer, durationMs: 1, isAborted, turnId: 't', reason: isAborted ? 'aborted' : 'answer' })
+}
+
+test('session start registers the three crew agent types', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  expect(w.agents).toEqual(['engineering', 'science', 'tactical'])
+})
+
+test('a clean Tactical review after a commit raises mission quality; one with nothing committed does not', async ($, on) => {
+  const w = world(on, { branch: 'feature/NOVA-5-x' })
+  let nextId = 'a1'
+  on('agent.spawn', () => ({ model: 'm', agentId: nextId }) as never)
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await $.tool.call({ tool: 'Bash', command: 'git switch feature/NOVA-5-x' } as never)
+  await crewRun($, 'tactical', 'a1', 'Nothing to review.\nVERDICT: CLEAN')
+  expect(w.toasts).toContain('Tactical: all clear.')
+
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  nextId = 'a2'
+  await crewRun($, 'tactical', 'a2', 'Reviewed 1 commit.\n**VERDICT: CLEAN**')
+  expect(w.toasts).toContain('Tactical: all clear. Mission quality up.')
+  await run($, 'mission', 'complete')
+  const report = await $.ui.mount(PANE('fc-report'))
+  expect((await report.findAll({ type: 'Text' })).map(t => t.text)).toContain('Tactical review: all clear')
+  await report.unmount()
+})
+
+test('a Tactical review with issues says so, and the bridge shows each officer', async ($, on) => {
+  const w = world(on)
+  on('agent.spawn', (_$, e) => ({ model: 'm', agentId: (e as { subagentType: string }).subagentType === 'final-commit:science' ? 's1' : 't1' }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await crewRun($, 'tactical', 't1', 'src/a.ts:3 shell injection.\nVERDICT: ISSUES')
+  expect(w.toasts).toContain('Tactical: security issues found. See the report.')
+  // Science spawned and still running.
+  await $.agent.spawn({ prompt: 'q', description: 'q', subagentType: 'final-commit:science' } as never)
+  await run($, 'bridge')
+  const pane = await $.ui.mount(PANE('fc-bridge', 40))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('Crew')
+  expect(texts.some(t => /^ +Engineering +idle$/.test(t))).toBe(true)
+  expect(texts.some(t => /^ +Science +busy$/.test(t))).toBe(true)
+  expect(texts.some(t => /^ +Tactical +ISSUES FOUND$/.test(t))).toBe(true)
+  await pane.unmount()
+})
+
+test('agents that are not crew are left alone', async ($, on) => {
+  const w = world(on)
+  on('agent.spawn', () => ({ model: 'm', agentId: 'x1' }) as never)
+  await $.session.start(START)
+  await $.agent.spawn({ prompt: 'p', description: 'd', subagentType: 'general-purpose' } as never)
+  await $.turn.complete({ agentId: 'x1', answer: 'VERDICT: CLEAN', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+  expect(w.toasts.some(t => t.startsWith('Tactical'))).toBe(false)
 })

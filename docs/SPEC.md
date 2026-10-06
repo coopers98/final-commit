@@ -287,7 +287,7 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 
 | Surface | Content |
 |---|---|
-| **Bridge pane** (`/bridge`) | Active system, current mission, hull (test pass rate), shields (lint), fuel (context remaining), crew status, captain's log tail. Built (basic): hull is this session's test runs (judged as missions judge them), shields the last lint or type-check verdict by exit status (eslint, tsc, phpstan, pint, ruff and the like; a piped run gives none), fuel the context window left from `$.session.usage()`, plus a red alert and a waiting encounter. Crew status comes with the crew. Drawn from the save at draw time, redrawn with the band. |
+| **Bridge pane** (`/bridge`) | Active system, current mission, hull (test pass rate), shields (lint), fuel (context remaining), crew status, captain's log tail. Built (basic): hull is this session's test runs (judged as missions judge them), shields the last lint or type-check verdict by exit status (eslint, tsc, phpstan, pint, ruff and the like; a piped run gives none), fuel the context window left from `$.session.usage()`, plus a red alert and a waiting encounter. Crew status: each officer idle, busy, or its last result. Drawn from the save at draw time, redrawn with the band. |
 | **Band above prompt** | Active companion sprite (animated idle), mood, tiny mission indicator |
 | **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then a system being charted (`/ charting NOVA-1 42s`, a spinner and seconds), then the mission, then the system, within 22 columns (section 2, constraint 5). A charting interrupted by a hot reload is reported by a toast at the next start, never left spinning |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
@@ -304,6 +304,8 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 | Tactical | Security review before push |
 
 Crew are real subagent types via `$.agent`. Their prompts are working instructions only; no role-play voice in model output.
+
+Built: each is registered at session start as `final-commit:engineering`, `final-commit:science` and `final-commit:tactical` (`src/crew/roster.ts`), read-only (no edit tools; the prompt forbids changing files, committing or pushing), dispatched by the model or the user through the Agent tool. Tactical ends with `VERDICT: CLEAN` or `VERDICT: ISSUES`. A clean verdict during a mission sets `tacticalClean` (mission quality, SPEC 16) only once the mission has a commit to review, and any later commit clears it: the new code is unreviewed. A verdict with issues clears it too. The Bridge shows each officer as idle, busy, or its last result; a Tactical verdict also toasts.
 
 ### 9.2 Alerts
 
@@ -367,6 +369,7 @@ src/
   store/                          schema.ts, repo.ts, migrate.ts
   detect/git.ts                   branch -> issue key, Bash command signals
   detect/work-source.ts, sync.ts  tracker interface (4.4); transitions -> game actions (4.2)
+  crew/                           roster.ts (agent specs, verdicts; pure); crew-wire.ts (spawn -> finished turn)
   world/                          generate.ts, validate-art.ts, parts-library.ts
   encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
   contain/                        lattice-model.ts, calibrate-math.ts, resolve.ts (pure);
@@ -389,7 +392,7 @@ Public repository rules: see section 15.
 
 ### v1: Playable loop (target: first Diffling in week one)
 
-The "First Diffling" slice is implemented: every item below (the Bridge pane without crew status) except flora harvesting and Stasis/Singularity Cells (only Standard and Reinforced exist). Every behavior is covered by `claude plugin test`; containment, calibration, the band and the epic form were also played live in tmux.
+The "First Diffling" slice is implemented: every item below except flora harvesting and Stasis/Singularity Cells (only Standard and Reinforced exist). Every behavior is covered by `claude plugin test`; containment, calibration, the band and the epic form were also played live in tmux.
 
 - Public repo guardrails in place before the first code commit (section 15.6)
 - Store schema + migrations
@@ -405,8 +408,7 @@ The "First Diffling" slice is implemented: every item below (the Bridge pane wit
 - Jira `WorkSource` (MCP and REST)
 - Session catch-up sync, polling, idempotency (sync engine done against the interface; wired with the first backend)
 - Anti-farming rules (done for tracker closures)
-- Crew subagents
-- Red alert, captain's log (done)
+- Crew subagents, red alert, captain's log (done)
 
 ### v3: Puzzles
 - Pattern ID, Complexity Read, Code Trace, Bug Hunt
@@ -532,3 +534,4 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Red alert | Status flash 8 s; toast cooldown 5 minutes |
 | Captain's log | 20 entries kept; at most 12 lines each |
 | Bridge | Gauges 10 cells wide; 3 lines of the newest captain's log |
+| Crew | At most 40 turns per officer run |

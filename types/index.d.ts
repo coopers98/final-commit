@@ -66,6 +66,11 @@ declare module 'claude-code' {
       band: BandView | null
       /** SPEC 9.2 red alert: the status line flashes before `until`; toasts keep a cooldown from `lastToastAt`. */
       alert: { until: number; lastToastAt: number | null }
+      /** SPEC 9.1 crew: running subagents by agent id, and each officer's last result. */
+      crew: {
+        running: Record<string, 'engineering' | 'science' | 'tactical'>
+        last: Partial<Record<'engineering' | 'science' | 'tactical', { outcome: 'done' | 'clean' | 'issues' | 'stopped'; at: number }>>
+      }
       /** SPEC 9 Bridge gauges for this session: test runs (hull) and the last lint verdict (shields). */
       gauges: { tests: { runs: number; passes: number }; lint: 'pass' | 'fail' | null }
       calibration: CalibrationView | null
