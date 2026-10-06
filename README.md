@@ -17,8 +17,9 @@ minimum, playable over SSH and tmux, including from a phone.
 current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
-missions, meet and contain Difflings, keep a companion. Jira sync, puzzles and
-crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
+missions, meet and contain Difflings, keep a companion. Plan documents can
+drive it automatically. Tracker sync (Jira, GitHub Issues, Linear), puzzles
+and crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
@@ -44,12 +45,39 @@ A failed test run, or a failed tool call other than a shell command, during a
 mission raises a red alert: the status line flashes, and a toast appears at
 most once every five minutes.
 
+### Plan documents
+
+Instead of typing `/epic` and `/mission`, you can keep a markdown plan in
+your project and let the game follow it. Add `plans` to `workSources` in
+`/config`. The game then reads every `.md` file in `docs/plans/` (the
+`plansFolders` setting) at session start and every 12 minutes:
+
+```markdown
+# NOVA-7 Billing export
+
+Export invoices as files for the finance team.
+
+- [x] NOVA-8 Write the exporter
+- [~] NOVA-9 Schedule it
+- [ ] NOVA-10 Document it
+```
+
+The first heading's key is the epic, and the text before the first task is
+its description. Each task whose text starts with a key (or has one in
+brackets) is a mission: `[~]` starts it, `[x]` finishes it, and all tasks
+done surveys the epic. Tasks and plans without a key are skipped. The first
+read only records where things stand, so work already done is not awarded.
+Checking out a task's branch or typing `/mission` starts it too. Mark a task
+`[~]` when you begin it: only work done while its mission is active counts,
+so a task that goes straight to `[x]` completes without rewards.
+
 ## What data the mod sends, and where
 
 The game is built from your own work, so some of it is sent to a model.
 
 **What is sent to the model:** the epic title and description you type into
-the `/epic` form, after the privacy filter, in one request per epic (plus up
+the `/epic` form (or a plan document's first heading and the prose before
+its first task), after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
@@ -65,7 +93,9 @@ The mod makes no other network calls.
 **What stays local:** the mod watches the Bash commands Claude runs in your
 session (to notice branch switches, commits and test runs), runs `git` to read
 the current branch, and reads `TERM`, `TMUX` and `SSH_CONNECTION` to tell your
-devices apart for calibration (stored only as a salted hash). Saved game data,
+devices apart for calibration (stored only as a salted hash). With the plans
+source on, it reads the markdown files in your plan folders and keeps each
+task's last status. Saved game data,
 including your issue keys, stays in Claude Code's plugin store on this machine.
 
 **What the model sees in the transcript:** slash commands and their output

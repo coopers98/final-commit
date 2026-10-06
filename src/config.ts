@@ -168,6 +168,12 @@ export const SYNC = { pollMs: 720_000, overlapMs: 60_000, maxProcessed: 500 } as
 // it is tried again, doubling with each failure in a row up to `maxMs`.
 export const CHART_RETRY = { firstMs: 1_800_000, maxMs: 21_600_000 } as const
 
+// DEFAULT: plan documents (SPEC 4.4 rule 3). Folders read when the setting
+// is empty; files larger than `maxFileBytes` are skipped; `keepLog` changes
+// are kept for the sync to read back; an epic's description is cut to
+// `maxDescriptionChars` before the privacy filter sees it.
+export const PLANS = { defaultFolders: ['docs/plans'] as readonly string[], maxFileBytes: 262_144, keepLog: 1_000, maxDescriptionChars: 2_000 } as const
+
 // SPEC 4.3 rules 1 and 2: what a tracker-closed mission needs to roll an encounter.
 export const ANTI_FARMING = { minMissionMs: 1_200_000 } as const
 

@@ -1,6 +1,6 @@
 import { STORE, TIERS, type Tier } from '../config'
 import type {
-  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
+  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, PlansState, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
 } from './schema'
 
 export type StoreLike = {
@@ -25,6 +25,8 @@ export const KEYS = {
   /** SPEC 4.4: one sync record per work source, keyed by the source's name. */
   syncPrefix: `${p}sync:`,
   sync: (source: string) => `${p}sync:${source}`,
+  /** SPEC 4.4 rule 3: plan documents' last read, one per project folder (`id` from its path). */
+  plans: (id: string) => `${p}plans:${id}`,
   captainsLog: `${p}log`,
   crewReports: `${p}crew-reports`,
   resolved: `${p}resolved`,
@@ -138,6 +140,10 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
       readRecord<SyncState>(KEYS.sync(source), { lastSync: null, processed: [] }, v =>
         (v.lastSync === null || typeof v.lastSync === 'number') && Array.isArray(v.processed)),
     saveSync: (source: string, s: SyncState) => store.set(KEYS.sync(source), stamp(s)),
+
+    plans: (id: string) =>
+      readOptional<PlansState>(KEYS.plans(id), v => typeof v.epoch === 'number' && isObject(v.tasks) && Array.isArray(v.doneEpics) && Array.isArray(v.log) && typeof v.seq === 'number'),
+    savePlans: (id: string, s: PlansState) => store.set(KEYS.plans(id), stamp(s)),
 
     captainsLog: () => readList<LogEntry>(KEYS.captainsLog, v => isObject(v) && typeof v.stardate === 'string' && Array.isArray(v.lines)),
     saveCaptainsLog: (entries: LogEntry[]) => writeList(KEYS.captainsLog, entries),

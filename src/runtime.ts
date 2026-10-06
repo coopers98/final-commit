@@ -1,6 +1,6 @@
 import type { PluginOptions } from 'claude-code'
 import type { BandView, ChartingEntry, MoodState } from '../types'
-import { COMPANION, GENERATION, TIER_SPECS, type GenerationModel } from './config'
+import { COMPANION, GENERATION, PLANS, TIER_SPECS, type GenerationModel } from './config'
 import { statusText } from './bridge/status'
 import { sourceNames } from './detect/sources'
 import type { PrivacyMode } from './puzzle/privacy-filter'
@@ -12,7 +12,7 @@ import type { StarSystem } from './store/schema'
 // reach only functions in the same file, so nothing here takes `$`: each
 // wiring file adapts `$.store` and `$.model` itself and hands the result in.
 
-export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[] }
+export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[]; plansFolders: string[] }
 
 export function readSettings(options: PluginOptions): Settings {
   const model = options.generationModel
@@ -23,7 +23,20 @@ export function readSettings(options: PluginOptions): Settings {
     privacyMode: privacy === 'strict' || privacy === 'off' || privacy === 'standard' ? privacy : 'strict',
     devMode: options.devMode === true,
     workSources: sourceNames(options.workSources),
+    plansFolders: folderList(options.plansFolders),
   }
+}
+
+/**
+ * SPEC 4.4 rule 3: the plan folders, trimmed, each once; the default when
+ * none is set. Only folders inside the project: an absolute path, a home
+ * path or a `..` segment is dropped, so a setting cannot aim the source at
+ * files elsewhere.
+ */
+function folderList(value: unknown): string[] {
+  const isInside = (p: string) => !/^([/\\~]|[A-Za-z]:)/.test(p) && !p.split(/[/\\]/).includes('..')
+  const list = (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === 'string').map(v => v.trim()).filter(v => v !== '' && isInside(v))
+  return list.length > 0 ? [...new Set(list)] : [...PLANS.defaultFolders]
 }
 
 /**

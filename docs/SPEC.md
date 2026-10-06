@@ -115,11 +115,16 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 | Jira REST | `$.http.fetch` with an API token from a secret `userConfig` field | Epic | Story or task | Issue changelog |
 | GitHub Issues | `gh` via `$.process` (its own auth) | Milestone, or a parent issue with sub-issues | Issue; assigned and open, or a linked branch, starts it | Issue timeline events |
 | Linear | GraphQL `$.http.fetch` with an API key from a secret field | Project | Issue | Issue history |
-| Plan documents | Files only, via `$.fs`; no tracker, no network | A plan file | A checklist task | Changes between reads |
+| Plan documents | Files only, via `$.fs`; no tracker, no network | A plan file, keyed by its first heading | A keyed checklist task | Changes between reads |
 
 1. **Jira:** MCP is preferred when a connector is attached, REST otherwise (D3). Both are one adapter with two transports.
 2. **Keys:** a source maps its ids to game keys (`[A-Z][A-Z0-9]{1,9}-N`). Jira and Linear keys are used as they are; GitHub issue `#12` in a repo becomes the source's configured prefix plus the number (`NOVA-12`). The mapping is stable across reads, so idempotency (4.2) holds.
-3. **Plan documents** (D13): a markdown file in the configured folders (default `docs/plans/`) is an epic; its title is the first heading. Each `- [ ]` task is a mission, keyed by an explicit key in its text (`NOVA-12`) or else by the plan's prefix and the task's ordinal. `- [~]` marks a task in progress (as do a branch checkout of its key and `/mission`); `- [x]` is its Done; all tasks done is the epic's Done. The source keeps the last state it read and reports differences as transitions, timed when they were seen.
+3. **Plan documents** (D13, `src/detect/plans.ts`): each `.md` file directly in the `plansFolders` (default `docs/plans`) is an epic, keyed by the key in its first heading. The folders are relative to the project: an absolute path, a home path or a `..` segment in the setting is dropped. The rest of the heading is the epic's title, and the prose before the first task is its description. Each checklist task (`- [ ]`, `* [ ]`, `+ [ ]`) with a key is a mission, titled by the rest of its text.
+   - **Keys** are explicit only. A key is the first one in brackets anywhere in the text (`SHA-256 migration (NOVA-7)`, `[NOVA-7](url) x`), else one leading it (`NOVA-7 x`, `**NOVA-7**: x`). A key-shaped term mid-text (`UTF-8`) is never one, and one leading the text loses to a bracketed key; write the key first or in brackets. A plan whose first heading has no key, or a task without one, is skipped with a debug-log line naming its line number, never its text, so inserting or rewording a task never moves a key. Each key is kept the first time it is read (folder order, then file name): a later plan of the same epic is skipped whole, and a repeated task key is dropped from the later plan.
+   - **Parsing:** checklists inside fenced code are ignored (a fence closes only on its own character, at least as long). Files over 256 KiB and links are skipped. A byte-order mark and Windows line ends are handled.
+   - **Statuses:** `- [~]` marks a task in progress (as do a branch checkout of its key and `/mission`), and `- [x]` is its Done. A task seen going from to do straight to done between two reads is reported started, then done: its mission completes, though without rewards when no work was tracked on it (4.3). A task first seen already done (a plan added or moved in, a key rewritten) is old work: recorded, never reported. All tasks done is the epic's Done, reported after its tasks. A task's start is its epic's start: there is no separate epic transition. A reopened epic reports its next Done again.
+   - **What it keeps:** the source saves what it last read per project folder (`fc:plans:<id>`, the id a hash of the path), and each project has its own sync record (`fc:sync:plans:<id>`, through `WorkSource.record`), so a change waiting in one project is never skipped by another's sync. Its changes are logged, timed when they were seen, and kept until no sync can ask for them again (at most 1,000). Transition ids carry the time of the project's baseline, its first read, which reports nothing. A task missing from a read keeps its status, so a file briefly missing reports nothing when it returns. A missing folder has no plans. The plans themselves are never written.
+   - **Known limit:** a read that catches a file half written, with only its finished tasks present, can report the epic done early.
 4. **Privacy:** a source's titles and descriptions reach a prompt only through the privacy filter (5.3), like `/epic` text. Nothing a source returns is ever written to the repository; tests use invented `NOVA-` data and recorded fake responses, never a live tracker.
 5. A source that fails (offline, expired token, or a transition it reported that could not be applied) is reported once by toast for each outage and retried at the next poll; the others keep running. Its `lastSync` does not move, so the next poll reads the same changes again: what it had applied before failing is recognized and not applied twice, but that sync's announcements are not shown. A source that recovers and fails again is reported again. A chart a source started that fails is not tried at every poll. Its epic waits 30 minutes, then double that after each failure in a row, up to 6 hours. Its issues stay waiting meanwhile. Only the first failure in a row is toasted, and a chart that succeeds ends the run. `/epic` charts are unaffected.
 
@@ -168,6 +173,8 @@ v1 filters epic prose (`src/puzzle/privacy-filter.ts`); the code filter for puzz
 | `off` | Nothing. |
 
 The epic key never enters a prompt. Known limit: a lowercase name in plain prose cannot be told from an ordinary word in any mode.
+
+With the plans source (4.4), a plan file's first heading and opening prose are epic text: they come from files in the project, so a cloned repository's plans reach the generation prompt (filtered, like typed text). That prompt only makes game content, and its output is validated (5.2).
 
 ### 5.4 Closed systems
 
@@ -364,6 +371,7 @@ All keys prefixed `fc:`. Every value carries `schemaVersion`.
 ```ts
 type SaveMeta     = { schemaVersion: number; createdAt: string }
 type SyncState    = { lastSync: number | null; processed: string[] /* <issueKey>:<transitionId> */ }  // one per source: fc:sync:<name>
+type PlansState   = { epoch: number; tasks: Record<string, { status }>; doneEpics: string[]; log: WorkTransition[]; seq: number }  // fc:plans:<id>
 type LogEntry     = { at: number; stardate: string; lines: string[] }
 type StarSystem   = { id: string; epicKey: string; name: string; starClass: string;
                       biomes: Biome[]; species: Species[]; status: 'open'|'surveyed';
@@ -406,6 +414,7 @@ src/
   detect/git.ts                   branch -> issue key, Bash command signals
   detect/work-source.ts, sync.ts  tracker interface (4.4); transitions -> game actions (4.2)
   detect/sources.ts               configured sources: names -> backends, one sync per source (4.4)
+  detect/plans.ts                 plan documents source: parse, diff reads (4.4 rule 3)
   crew/                           roster.ts (agent specs, verdicts; pure); crew-wire.ts (spawn -> finished turn)
   world/                          generate.ts, validate-art.ts, parts-library.ts
   encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
@@ -442,8 +451,8 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 - Bridge pane (basic)
 
 ### v2: Automatic detection
-- Work sources (4.4): Jira (MCP and REST), GitHub Issues, Linear, plan documents; several at once
-- Session catch-up sync, polling, idempotency (done: per-source sync records, `workSources` setting, catch-up and poll wired; no backend yet)
+- Work sources (4.4): Jira (MCP and REST), GitHub Issues, Linear, plan documents (done); several at once
+- Session catch-up sync, polling, idempotency (done: per-source sync records, `workSources` setting, catch-up and poll wired; first backend: plan documents)
 - Anti-farming rules (done for tracker closures)
 - Crew subagents, red alert, captain's log (done)
 
@@ -477,7 +486,7 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 | D10 | Does the first completed mission guarantee an encounter? | Decided: yes (onboarding; otherwise about 8 missions at 12%) |
 | D11 | Privacy filter default | Decided: `strict` |
 | D12 | Which trackers? | Decided: Jira (MCP and REST), GitHub Issues, Linear, and plan documents for work with no tracker |
-| D13 | Plan document format | Decided: markdown checklists; `- [ ]` to do, `- [~]` in progress, `- [x]` done (4.4) |
+| D13 | Plan document format | Decided: markdown checklists; `- [ ]` to do, `- [~]` in progress, `- [x]` done; explicit keys only (4.4) |
 | D14 | First puzzle adapters | Decided: PHP, TypeScript/JavaScript, Python, SQL, Markdown |
 | D15 | How Trace runs code | Decided: self-contained units only, in a temporary directory with a timeout; no container |
 
@@ -573,6 +582,7 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
 | Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |
 | Tracker sync | Poll every 12 minutes; each query reaches back 60 s; 500 processed transitions kept |
+| Plan documents | Folder `docs/plans`; files up to 256 KiB; at most 1,000 changes kept for the sync; epic description cut to 2,000 characters |
 | Failed source chart | Retried after 30 minutes, doubling per failure in a row, at most 6 hours |
 | Red alert | Status flash 8 s; toast cooldown 5 minutes |
 | Captain's log | 20 entries kept; at most 12 lines each |

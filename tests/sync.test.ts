@@ -308,3 +308,42 @@ test('a closure while its epic is still charting waits for the chart, so it is n
   expect((await h.repo.missionLog()).map(m => m.issueKey)).toEqual(['NOVA-3'])
   expect(h.charted).toEqual(['NOVA-1'])
 })
+
+test('a source\'s first sync takes its baseline; if that fails, nothing is recorded and the next sync tries again', async () => {
+  const h = await harness()
+  let starts = 0
+  let isDown = true
+  const source: WorkSource = {
+    name: 'scripted',
+    start: async () => {
+      starts += 1
+      if (isDown) throw new Error('unreadable')
+    },
+    changedSince: async () => [],
+  }
+  expect((await syncWork(h.deps(10, source))).error).toBe('unreadable')
+  expect((await h.repo.sync('scripted')).lastSync).toBe(null)
+  isDown = false
+  expect((await syncWork(h.deps(20, source))).error).toBe(undefined)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(20)
+  await syncWork(h.deps(30, source))
+  expect(starts).toBe(2)
+})
+
+test('a source that names its record per project keeps each project\'s lastSync apart', async () => {
+  const h = await harness()
+  let project = 'a'
+  const log: WorkTransition[] = []
+  const source: WorkSource = { name: 'scripted', record: async () => `scripted:${project}`, changedSince: async since => log.filter(t => t.at >= since) }
+  await syncWork(h.deps(0, source))
+  // An epic Done waiting in project a (charting) pins only a's record.
+  h.charting.add(EPIC.key)
+  log.push(move(EPIC, 'done', 5 * MIN))
+  expect((await syncWork(h.deps(10 * MIN, source))).deferred).toBe(1)
+  project = 'b'
+  await syncWork(h.deps(20 * MIN, source))
+  await syncWork(h.deps(30 * MIN, source))
+  expect((await h.repo.sync('scripted:a')).lastSync).toBe(5 * MIN)
+  expect((await h.repo.sync('scripted:b')).lastSync).toBe(30 * MIN)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(null)
+})

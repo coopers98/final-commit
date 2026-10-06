@@ -39,8 +39,17 @@
       "type": "string",
       "multiple": true,
       "title": "Work sources",
-      "description": "Trackers read for automatic detection, by name (SPEC 4.4). This build has no backends yet; each is added by name as it ships.",
+      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans.",
       "default": []
+    },
+    "plansFolders": {
+      "type": "string",
+      "multiple": true,
+      "title": "Plan folders",
+      "description": "Folders of markdown plan documents read by the plans work source, relative to the project.",
+      "default": [
+        "docs/plans"
+      ]
     }
   }
 }

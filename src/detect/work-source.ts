@@ -27,6 +27,19 @@ export interface WorkSource {
   readonly name: string
   /** Status changes of the user's own issues at or after `since`, in any order. May reject. */
   changedSince(since: number): Promise<WorkTransition[]>
+  /**
+   * Called by the source's first sync, which awards nothing (SPEC 4.2): a
+   * source that finds changes by comparing reads takes its baseline here.
+   * May reject; the first sync is then tried again at the next poll.
+   */
+  start?(): Promise<void>
+  /**
+   * The name of the sync record to use now, when it is not `name`: a source
+   * whose changes are kept per project (plan documents) keeps one record per
+   * project, so a change waiting in one project is not skipped by another's
+   * sync. Read at each sync. May reject.
+   */
+  record?(): Promise<string>
 }
 
 export const transitionKey = (t: WorkTransition) => `${t.item.key}:${t.id}`

@@ -40,7 +40,7 @@ At runtime:
 - A plugin's own `$.command.run` skips that plugin's own hooks, so it cannot run its own commands: call the function directly (same file).
 - Edits made during the session's own turn reload the mod when the turn ends, not before.
 - Slash command arguments and output go into the transcript the model reads.
-- In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic. A plugin's own `$.agent.spawn` reaches the test's `agent.spawn` hook as an Agent tool call (`subagent_type`, `prompt`), and only an answer in that tool's shape, `{ result: { status: 'async_launched', agentId }, model }`, gives the plugin an `agentId`.
+- In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic. `fs.*` hooks see paths already resolved to absolute (in a test, against the test process's own folder, not `session.start`'s `cwd`): match stand-in files by their relative path at the end, never by an absolute path. A plugin's own `$.agent.spawn` reaches the test's `agent.spawn` hook as an Agent tool call (`subagent_type`, `prompt`), and only an answer in that tool's shape, `{ result: { status: 'async_launched', agentId }, model }`, gives the plugin an `agentId`.
 
 ## Rules
 
@@ -53,4 +53,4 @@ At runtime:
 
 ## Current phase
 
-v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; the source layer is wired (`workSources` setting, per-source sync, catch-up and poll); what remains of the work sources epic is the backends (SPEC 4.4: plan documents, GitHub Issues, Jira REST and MCP, Linear), each added to `backendsOf` in `hooks/register.tsx`. Next after it: v3 puzzles with content adapters and runners (SPEC 8.3).
+v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; the source layer is wired (`workSources` setting, per-source sync, catch-up and poll); the plan documents backend is done; what remains of the work sources epic is the other backends (SPEC 4.4: GitHub Issues, Jira REST and MCP, Linear), each added to `backendsOf` in `hooks/register.tsx`. Next after it: v3 puzzles with content adapters and runners (SPEC 8.3).

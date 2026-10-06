@@ -10,7 +10,7 @@ import { COLORS, SYNC } from '../src/config'
 const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const SEED = '42'
 
-type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; release: () => void }
+type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; release: () => void }
 
 /** `refuse`: pane ids that cannot be placed. `holdModel`: model calls wait for `w.release()`, so charting stays in flight. */
 function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean } = {}): World {
@@ -18,7 +18,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
   const held: (() => void)[] = []
-  const w: World = { clock, commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], release: () => held.splice(0).forEach(r => r()) }
+  const w: World = { clock, logs: [], commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], release: () => held.splice(0).forEach(r => r()) }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('agent.register', (_$, e) => {
@@ -43,7 +43,10 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     w.status.push(e.text)
     return { value: undefined }
   })
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_$, e) => {
+    w.logs.push(e.text)
+    return { value: undefined }
+  })
   on('process.run', () => ({
     value: { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
   }) as never)
@@ -106,6 +109,77 @@ test('developer mode registers /encounter', { options: { devMode: true } }, asyn
   const w = world(on)
   await $.session.start(START)
   expect(w.commands).toContain('encounter')
+})
+
+/**
+ * Plan files in memory for the plans work source, keyed by project-relative
+ * path. The engine hands `fs.*` hooks absolute paths, so a file is matched
+ * by its relative path at the end of the one asked for.
+ */
+function planFiles(on: On, files: Record<string, string>) {
+  const is = (asked: string, rel: string) => asked === rel || asked.endsWith(`/${rel}`)
+  const dirOf = (f: string) => f.slice(0, f.lastIndexOf('/'))
+  const under = (dir: string) => Object.keys(files).filter(f => is(dir.replace(/\/+$/, ''), dirOf(f)))
+  on('session.cwd', () => ({ value: '/work' }))
+  on('fs.exists', (_$, e) => ({ value: under(e.path).length > 0 || Object.keys(files).some(f => is(e.path, f)) }))
+  on('fs.list', (_$, e) => ({ value: under(e.path).map(f => ({ name: f.slice(f.lastIndexOf('/') + 1), kind: 'file' as const, size: files[f]!.length, mtimeMs: 0, isLink: false })) }))
+  on('fs.read', (_$, e) => {
+    const f = Object.keys(files).find(k => is(e.path, k))
+    return (f === undefined ? Promise.reject(new Error('ENOENT')) : { value: files[f]! }) as never
+  })
+  return files
+}
+
+test('plan documents drive the game: a task marked in progress charts its epic and starts the mission; done completes it; all done surveys the epic', { options: { workSources: ['plans'] }, timeoutMs: 15_000 }, async ($, on) => {
+  const w = world(on)
+  const files = planFiles(on, { 'docs/plans/billing.md': '# NOVA-1 Billing export\n\nExport invoices as files.\n\n- [ ] NOVA-2 Write the exporter\n- [x] NOVA-3 Earlier work\n- [ ] NOVA-4 Document it\n' })
+  await $.session.start(START)
+  await w.clock.settle()
+  // The first sync is the baseline: the task already done is not awarded.
+  expect(w.toasts).toEqual([])
+  files['docs/plans/billing.md'] = files['docs/plans/billing.md']!.replace('- [ ] NOVA-2', '- [~] NOVA-2')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.toasts.some(t => t.startsWith('New system charted'))).toBe(true)
+  // The chart finishing syncs again at once: the mission starts without waiting for the next poll.
+  expect(w.toasts).toContain('Mission NOVA-2 started.')
+  // The plan's prose is the epic's description, filtered (strict drops capitalized words) before the model sees it.
+  expect(w.prompts.join('\n')).toContain('invoices as files')
+  files['docs/plans/billing.md'] = files['docs/plans/billing.md']!.replace('- [~] NOVA-2', '- [x] NOVA-2')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  // The mission's result opens in the report pane; NOVA-4 is still open, so the epic is not surveyed.
+  const reportTexts = async () => {
+    const ui = await $.ui.mount(PANE('fc-report'))
+    const texts = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+    await ui.unmount()
+    return texts as string[]
+  }
+  expect(w.opened.at(-1)).toBe('fc-report')
+  expect(await reportTexts()).toContain('Mission NOVA-2 complete')
+  expect((await run($, 'mission', 'complete')).text).toBe('No active mission. Start one with /mission <KEY>.')
+  // The last task done between polls, never seen started: started then completed, unrewarded as no work was
+  // tracked on it (SPEC 4.3). Its report takes the pane, so the epic's survey is told by toast.
+  files['docs/plans/billing.md'] = files['docs/plans/billing.md']!.replace('- [ ] NOVA-4', '- [x] NOVA-4')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.toasts).toContain('Mission NOVA-4 started.')
+  const last = await reportTexts()
+  expect(last).toContain('Mission NOVA-4 complete')
+  expect(last).toContain('No encounter: no work was tracked on it.')
+  expect(w.toasts.some(t => t.startsWith('System surveyed'))).toBe(true)
+  expect(w.logs).toEqual([])
+})
+
+test('the plans source reads nothing new between polls, and a later session starts from its record', { options: { workSources: ['plans'] } }, async ($, on) => {
+  const w = world(on)
+  planFiles(on, { 'docs/plans/billing.md': '# NOVA-1 Billing export\n- [~] NOVA-2 Write the exporter\n' })
+  await $.session.start(START)
+  await w.clock.settle()
+  await w.clock.advance(SYNC.pollMs * 3)
+  await w.clock.settle()
+  expect(w.toasts).toEqual([])
+  expect(w.prompts).toEqual([])
 })
 
 test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['jira', 'Jira'] } }, async ($, on) => {

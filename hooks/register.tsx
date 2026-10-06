@@ -16,6 +16,7 @@ import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
 import { NO_CHART_FAILURES, chartFailed, chartSucceeded, isChartHeld } from '../src/detect/chart-retry'
+import { createPlansSource, plansId } from '../src/detect/plans'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
 import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, startEpic, startMission, type Outcome } from '../src/game'
@@ -192,8 +193,22 @@ async function announce($: EngineInterface, out: Outcome) {
  * SPEC 4.4: the backends this build has, by the name `workSources` lists.
  * Each closes over `$` here, as `$` reaches only this file's functions.
  */
-function backendsOf(_$: EngineInterface): Record<string, Backend> {
-  return {}
+function backendsOf($: EngineInterface): Record<string, Backend> {
+  const repo = repoOf($)
+  return {
+    // SPEC 4.4 rule 3: files only. Its state and sync record are per project folder, so another project's plans never read as changes.
+    plans: () => createPlansSource({
+      folders: settings.plansFolders,
+      project: async () => plansId(await $.session.cwd()),
+      exists: path => $.fs.exists(path),
+      list: dir => $.fs.list(dir),
+      read: path => $.fs.read(path),
+      load: project => repo.plans(project),
+      save: (project, s) => repo.savePlans(project, s),
+      now: () => $.clock.now(),
+      log: line => $.ui.log(line, { to: 'debug' }),
+    }),
+  }
 }
 
 /** One sync of every configured work source (SPEC 4.2): at session start, then each poll. */

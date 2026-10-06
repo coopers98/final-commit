@@ -104,9 +104,19 @@ async function applyIssue(deps: SyncDeps, t: WorkTransition, charting: Set<strin
  */
 export async function syncWork(deps: SyncDeps): Promise<SyncResult> {
   const { repo, now } = deps
-  const name = deps.source.name
+  let name: string
+  try {
+    name = deps.source.record ? await deps.source.record() : deps.source.name
+  } catch (err) {
+    return { outcomes: [], applied: 0, deferred: 0, error: err instanceof Error ? err.message : String(err) }
+  }
   const state = await repo.sync(name)
   if (state.lastSync === null) {
+    try {
+      await deps.source.start?.()
+    } catch (err) {
+      return { outcomes: [], applied: 0, deferred: 0, error: err instanceof Error ? err.message : String(err) }
+    }
     await repo.saveSync(name, { lastSync: now, processed: [] })
     return { outcomes: [], applied: 0, deferred: 0 }
   }

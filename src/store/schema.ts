@@ -1,4 +1,5 @@
 import type { AttachmentClass, Cell, Tier } from '../config'
+import type { WorkStatus, WorkTransition } from '../detect/work-source'
 
 // SPEC 10, extended for the slice. Times are epoch milliseconds from $.clock.
 
@@ -103,6 +104,21 @@ export type Calibration = { clients: Record<string, { offsetMs: number; measured
  * `<issueKey>:<transitionId>` for each applied transition.
  */
 export type SyncState = { lastSync: number | null; processed: string[] }
+
+/**
+ * SPEC 4.4 rule 3: what the plan documents of one project last read as. A
+ * task stays when it disappears from the files, so a file briefly missing
+ * reports nothing when it returns. `log` keeps recent changes, newest last,
+ * so a sync that waits (SPEC 4.2 rule 5) can read them again. `epoch`: when
+ * the baseline was read, part of every transition id.
+ */
+export type PlansState = {
+  epoch: number
+  tasks: Record<string, { status: WorkStatus }>
+  doneEpics: string[]
+  log: WorkTransition[]
+  seq: number
+}
 
 /** SPEC 9.2: one `/captains-log` entry. */
 export type LogEntry = { at: number; stardate: string; lines: string[] }
