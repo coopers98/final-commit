@@ -15,7 +15,6 @@ const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 
 type Run = { start: number; beats: number[]; presses: number[]; typed: number; timer: Timer }
 let run: Run | undefined
-let closing: Timer | undefined
 
 function repoOf($: EngineInterface): Repo {
   return createRepo(
@@ -54,11 +53,13 @@ async function finish($: EngineInterface, r: Run) {
   }
   await update($, view, () => ({ isBeat: false, pressed: r.presses.length, total: CALIBRATION.beats, isOver: true, message }))
   $.ui.toast(`Calibration: ${message}`)
-  // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
-  closing = $.clock.after(PANES.closeAfterResultMs, () => {
-    closing = undefined
-    void update($, view, () => null).then(() => $.ui.close({ id: CALIBRATE_PANE }))
-  })
+  // Stays up until Enter or Esc, so a late Space never falls into the prompt.
+}
+
+/** A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here. */
+async function dismiss($: EngineInterface) {
+  await update($, view, () => null)
+  await $.ui.close({ id: CALIBRATE_PANE })
 }
 
 async function tick($: EngineInterface, end: number) {
@@ -85,8 +86,6 @@ async function onKeys($: EngineInterface, value: string) {
 
 async function open($: EngineInterface): Promise<string> {
   if (!(await read($, ready))) return 'The Final Commit could not load its save; see the debug log (claude --debug).'
-  closing?.cancel()
-  closing = undefined
   stop()
   const beats = beatSchedule()
   const end = beats[beats.length - 1]! + CALIBRATION.beatIntervalMs
@@ -133,6 +132,8 @@ export function wireCalibration(on: On): void {
           <Input key="keys" autoFocus label="Space" onInput={(value: string) => void onKeys($, value)} onSubmit={() => {}} />
         )}
         {!v.isOver && !Input && <Button key="beat" label="Beat" onPress={() => void onKeys($, ' '.repeat((run?.typed ?? 0) + 1))} />}
+        {v.isOver && Input && <Input key="done" autoFocus label="Enter: close" onInput={() => {}} onSubmit={() => void dismiss($)} />}
+        {v.isOver && !Input && <Button key="done" label="Close" onPress={() => void dismiss($)} />}
       </Box>
     )
   })

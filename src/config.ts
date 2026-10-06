@@ -121,7 +121,7 @@ export const STORE = { prefix: 'fc:', schemaVersion: 1 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9 } as const
-export const PANES = { closeAfterResultMs: 1_500, calibrationLeadInMs: 1_000, calibrationBeatGlowMs: 150, calibrationTickMs: 25 } as const
+export const PANES = { calibrationLeadInMs: 1_000, calibrationBeatGlowMs: 150, calibrationTickMs: 25 } as const
 
 // DEFAULT: the status line shares 40 columns with the engine's own prefix (about 18 cells).
 export const STATUS = { maxColumns: 22 } as const

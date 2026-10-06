@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
 import type { BandView, ChartingEntry, LatticeView } from '../../types'
-import { CELLS, LATTICE_SHARED, PANES, TIER_SPECS, type Cell } from '../config'
+import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell } from '../config'
 import { attemptContainment } from '../game'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
@@ -36,8 +36,6 @@ type Run = {
 
 /** The run in progress; module state, so a hot reload ends it (the encounter stays pending). */
 let run: Run | undefined
-/** The timer that closes the pane after a result; cancelled when a new run opens. */
-let closing: Timer | undefined
 let actions = 0
 
 // The engine lets `$` reach only top-level functions of the same file, so
@@ -88,7 +86,7 @@ function show(r: Run, isOver = false): LatticeView {
     sprite: r.sprite,
     bar: renderBar(r.model),
     locks: renderLocks(r.model),
-    hint: isOver ? [] : ['Space: seal', `Enter: throw ${CELLS[r.cell].label} Cell`, 'Esc: pause'],
+    hint: isOver ? ['Enter or Esc: close'] : ['Space: seal', `Enter: throw ${CELLS[r.cell].label} Cell`, 'Esc: pause'],
     message: r.message,
     isOver,
   }
@@ -123,12 +121,15 @@ async function resolve($: EngineInterface) {
   r.message = toast ?? result.text
   await update($, view, () => show(r, true))
   if (toast) $.ui.toast(toast)
-  // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
-  closing = $.clock.after(PANES.closeAfterResultMs, () => {
-    closing = undefined
-    void update($, view, () => null).then(() => $.ui.close({ id: LATTICE_PANE }))
-  })
+  // The result stays up until Enter or Esc: a pane that closed by itself let
+  // a late Space fall into the prompt and break the next slash command.
   await refresh($)
+}
+
+/** Closes the result. A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here. */
+async function dismiss($: EngineInterface) {
+  await update($, view, () => null)
+  await $.ui.close({ id: LATTICE_PANE })
 }
 
 /** Space presses arrive as growth of the Input's value; a burst can arrive as one change. */
@@ -162,8 +163,6 @@ async function open($: EngineInterface, args: string): Promise<string> {
   const calibration = await repo.calibration()
   const measured = calibration.salt !== '' ? calibration.clients[await clientKeyOf($, calibration.salt)] : undefined
 
-  closing?.cancel()
-  closing = undefined
   stop()
   const rng = await rngOf($)
   const r: Run = {
@@ -227,12 +226,14 @@ export function wireLattice(on: On): void {
         {!v.isOver && Input && (
           <Input key="keys" autoFocus label="Space" onInput={(value: string) => void onKeys($, value)} onSubmit={() => void resolve($)} />
         )}
+        {v.isOver && Input && <Input key="done" autoFocus label="Enter: close" onInput={() => {}} onSubmit={() => void dismiss($)} />}
         {!v.isOver && !Input && (
           <Box>
             <Button key="seal" label="Seal" onPress={() => void onKeys($, ' '.repeat((run?.typed ?? 0) + 1))} />
             <Button key="throw" label="Throw" onPress={() => void resolve($)} />
           </Box>
         )}
+        {v.isOver && !Input && <Button key="done" label="Close" onPress={() => void dismiss($)} />}
       </Box>
     )
   })

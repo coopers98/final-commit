@@ -228,8 +228,11 @@ test('the band shows the companion once one is contained, and steps aside during
   let contained = false
   for (let i = 0; i < 30 && !contained; i += 1) {
     await run($, 'encounter')
-    await containWith($, ui => ui.input({ key: 'keys', text: '', kind: 'submit' }))
-    await w.clock.advance(2_000) // the result pane closes itself after a moment
+    // Enter throws the cell; a second Enter closes the result.
+    await containWith($, async ui => {
+      await ui.input({ key: 'keys', text: '', kind: 'submit' })
+      await ui.input({ key: 'done', text: '', kind: 'submit' })
+    })
     contained = (await run($, 'bay')).text !== 'Opened the specimen bay (0 specimens).'
   }
   expect(contained).toBe(true)
@@ -316,4 +319,23 @@ test('the status line shows charting while the model works, and clears after', a
   release()
   await clock.settle()
   expect(status.at(-1)).not.toContain('charting')
+})
+
+test('a result stays up until Enter, and late Spaces land in the pane, not the prompt', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'encounter')
+  await run($, 'contain')
+  const ui = await $.ui.mount(PANE('fc-lattice'))
+  await ui.input({ key: 'keys', text: '', kind: 'submit' })
+  await w.clock.advance(10_000)
+  // Still showing the result, with a focused input that swallows stray keys.
+  expect(await ui.find({ key: 'done' })).toBeDefined()
+  expect(await ui.find({ key: 'keys' })).toBe(undefined)
+  await ui.input({ key: 'done', text: '   ', kind: 'change' })
+  expect(await ui.find({ key: 'done' })).toBeDefined()
+  await ui.input({ key: 'done', text: '', kind: 'submit' })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['Nothing to contain.'])
+  await ui.unmount()
 })

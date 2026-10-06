@@ -242,6 +242,7 @@ A needle sweeps across a bar; press **Space** inside the green zone to seal a lo
 - **Latency calibration:** one-time `/calibrate` (press Space on a beat 8 times); measured median offset is stored per device and applied as hit-window shift. A device is the attached tmux client (its tty and terminal type) when under tmux, else `TERM` plus the SSH client address; it is stored only as a salted hash. Containment suggests `/calibrate` when the current device has no measurement.
 - **Escape** pauses, never fails: the encounter stays waiting and `/contain` resumes it.
 - **Enter** throws the cell early, with whatever bonus the sealed locks have earned.
+- **Results stay up** until Enter or Esc. The finished pane keeps a focused input, so a late Space lands in the pane, never in the prompt (where a leading space turns the next slash command into a chat message). The same goes for `/calibrate`.
 - Implementation: the model is pure (`src/contain/lattice-model.ts`) and runs in the plugin on a 40 ms `$.clock.every` timer; the focused pane's `Input` delivers Space presses (a burst of key repeats can arrive as one change), each judged at the time it arrives. Surfaces without `Input` (mobile) get Seal and Throw buttons.
 
 ---
