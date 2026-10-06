@@ -1,0 +1,284 @@
+import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+
+// Engine-level tests: the plugin loaded by the engine's own host, with the
+// clock, store, env, model and UI operations answered beneath it.
+// FINAL_COMMIT_SEED makes every game roll deterministic.
+
+const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
+const SEED = '42'
+
+type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[] }
+
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string> } = {}): World {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  mock.store(on)
+  mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
+  const w: World = { clock, commands: [], toasts: [], status: [], prompts: [] }
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => {
+    w.commands.push(e.name)
+    return { value: { command: e.name } }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    w.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.status', (_$, e) => {
+    w.status.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.log', () => ({ value: undefined }))
+  on('process.run', () => ({
+    value: { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }) as never)
+  on('model.complete', (_$, e) => {
+    w.prompts.push(`${e.system ?? ''}\n${e.prompt}`)
+    return { value: { isAnswered: false, reason: 'api-error', usage: {} } } as never
+  })
+  return w
+}
+
+async function run($: any, command: string, args = '') {
+  return (await $.command.run({ command, args })) as { text?: string }
+}
+
+const PANE = (requestId: string, bodyColumns = 60) => ({
+  plugin: 'final-commit', surface: 'terminal' as const, component: 'Pane' as const, requestId,
+  props: { title: '', isFocused: true, bodyColumns, placement: 'inline' } as never,
+})
+
+/** /epic KEY, then the title and description typed into the form pane. */
+async function chart($: any, w: World, key: string, title: string, description = '') {
+  expect((await run($, 'epic', key)).text).toBe(`Opened the charting form for ${key}.`)
+  const form = await $.ui.mount(PANE('fc-epic'))
+  await form.input({ key: 'epic-title', text: title })
+  await form.input({ key: 'epic-description', text: description })
+  await form.unmount()
+  await w.clock.settle()
+}
+
+async function containWith($: any, keys: (ui: any) => Promise<void>) {
+  await run($, 'contain')
+  const ui = await $.ui.mount(PANE('fc-lattice'))
+  await keys(ui)
+  await ui.unmount()
+}
+
+test('session start registers the commands', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  for (const n of ['epic', 'mission', 'contain', 'calibrate', 'bay']) expect(w.commands).toContain(n)
+  expect(w.commands).not.toContain('encounter')
+})
+
+test('developer mode registers /encounter', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  expect(w.commands).toContain('encounter')
+})
+
+test('epic text is typed into a pane, filtered, and never put in command output', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Rebuild export for Dr. Testperson', 'SSN 000-00-0000')
+  expect(w.prompts.length).toBeGreaterThan(0)
+  expect(w.prompts.join('\n')).not.toContain('Testperson')
+  expect(w.prompts.join('\n')).not.toContain('000-00-0000')
+  expect(w.prompts.join('\n')).not.toContain('NOVA-1')
+  expect(w.toasts.some(t => t.startsWith('New system charted'))).toBe(true)
+})
+
+test('a full loop: epic, mission, encounter, contain opens', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  expect((await run($, 'mission', 'NOVA-2')).text).toBe('Mission NOVA-2 started.')
+  expect((await run($, 'mission', 'complete')).text).toBe('Mission NOVA-2 complete. Encounter waiting.')
+  expect((await run($, 'contain')).text).toBe('Opened containment.')
+  expect(w.status.at(-1)).toContain('/contain')
+})
+
+test('usage errors', async ($, on) => {
+  world(on)
+  await $.session.start(START)
+  expect((await run($, 'epic', '')).text).toContain('Usage')
+  expect((await run($, 'epic', 'NOVA-1 a title in the transcript')).text).toContain('Usage')
+  expect((await run($, 'mission', 'NOVA-9')).text).toContain('No active epic')
+  expect((await run($, 'contain')).text).toBe('Nothing to contain right now.')
+})
+
+test('a save from a newer build is left alone and every command says so', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  mock.env(on, { FINAL_COMMIT_SEED: SEED })
+  // The store by hand, to see every write.
+  const data = new Map<string, unknown>([['fc:meta', { schemaVersion: 99, createdAt: 0, completedMissions: 3 }]])
+  const writes: string[] = []
+  on('store.get', (_$, e) => ({ value: data.get(e.key) }))
+  on('store.set', (_$, e) => {
+    writes.push(e.key)
+    data.set(e.key, e.value)
+    return { value: undefined }
+  })
+  on('store.delete', (_$, e) => {
+    writes.push(e.key)
+    data.delete(e.key)
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...data.keys()] }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('ui.log', () => ({ value: undefined }))
+  await $.session.start(START)
+  for (const [c, a] of [['epic', 'NOVA-1'], ['mission', 'NOVA-2'], ['contain', ''], ['calibrate', ''], ['bay', '']] as const) {
+    expect((await run($, c, a)).text).toContain('could not load its save')
+  }
+  expect(writes).toEqual([])
+})
+
+test('the Lattice pane fits 40 columns and an abandoned run keeps the encounter', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'encounter')
+  await run($, 'contain')
+  const ui = await $.ui.mount(PANE('fc-lattice', 38))
+  for (const el of await ui.findAll({ type: 'Text' })) expect([...el.text].length).toBeLessThanOrEqual(38)
+  expect(await ui.find({ key: 'keys' })).toBeDefined()
+  // The kit cannot raise a person's Escape (the live tmux spike showed ui.close
+  // fires with origin 'person'); an abandoned run must leave the encounter pending.
+  await ui.unmount()
+  expect((await run($, 'contain')).text).toBe('Opened containment.')
+})
+
+test('Space presses seal locks through the Input', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'encounter')
+  await containWith($, async ui => {
+    // Press, advance a frame, repeat: some presses land in the zone.
+    let typed = ''
+    for (let i = 0; i < 40; i += 1) {
+      typed += ' '
+      await ui.input({ key: 'keys', text: typed, kind: 'change' })
+      await w.clock.advance(97)
+      const locks = (await ui.find({ type: 'Text', text: /^Locks/ }))?.text ?? ''
+      if (!locks.includes('-')) break
+    }
+    const locks = (await ui.find({ type: 'Text', text: /^Locks/ }))?.text
+    expect(locks).toMatch(/#/)
+  })
+})
+
+test('a burst of Spaces seals at most one lock', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'encounter')
+  await containWith($, async ui => {
+    let best = 0
+    for (let i = 0; i < 40; i += 1) {
+      await ui.input({ key: 'keys', text: ' '.repeat((i + 1) * 5), kind: 'change' })
+      const locks = (await ui.find({ type: 'Text', text: /^Locks/ }))?.text ?? ''
+      best = Math.max(best, (locks.match(/#/g) ?? []).length)
+      await w.clock.advance(97)
+      if (best > 0) break
+    }
+    expect(best).toBeLessThanOrEqual(1)
+  })
+})
+
+test('calibration saves an offset for this device', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  expect((await run($, 'calibrate')).text).toBe('Opened calibration.')
+  const ui = await $.ui.mount(PANE('fc-calibrate'))
+  await w.clock.advance(1_000)
+  let typed = ''
+  for (let i = 0; i < 8; i += 1) {
+    await w.clock.advance(i === 0 ? 790 : 750) // each press lands 40 ms after its beat
+    typed += ' '
+    await ui.input({ key: 'keys', text: typed, kind: 'change' })
+  }
+  await w.clock.advance(2_000)
+  expect(w.toasts.some(t => /Saved: your presses land \d+ ms late/.test(t))).toBe(true)
+  await ui.unmount()
+})
+
+test('calibration with no presses saves nothing', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await run($, 'calibrate')
+  await w.clock.advance(10_000)
+  expect(w.toasts).toContain('Calibration: No presses heard; nothing was saved.')
+})
+
+test('the band shows the companion once one is contained, and steps aside during containment', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  // What the engine draws when the plugin steps aside.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  let contained = false
+  for (let i = 0; i < 30 && !contained; i += 1) {
+    await run($, 'encounter')
+    await containWith($, ui => ui.input({ key: 'keys', text: '', kind: 'submit' }))
+    await w.clock.advance(2_000) // the result pane closes itself after a moment
+    contained = (await run($, 'bay')).text !== 'Opened the specimen bay (0 specimens).'
+  }
+  expect(contained).toBe(true)
+  const BAND = {
+    plugin: 'final-commit', surface: 'terminal' as const, component: 'AbovePrompt' as const,
+    props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 40 } as never,
+  }
+  const band = await $.ui.mount(BAND)
+  const texts = (await band.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.some(t => /idle|content|startled|asleep/.test(t))).toBe(true)
+  await band.unmount()
+  await run($, 'encounter')
+  await run($, 'contain')
+  const hidden = await $.ui.mount(BAND)
+  const shown = (await hidden.findAll({ type: 'Text' })).map(t => t.text)
+  expect(shown).toEqual(['engine band'])
+  await hidden.unmount()
+})
+
+test('/bay companion N picks a companion by its list number', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  expect((await run($, 'bay', 'companion 1')).text).toBe('No such specimen. /bay lists them.')
+})
+
+test('a test run on a branch with a key starts and feeds the mission', async ($, on) => {
+  const w = world(on, { branch: 'feature/NOVA-5-x' })
+  on('tool.call', () => ({ result: { stdout: 'ok' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await $.tool.call({ tool: 'Bash', command: 'git switch feature/NOVA-5-x' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  const out = await run($, 'mission', 'complete')
+  expect(out.text).toContain('NOVA-5')
+  expect(out.text).toContain('Reinforced Cells +1')
+})
+
+test('a failed or backgrounded Bash call is not counted', async ($, on) => {
+  const w = world(on)
+  let next: { result: unknown; isError?: true } = { result: {} }
+  on('tool.call', () => next as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  next = { result: { backgroundTaskId: 'b1' } }
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  next = { result: {}, isError: true }
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  const out = await run($, 'mission', 'complete')
+  expect(out.text).not.toContain('Reinforced')
+})

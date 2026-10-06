@@ -5,11 +5,10 @@ updates:
     schedule:
       interval: weekly
 
-  # Enable once package.json exists.
-  # - package-ecosystem: npm
-  #   directory: /
-  #   schedule:
-  #     interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
 
 # Not covered by Dependabot: the gitleaks version and checksum pinned in
 # .github/workflows/ci.yml. Bump those by hand.

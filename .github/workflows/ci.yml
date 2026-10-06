@@ -65,31 +65,18 @@ jobs:
           printf '%s\n' "$BRANCH" | scripts/denylist-check.sh text "the branch name" || status=1
           exit "$status"
 
-  # Enable once plugin code exists (SPEC 11, 15.2 item 5).
-  #
-  # validate:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #       with:
-  #         persist-credentials: false
-  #     - run: npm install -g @anthropic-ai/claude-code
-  #     - run: claude plugin validate .
-  #
-  # typecheck:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #       with:
-  #         persist-credentials: false
-  #     - run: npm ci
-  #     - run: npx tsc -p .
-  #
-  # test:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #       with:
-  #         persist-credentials: false
-  #     - run: npm install -g @anthropic-ai/claude-code
-  #     - run: claude plugin test .
+  # Validate and test need no credentials. Typecheck runs locally only: the
+  # engine's API declarations are not redistributable, so CI has no types.
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # Keep in step with the version the mod is developed against.
+      - run: npm install -g @anthropic-ai/claude-code@2.1.291
+      - run: claude plugin validate .
+      - run: claude plugin test .
