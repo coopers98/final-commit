@@ -1,15 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, EpicFormView } from '../types'
+import type { BandView, ChartingEntry, EpicFormView } from '../types'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
-import { COMPANION, GENERATION, GIT, type GenerationModel } from '../src/config'
+import { CHARTING, COMPANION, GENERATION, GIT, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash } from '../src/detect/git'
 import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission } from '../src/game'
 import type { Rng } from '../src/rng'
-import { NO_MOOD, localDay, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
+import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
 import { createRepo, type Repo, type StoreLike } from '../src/store/repo'
 import type { Complete } from '../src/world/generate'
@@ -22,12 +22,17 @@ export const EPIC_PANE = 'fc-epic'
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const form = atom({ plugin: 'final-commit', key: 'epicForm' } as const, null as EpicFormView | null)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
+const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 
 const NOT_READY = { text: 'The Final Commit could not load its save; see the debug log (claude --debug).' }
 
-/** Epics being charted right now (module state: a hot reload forgets them, the charting itself finishes). */
-const charting = new Set<string>()
+/**
+ * Epics this module instance is charting. The `charting` state shows them;
+ * this set says which are really running, since a hot reload ends the
+ * generation but keeps the state.
+ */
+const live = new Set<string>()
 let actions = 0
 let settings: Settings = readSettings({})
 
@@ -59,7 +64,7 @@ function completeVia($: EngineInterface, model: GenerationModel): Complete {
 }
 
 async function refresh($: EngineInterface) {
-  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now())
+  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now(), await read($, charting))
   $.ui.status(s.status)
   await update($, band, prev => (s.band && prev ? { ...s.band, isBlinking: prev.isBlinking } : s.band))
 }
@@ -70,7 +75,14 @@ async function deps($: EngineInterface) {
 }
 
 async function chart($: EngineInterface, key: string, title: string, description: string) {
-  charting.add(key)
+  live.add(key)
+  const startedAt = await $.clock.now()
+  await update($, charting, list => [...list.filter(c => c.key !== key), { key, startedAt }])
+  // The status line's spinner and seconds (SPEC 9): redrawn while the model works.
+  const spinner = $.clock.every(CHARTING.spinnerMs, () => {
+    void refresh($)
+  })
+  await refresh($)
   try {
     const out = await startEpic({ ...(await deps($)), epic: { key, title, description }, complete: completeVia($, settings.generationModel), privacy: settings.privacyMode })
     $.ui.toast(out.toast ?? out.text)
@@ -78,7 +90,10 @@ async function chart($: EngineInterface, key: string, title: string, description
   } catch (err) {
     $.ui.toast(`Charting ${key} failed: ${err instanceof Error ? err.message : String(err)}`)
   } finally {
-    charting.delete(key)
+    spinner.cancel()
+    live.delete(key)
+    await update($, charting, list => list.filter(c => c.key !== key))
+    await refresh($)
   }
 }
 
@@ -108,7 +123,7 @@ async function epic($: EngineInterface, args: string): Promise<{ text: string }>
   }
   const key = parseEpicKey(args)
   if (!key) return { text: 'Usage: /epic <KEY> (the title is asked for in a pane), or /epic complete.' }
-  if (charting.has(key)) return { text: `Epic ${key} is already being charted.` }
+  if ((await read($, charting)).some(c => c.key === key)) return { text: `Epic ${key} is already being charted.` }
   await update($, form, () => ({ key, step: 'title', title: '' }))
   await $.ui.open({ id: EPIC_PANE, title: `Chart ${key}`, focus: true, closeOnEscape: true })
   return { text: `Opened the charting form for ${key}.` }
@@ -139,6 +154,12 @@ async function startSession($: EngineInterface) {
     await migrate(storeOf($), now, line => $.ui.log(line, { to: 'debug' }))
     await update($, ready, () => true)
     await update($, mood, m => ({ ...m, lastActivityAt: now }))
+    // A hot reload ends any charting in flight but keeps its marker: say so, and clear it.
+    const orphans = orphanedCharts(await read($, charting), live)
+    if (orphans.length > 0) {
+      await update($, charting, list => list.filter(c => live.has(c.key)))
+      for (const o of orphans) $.ui.toast(`Charting ${o.key} was interrupted by a reload. Run /epic ${o.key} again.`)
+    }
   } catch (err) {
     // A save from a newer build, or a store that cannot be read: the game stays off rather than overwrite it.
     await update($, ready, () => false)

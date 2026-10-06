@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
-import type { BandView } from '../../types'
+import type { BandView, ChartingEntry } from '../../types'
 import { setCompanion } from '../game'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
@@ -11,6 +11,7 @@ export const BAY_PANE = 'fc-bay'
 const rows = atom({ plugin: 'final-commit', key: 'bay' } as const, [] as string[])
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
+const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 
 function repoOf($: EngineInterface): Repo {
@@ -21,7 +22,7 @@ function repoOf($: EngineInterface): Repo {
 }
 
 async function refresh($: EngineInterface) {
-  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now())
+  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now(), await read($, charting))
   $.ui.status(s.status)
   await update($, band, prev => (s.band && prev ? { ...s.band, isBlinking: prev.isBlinking } : s.band))
 }

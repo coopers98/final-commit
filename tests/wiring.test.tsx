@@ -282,3 +282,38 @@ test('a failed or backgrounded Bash call is not counted', async ($, on) => {
   const out = await run($, 'mission', 'complete')
   expect(out.text).not.toContain('Reinforced')
 })
+
+test('the status line shows charting while the model works, and clears after', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  mock.store(on)
+  mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: SEED })
+  const status: (string | undefined)[] = []
+  let release: () => void = () => {}
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.status', (_$, e) => {
+    status.push(e.text)
+    return { value: undefined }
+  })
+  // The model holds its answer until the test releases it.
+  on('model.complete', () =>
+    new Promise(resolve => {
+      release = () => resolve({ value: { isAnswered: false, reason: 'api-error', usage: {} } })
+    }) as never,
+  )
+  await $.session.start(START)
+  expect((await run($, 'epic', 'NOVA-1')).text).toBe('Opened the charting form for NOVA-1.')
+  const form = await $.ui.mount(PANE('fc-epic'))
+  await form.input({ key: 'epic-title', text: 'Billing export' })
+  await form.input({ key: 'epic-description', text: '' })
+  await form.unmount()
+  expect(status.at(-1)).toBe('| charting NOVA-1 0s')
+  expect((await run($, 'epic', 'NOVA-1')).text).toBe('Epic NOVA-1 is already being charted.')
+  release()
+  await clock.settle()
+  expect(status.at(-1)).not.toContain('charting')
+})

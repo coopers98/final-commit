@@ -1,5 +1,5 @@
 import type { PluginOptions } from 'claude-code'
-import type { BandView, MoodState } from '../types'
+import type { BandView, ChartingEntry, MoodState } from '../types'
 import { COMPANION, GENERATION, TIER_SPECS, type GenerationModel } from './config'
 import { statusText } from './bridge/status'
 import type { PrivacyMode } from './puzzle/privacy-filter'
@@ -58,12 +58,29 @@ async function activeSystem(repo: Repo, epicKey: string | null | undefined): Pro
   return undefined
 }
 
+/**
+ * Charting markers with no charting behind them: the marker lives in session
+ * state and outlives a hot reload, the generation itself does not.
+ */
+export function orphanedCharts(entries: ChartingEntry[], live: ReadonlySet<string>): ChartingEntry[] {
+  return entries.filter(e => !live.has(e.key))
+}
+
 /** Everything the status line and the band show, read from the save. */
-export async function snapshot(repo: Repo, mood: MoodState, now: number): Promise<{ status: string | undefined; band: BandView | null }> {
+export async function snapshot(
+  repo: Repo,
+  mood: MoodState,
+  now: number,
+  charting: ChartingEntry[] = [],
+): Promise<{ status: string | undefined; band: BandView | null }> {
   const meta = await repo.meta()
   const mission = await repo.activeMission()
   const system = await activeSystem(repo, meta?.activeEpicKey)
-  const status = statusText({ system, mission, pending: await repo.pending() })
+  const first = charting[0]
+  const status = statusText({
+    system, mission, pending: await repo.pending(),
+    ...(first ? { charting: { key: first.key, elapsedMs: now - first.startedAt } } : {}),
+  })
 
   let band: BandView | null = null
   const specimen = meta?.companionId ? (await repo.specimens()).find(s => s.id === meta.companionId) : undefined

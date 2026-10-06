@@ -33,6 +33,9 @@ export type MoodState = {
   lastActivityAt: number
 }
 
+/** An epic whose star system is being generated right now. */
+export type ChartingEntry = { key: string; startedAt: number }
+
 export type EpicFormView = {
   key: string
   step: 'title' | 'description'
@@ -44,6 +47,8 @@ declare module 'claude-code' {
     'final-commit': {
       /** True once the save migrated this session; nothing touches the store before it. */
       ready: boolean
+      /** In session state, so it outlives a hot reload that kills the charting itself. */
+      charting: ChartingEntry[]
       epicForm: EpicFormView | null
       mood: MoodState
       lattice: LatticeView | null

@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
-import type { BandView, LatticeView } from '../../types'
+import type { BandView, ChartingEntry, LatticeView } from '../../types'
 import { CELLS, LATTICE_SHARED, PANES, TIER_SPECS, type Cell } from '../config'
 import { attemptContainment } from '../game'
 import type { Rng } from '../rng'
@@ -18,6 +18,7 @@ export const LATTICE_PANE = 'fc-lattice'
 const view = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
+const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 
 type Run = {
@@ -54,7 +55,7 @@ async function rngOf($: EngineInterface): Promise<Rng> {
 }
 
 async function refresh($: EngineInterface) {
-  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now())
+  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now(), await read($, charting))
   $.ui.status(s.status)
   await update($, band, prev => (s.band && prev ? { ...s.band, isBlinking: prev.isBlinking } : s.band))
 }

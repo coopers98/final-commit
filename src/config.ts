@@ -126,5 +126,8 @@ export const PANES = { closeAfterResultMs: 1_500, calibrationLeadInMs: 1_000, ca
 // DEFAULT: the status line shares 40 columns with the engine's own prefix (about 18 cells).
 export const STATUS = { maxColumns: 22 } as const
 
+// DEFAULT: the status line's charting indicator (a spinner frame per step).
+export const CHARTING = { spinnerMs: 400, frames: ['|', '/', '-', '\\'] } as const
+
 // DEFAULT: how long a git call from the Bash observer may take.
 export const GIT = { timeoutMs: 5_000 } as const

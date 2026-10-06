@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { STATUS } from '../src/config'
 import { bayRows } from '../src/bridge/bay'
-import { statusText } from '../src/bridge/status'
+import { chartingText, statusText } from '../src/bridge/status'
+import { orphanedCharts } from '../src/runtime'
 import type { StarSystem } from '../src/store/schema'
 
 const system = { id: 'sys-1', epicKey: 'NOVA-1', name: 'Kessa Reach', species: [{ id: 'sys-1:f0', name: 'Glimmer' }] } as unknown as StarSystem
@@ -47,4 +48,26 @@ test('bay rows mark the companion and fit the width', async () => {
 
 test('empty bay', async () => {
   expect(bayRows([], [], null, 40)[0]).toContain('No specimens')
+})
+
+test('charting shows a turning spinner, the key and whole seconds', async () => {
+  expect(chartingText('NOVA-1', 0)).toBe('| charting NOVA-1 0s')
+  expect(chartingText('NOVA-1', 400)).toBe('/ charting NOVA-1 0s')
+  expect(chartingText('NOVA-1', 42_000)).toBe('/ charting NOVA-1 42s')
+  expect(chartingText('NOVA-1', 42_900)).toBe('\\ charting NOVA-1 42s')
+})
+
+test('charting comes after a waiting encounter and before the mission, within the width', async () => {
+  const charting = { key: 'NOVA-1', elapsedMs: 5_000 }
+  expect(statusText({ charting })).toBe('| charting NOVA-1 5s')
+  const text = statusText({ system, mission, charting, pending: pending('common') })!
+  // The waiting encounter wins the room; the charting text is cut, never the encounter.
+  expect(text.startsWith('· /contain · | chart')).toBe(true)
+  expect([...text].length).toBeLessThanOrEqual(STATUS.maxColumns)
+})
+
+test('a charting marker with nothing running behind it is an orphan', async () => {
+  const entries = [{ key: 'NOVA-1', startedAt: 0 }, { key: 'NOVA-2', startedAt: 0 }]
+  expect(orphanedCharts(entries, new Set(['NOVA-2']))).toEqual([{ key: 'NOVA-1', startedAt: 0 }])
+  expect(orphanedCharts(entries, new Set(['NOVA-1', 'NOVA-2']))).toEqual([])
 })
