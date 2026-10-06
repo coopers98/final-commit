@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { STATUS } from '../src/config'
 import { bayRows } from '../src/bridge/bay'
+import { besideLines } from '../src/bridge/band'
 import { chartingText, statusText } from '../src/bridge/status'
 import { orphanedCharts } from '../src/runtime'
 import type { StarSystem } from '../src/store/schema'
@@ -70,4 +71,11 @@ test('a charting marker with nothing running behind it is an orphan', async () =
   const entries = [{ key: 'NOVA-1', startedAt: 0 }, { key: 'NOVA-2', startedAt: 0 }]
   expect(orphanedCharts(entries, new Set(['NOVA-2']))).toEqual([{ key: 'NOVA-1', startedAt: 0 }])
   expect(orphanedCharts(entries, new Set(['NOVA-1', 'NOVA-2']))).toEqual([])
+})
+
+test('the band puts one fact per line beside the sprite, cut to the space left of it', async () => {
+  const v = { name: 'Glornaxi Fernwhisker', tier: 'uncommon', mood: 'content', mission: 'NOVA-142' }
+  expect(besideLines(v, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content', 'NOVA-142'])
+  expect(besideLines(v, 8)).toEqual(['Glornaxi', 'uncommon', 'content', 'NOVA-142'])
+  expect(besideLines({ ...v, mission: null }, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content'])
 })

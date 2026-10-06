@@ -259,7 +259,18 @@ test('the band shows the companion once one is contained, and steps aside during
   const band = await $.ui.mount(BAND)
   const texts = (await band.findAll({ type: 'Text' })).map(t => t.text)
   expect(texts.some(t => /idle|content|startled|asleep/.test(t))).toBe(true)
+  // Facts on the left, cut to the columns beside the sprite; the sprite's 7 rows last.
+  const facts = texts.slice(0, texts.length - 7)
+  expect(facts.length).toBeGreaterThanOrEqual(3)
+  for (const t of facts) expect([...t].length).toBeLessThanOrEqual(40 - 14 - 2)
+  for (const row of texts.slice(-7)) expect([...row].length).toBe(14)
   await band.unmount()
+  // Too few rows for the sprite: one line, cut to the width.
+  const short = await $.ui.mount({ ...BAND, props: { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns: 40 } as never })
+  const line = (await short.findAll({ type: 'Text' })).map(t => t.text)
+  expect(line.length).toBe(1)
+  expect([...line[0]!].length).toBeLessThanOrEqual(40)
+  await short.unmount()
   await run($, 'encounter')
   await run($, 'contain')
   const hidden = await $.ui.mount(BAND)
