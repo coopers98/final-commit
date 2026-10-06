@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, CalibrationView, ChartingEntry, ConfirmView, EpicFormView, LatticeView, ReportView } from '../types'
+import type { BandView, CalibrationView, ChartingEntry, ConfirmView, EpicFormView, LatticeView, QueuedMission, ReportView } from '../types'
 import { NO_ALERT, redAlert } from '../src/bridge/alert'
 import { NO_GAUGES } from '../src/bridge/bridge'
 import { wireBridge } from '../src/bridge/bridge-pane'
@@ -14,7 +14,7 @@ import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel }
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
-import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
+import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
@@ -34,6 +34,7 @@ const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const form = atom({ plugin: 'final-commit', key: 'epicForm' } as const, null as EpicFormView | null)
 const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
 const confirm = atom({ plugin: 'final-commit', key: 'confirm' } as const, null as ConfirmView | null)
+const queued = atom({ plugin: 'final-commit', key: 'queuedMission' } as const, null as QueuedMission | null)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
@@ -106,15 +107,30 @@ async function chart($: EngineInterface, key: string, title: string, description
   try {
     const out = await startEpic({ ...(await deps($)), epic: { key, title, description }, complete: completeVia($, settings.generationModel), privacy: settings.privacyMode })
     $.ui.toast(out.toast ?? out.text)
+    await startQueued($, key, true)
     await refresh($)
   } catch (err) {
     $.ui.toast(`Charting ${key} failed: ${err instanceof Error ? err.message : String(err)}`)
+    await startQueued($, key, false)
   } finally {
     spinner.cancel()
     live.delete(key)
     await update($, charting, list => list.filter(c => c.key !== key))
     await refresh($)
   }
+}
+
+/** A charting finished: start the mission that was waiting for that epic, timed from when it was asked for. */
+async function startQueued($: EngineInterface, epicKey: string, isCharted: boolean) {
+  const q = await read($, queued)
+  if (!q || q.epicKey !== epicKey) return
+  await update($, queued, () => null)
+  if (!isCharted) {
+    $.ui.toast(`Mission ${q.issueKey} was not started: charting ${epicKey} failed. Run /mission ${q.issueKey} again.`)
+    return
+  }
+  const out = await startMission({ ...(await deps($)), issueKey: q.issueKey, startedAt: q.at })
+  $.ui.toast(out.text)
 }
 
 /** The form's Enter: the title first, then the description; then charting starts after the pane closes. */
@@ -169,12 +185,23 @@ async function mission($: EngineInterface, args: string): Promise<{ text: string
   const arg = args.trim()
   const verb = arg.toLowerCase().split(/\s+/).join(' ')
   if (verb !== 'complete' && verb !== 'complete anyway') {
+    const key = parseEpicKey(arg)
+    // An epic still being charted becomes active when it finishes: the mission waits for it.
+    const target = key && !(await repoOf($).activeMission()) ? queueTarget(key, (await read($, charting)).filter(c => live.has(c.key))) : undefined
+    if (key && target) {
+      const before = await read($, queued)
+      const at = await $.clock.now()
+      await update($, queued, () => ({ issueKey: key, epicKey: target, at }))
+      return { text: `Mission ${key} queued: it starts on epic ${target} when charting finishes.${before && before.issueKey !== key ? ` It replaces the queued ${before.issueKey}.` : ''}` }
+    }
     const out = await startMission({ ...(await deps($)), issueKey: arg })
     await refresh($)
     await announce($, out)
     return { text: out.text }
   }
   const active = await repoOf($).activeMission()
+  const waiting = await read($, queued)
+  if (!active && waiting) return { text: `No active mission: ${waiting.issueKey} is queued until epic ${waiting.epicKey} is charted.` }
   const items = active ? openItems(active) : []
   if (!active || items.length === 0 || verb === 'complete anyway') return { text: await finishMission($) }
   const open = `Mission ${active.issueKey} has open items: ${items.join('; ')}.`
@@ -305,6 +332,11 @@ async function prepareSession($: EngineInterface) {
     if (orphans.length > 0) {
       await update($, charting, list => list.filter(c => live.has(c.key)))
       for (const o of orphans) $.ui.toast(`Charting ${o.key} was interrupted by a reload. Run /epic ${o.key} again.`)
+      const q = await read($, queued)
+      if (q && orphans.some(o => o.key === q.epicKey)) {
+        await update($, queued, () => null)
+        $.ui.toast(`Mission ${q.issueKey} is no longer queued. Run /mission ${q.issueKey} after charting ${q.epicKey}.`)
+      }
     }
   } catch (err) {
     // A save from a newer build, or a store that cannot be read: the game stays off rather than overwrite it.

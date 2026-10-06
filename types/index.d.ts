@@ -46,6 +46,9 @@ export type ReportView = {
 /** `/mission complete` asking first: the mission's open items (tests, lint). */
 export type ConfirmView = { issueKey: string; items: string[] }
 
+/** A `/mission <KEY>` typed while its epic was being charted: started when the charting finishes. */
+export type QueuedMission = { issueKey: string; epicKey: string; at: number }
+
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
 
@@ -65,6 +68,7 @@ declare module 'claude-code' {
       epicForm: EpicFormView | null
       report: ReportView | null
       confirm: ConfirmView | null
+      queuedMission: QueuedMission | null
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null

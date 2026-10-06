@@ -168,6 +168,18 @@ export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promi
   }
 }
 
+/**
+ * The epic a `/mission <KEY>` waits for while epics are being charted: the
+ * latest one of the key's project, else the latest of all. Charting makes an
+ * epic active when it finishes, so that is where the mission belongs.
+ */
+export function queueTarget(issueKey: string, charting: readonly { key: string; startedAt: number }[]): string | undefined {
+  const latest = (list: readonly { key: string; startedAt: number }[]) =>
+    list.reduce<{ key: string; startedAt: number } | undefined>((a, c) => (!a || c.startedAt >= a.startedAt ? c : a), undefined)?.key
+  const key = issueKey.toUpperCase()
+  return latest(charting.filter(c => projectOf(c.key) === projectOf(key))) ?? latest(charting)
+}
+
 /** `startedAt`: when the work started, if earlier than now (a tracker start seen at the next poll). */
 export async function startMission(deps: GameDeps & { issueKey: string; startedAt?: number }): Promise<Outcome> {
   const { repo, now } = deps

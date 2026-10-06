@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
-  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, recordBash,
+  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash,
   setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
@@ -338,4 +338,11 @@ test('command text never carries game flavor words', async () => {
   await startMission({ ...deps, issueKey: 'NOVA-2' })
   const out = await completeMission(deps)
   expect(out.text).not.toMatch(/wild|stirs|dark|!|Encounter!/)
+})
+
+test('queueTarget picks the latest charting epic of the key\'s project, else the latest of all', async () => {
+  const charting = [{ key: 'NOVA-1', startedAt: 10 }, { key: 'NOVA-9', startedAt: 5 }, { key: 'ORION-4', startedAt: 20 }]
+  expect(queueTarget('nova-2', charting)).toBe('NOVA-1')
+  expect(queueTarget('VEGA-3', charting)).toBe('ORION-4')
+  expect(queueTarget('NOVA-2', [])).toBe(undefined)
 })

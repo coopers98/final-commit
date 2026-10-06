@@ -8,14 +8,15 @@ import type { On } from 'claude-code'
 const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const SEED = '42'
 
-type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[] }
+type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; release: () => void }
 
-/** `refuse`: pane ids that cannot be placed. */
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[] } = {}): World {
+/** `refuse`: pane ids that cannot be placed. `holdModel`: model calls wait for `w.release()`, so charting stays in flight. */
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
-  const w: World = { clock, commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [] }
+  const held: (() => void)[] = []
+  const w: World = { clock, commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], release: () => held.splice(0).forEach(r => r()) }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('agent.register', (_$, e) => {
@@ -46,7 +47,9 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
   }) as never)
   on('model.complete', (_$, e) => {
     w.prompts.push(`${e.system ?? ''}\n${e.prompt}`)
-    return { value: { isAnswered: false, reason: 'api-error', usage: {} } } as never
+    const answer = { value: { isAnswered: false, reason: 'api-error', usage: {} } }
+    if (!opts.holdModel) return answer as never
+    return new Promise(resolve => held.push(() => resolve(answer))) as never
   })
   return w
 }
@@ -784,4 +787,52 @@ test('where the confirmation cannot open, /mission complete says how to complete
   await run($, 'mission', 'NOVA-2')
   expect((await run($, 'mission', 'complete')).text).toContain('Not completed. /mission complete anyway completes it regardless.')
   expect((await run($, 'mission', 'complete anyway')).text).toContain('Mission NOVA-2 complete.')
+})
+
+/** /epic KEY and its form, leaving the charting in flight (with holdModel). */
+async function startChart($: any, key: string, title: string) {
+  await run($, 'epic', key)
+  const form = await $.ui.mount(PANE('fc-epic'))
+  await form.input({ key: 'epic-title', text: title })
+  await form.input({ key: 'epic-description', text: '' })
+  await form.unmount()
+}
+
+test('/mission during charting is queued, and starts on that epic when charting finishes', async ($, on) => {
+  const w = world(on, { holdModel: true })
+  await $.session.start(START)
+  await startChart($, 'NOVA-1', 'Billing export')
+  expect((await run($, 'mission', 'nova-2')).text).toBe('Mission NOVA-2 queued: it starts on epic NOVA-1 when charting finishes.')
+  expect((await run($, 'mission', 'complete')).text).toBe('No active mission: NOVA-2 is queued until epic NOVA-1 is charted.')
+  await w.clock.advance(30_000)
+  w.release()
+  await w.clock.settle()
+  expect(w.toasts).toContain('Mission NOVA-2 started.')
+  expect(w.status.at(-1)).toContain('NOVA-2')
+  expect((await run($, 'mission', 'NOVA-3')).text).toBe('Mission NOVA-2 is already active. Finish it with /mission complete.')
+})
+
+test('a second /mission during charting replaces the queued one', async ($, on) => {
+  const w = world(on, { holdModel: true })
+  await $.session.start(START)
+  await startChart($, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  expect((await run($, 'mission', 'NOVA-3')).text).toBe('Mission NOVA-3 queued: it starts on epic NOVA-1 when charting finishes. It replaces the queued NOVA-2.')
+  w.release()
+  await w.clock.settle()
+  expect(w.toasts).toContain('Mission NOVA-3 started.')
+  expect(w.toasts).not.toContain('Mission NOVA-2 started.')
+})
+
+test('with an active mission, /mission during charting is not queued', async ($, on) => {
+  const w = world(on, { holdModel: true })
+  await $.session.start(START)
+  await startChart($, 'NOVA-1', 'Billing export')
+  w.release()
+  await w.clock.settle()
+  await run($, 'mission', 'NOVA-2')
+  await startChart($, 'NOVA-9', 'Search')
+  expect((await run($, 'mission', 'NOVA-3')).text).toBe('Mission NOVA-2 is already active. Finish it with /mission complete.')
+  w.release()
+  await w.clock.settle()
 })
