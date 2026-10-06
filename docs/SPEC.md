@@ -312,7 +312,8 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 | **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then a system being charted (`/ charting NOVA-1 42s`, a spinner and seconds), then the mission, then the system, within 22 columns (section 2, constraint 5). A charting interrupted by a hot reload is reported by a toast at the next start, never left spinning |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
 | **Report pane** | Opens on `/mission complete` and `/epic complete` and stays until dismissed (a toast vanishes before a long name is read): commits, test runs, cells earned, and the creature that turned up with its sprite. Enter goes straight to containment (`r` then Enter uses a Reinforced Cell); Esc leaves the encounter waiting. |
-| **Specimen Bay pane** (`/bay`) | Collection grid, set companion, catalog completion per system. v1: a list, and `/bay companion N` |
+| **Specimen Bay pane** (`/bay`) | Collection grid, set companion, the catalog of everything met across systems (no per-system completion: an epic holds too few missions to meet a whole system). v1: a list, and `/bay companion N` |
+| **Scan pane** (`/scan [KEY]`) | What the sensors know about a system (9.4) |
 | **Dossier pane** (`/dossier`) | Puzzle accuracy |
 
 ### 9.1 Crew (subagents)
@@ -340,6 +341,19 @@ Built: each is registered at session start as `final-commit:engineering`, `final
 - Reacts to events: build pass (eats), stack trace (flinches), idle 10+ min (sleeps).
 - Earns XP from completed missions; evolves at levels 10 and 25.
 - **Perks affect game mechanics only** (encounter odds, harvest yield). Never code behavior.
+
+### 9.4 Scan
+
+`/scan` opens a pane for the active epic's system, `/scan <KEY>` for any charted one: name, star class, biomes, then lifeforms by kind and tier. The command's output names no species; the pane does.
+
+| Lifeform | Shown as |
+|---|---|
+| Met (any tier) | Name, readout, best status reached: seen, escaped or contained |
+| Unmet Common or Uncommon | Name and readout, *not yet encountered* |
+| Unmet Rare, Exotic or Legendary | A count of unidentified signals, or its first-stage silhouette once resolved; never the name |
+| Anomaly | Not shown |
+
+A system holds far more lifeforms than an epic has missions, so the scan reports what was learned ("Met 2 here, 1 contained"), never a completion ratio. Learning does not need an encounter: a completed mission with no encounter (and with attached work, 4.3) resolves one hidden signal, lowest tier first, into a silhouette; a survey resolves every one left. Resolved signals are saved as species ids (`fc:resolved`). The tiers are tuned in `SCAN` (`src/config.ts`).
 
 ---
 

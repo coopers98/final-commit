@@ -116,6 +116,15 @@ export const GENERATION = {
   extraSyllableChance: 0.5,
 } as const
 
+// DEFAULT: /scan (SPEC 9.4). Unmet lifeforms of `namedTiers` are named; of
+// `hiddenTiers` never shown; the rest are counted, or drawn as a silhouette
+// once resolved.
+export const SCAN = {
+  namedTiers: ['common', 'uncommon'] as readonly Tier[],
+  hiddenTiers: ['anomaly'] as readonly Tier[],
+  silhouetteChar: '#',
+} as const
+
 // SPEC 10
 export const STORE = { prefix: 'fc:', schemaVersion: 2 } as const
 

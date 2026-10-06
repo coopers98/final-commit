@@ -83,7 +83,7 @@ async function containWith($: any, keys: (ui: any) => Promise<void>) {
 test('session start registers the commands', async ($, on) => {
   const w = world(on)
   await $.session.start(START)
-  for (const n of ['epic', 'mission', 'contain', 'calibrate', 'bay']) expect(w.commands).toContain(n)
+  for (const n of ['epic', 'mission', 'contain', 'calibrate', 'bay', 'scan']) expect(w.commands).toContain(n)
   expect(w.commands).not.toContain('encounter')
 })
 
@@ -835,4 +835,20 @@ test('with an active mission, /mission during charting is not queued', async ($,
   expect((await run($, 'mission', 'NOVA-3')).text).toBe('Mission NOVA-2 is already active. Finish it with /mission complete.')
   w.release()
   await w.clock.settle()
+})
+
+test('/scan opens a pane for the active system and keeps species names out of its output', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  expect((await run($, 'scan')).text).toBe('No active epic. /scan <KEY> scans a charted one.')
+  await chart($, w, 'NOVA-1', 'Billing export')
+  expect((await run($, 'scan', 'NOVA-7')).text).toBe('Epic NOVA-7 is not charted.')
+  expect((await run($, 'scan', 'not a key')).text).toBe('Usage: /scan [KEY], for example /scan NOVA-1.')
+  expect((await run($, 'scan')).text).toBe('Opened the scan of epic NOVA-1.')
+  expect(w.opened.at(-1)).toBe('fc-scan')
+  const ui = await $.ui.mount(PANE('fc-scan', 40))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.some(t => t.endsWith('not yet encountered'))).toBe(true)
+  expect(texts.every(t => [...t].length <= 40)).toBe(true)
+  await ui.unmount()
 })

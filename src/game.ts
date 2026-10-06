@@ -1,4 +1,5 @@
 import type { ReportView } from '../types'
+import { unresolvedSignals } from './bridge/scan'
 import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { lintVerdict, testVerdictFromOutput, type BashSignals } from './detect/git'
@@ -143,6 +144,22 @@ async function markCatalog(repo: Repo, entry: CatalogEntry): Promise<void> {
   await repo.saveCatalog([...all.filter(e => !same(e)), entry])
 }
 
+/**
+ * SPEC 9.4: the sensors resolve hidden signals of `system` into silhouettes,
+ * lowest tier first. Returns the species resolved.
+ */
+async function resolveSignals(repo: Repo, system: StarSystem, count: number): Promise<Species[]> {
+  const resolved = await repo.resolved()
+  const picked = unresolvedSignals(system, await repo.catalog(), resolved).slice(0, count)
+  if (picked.length > 0) await repo.saveResolved([...resolved, ...picked.map(s => s.id)])
+  return picked
+}
+
+const signalLine = (picked: Species[]) =>
+  picked.length === 1
+    ? `Sensors resolved a ${TIER_SPECS[picked[0]!.tier].label} signal's shape. /scan`
+    : `Sensors resolved ${picked.length} hidden signals' shapes. /scan`
+
 /** Surveys the active epic, or `epicKey` when the tracker closed a particular one (SPEC 4.1). */
 export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promise<Outcome> {
   const { repo, now } = deps
@@ -156,12 +173,14 @@ export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promi
   await repo.patchMeta(m => (m.activeEpicKey === system.epicKey ? { ...m, activeEpicKey: null } : m))
   const pending = await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
   const species = system.species.find(s => s.id === pending.speciesId)
+  // The survey resolves every hidden signal left, after the encounter so its creature is not among them.
+  const picked = await resolveSignals(repo, system, Number.MAX_SAFE_INTEGER)
   return {
     text: `Surveyed epic ${system.epicKey}. Encounter waiting.`,
     toast: `System surveyed: ${system.name}. Something rare stirs. /contain`,
     report: {
       title: `System surveyed: ${system.name}`,
-      lines: [`Epic ${system.epicKey} complete.`, 'Something rare stirs.'],
+      lines: [`Epic ${system.epicKey} complete.`, ...(picked.length > 0 ? [signalLine(picked)] : []), 'Something rare stirs.'],
       encounter: encounterHeading(species, pending),
       reinforced: (await repo.inventory()).reinforced,
     },
@@ -261,12 +280,14 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
       report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), reinforced },
     }
   }
+  // No encounter, but the mission still teaches something about the system.
+  const picked = system && attachedWork ? await resolveSignals(repo, system, 1) : []
   const why = !attachedWork
     ? 'No encounter: no work was tracked on it.'
     : hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
   return {
     text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''}`,
-    report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why], encounter: null, reinforced },
+    report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why, ...(picked.length > 0 ? [signalLine(picked)] : [])], encounter: null, reinforced },
   }
 }
 

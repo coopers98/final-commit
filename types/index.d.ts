@@ -49,6 +49,9 @@ export type ConfirmView = { issueKey: string; items: string[] }
 /** A `/mission <KEY>` typed while its epic was being charted: started when the charting finishes. */
 export type QueuedMission = { issueKey: string; epicKey: string; at: number }
 
+/** One row of the /scan pane (SPEC 9.4); `isArt` rows are cut, never wrapped. */
+export type ScanRow = { text: string; style?: 'bold' | 'dim'; isArt?: boolean }
+
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
 
@@ -69,6 +72,7 @@ declare module 'claude-code' {
       report: ReportView | null
       confirm: ConfirmView | null
       queuedMission: QueuedMission | null
+      scan: ScanRow[]
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null

@@ -8,6 +8,7 @@ import { wireCrew } from '../src/crew/crew-wire'
 import { CREW_SPECS, ROLES } from '../src/crew/roster'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
+import { wireScan } from '../src/bridge/scan-pane'
 import { wrap } from '../src/bridge/text'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel } from '../src/config'
@@ -365,6 +366,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
+  await $.command.register({ name: 'scan', description: 'Scan a star system: the lifeforms known so far', argumentHint: '[KEY]' })
   await $.command.register({ name: 'bridge', description: 'Open the bridge: system, mission, hull, shields, fuel' })
   await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
   await registerCrew($)
@@ -419,6 +421,7 @@ export const register: Register = (on, options) => {
   wireLattice(on)
   wireCalibration(on)
   wireBay(on)
+  wireScan(on)
   wireBridge(on)
   wireCrew(on)
 

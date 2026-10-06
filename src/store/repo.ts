@@ -25,6 +25,7 @@ export const KEYS = {
   sync: `${p}sync`,
   captainsLog: `${p}log`,
   crewReports: `${p}crew-reports`,
+  resolved: `${p}resolved`,
 } as const
 
 export function createMemoryStore(): StoreLike & { dump(): Record<string, unknown> } {
@@ -120,6 +121,9 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
 
     catalog: () => readList<CatalogEntry>(KEYS.catalog, v => isObject(v) && typeof v.speciesId === 'string' && isTier(v.tier)),
     saveCatalog: (entries: CatalogEntry[]) => writeList(KEYS.catalog, entries),
+    /** SPEC 9.4: species ids the sensors resolved into silhouettes. */
+    resolved: () => readList<string>(KEYS.resolved, v => typeof v === 'string'),
+    saveResolved: (ids: string[]) => writeList(KEYS.resolved, ids),
 
     pending: () => readOptional<PendingEncounter>(KEYS.pending, v => typeof v.id === 'string' && typeof v.speciesId === 'string' && isTier(v.tier)),
     savePending: (e: PendingEncounter) => store.set(KEYS.pending, stamp(e)),
