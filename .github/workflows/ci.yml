@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Pinned binary with checksum check. Dependabot does not track these;
+      # bump both values by hand.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan full history
+        run: gitleaks git --redact --no-banner --verbose --config .gitleaks.toml .
+
+  denylist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The terms live in the DENYLIST repository secret so they are never
+      # public. Pull requests from forks do not receive secrets; those skip
+      # with a warning and are checked again when merged to main.
+      - name: Check tracked files, commit messages, and branch name
+        env:
+          DENYLIST: ${{ secrets.DENYLIST }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if [ -z "$DENYLIST" ]; then
+            if [ "$FORK_PR" = "true" ]; then
+              echo "::warning::DENYLIST secret unavailable to fork pull requests; skipped."
+              exit 0
+            fi
+            echo "::error::DENYLIST repository secret is not set."
+            exit 1
+          fi
+          status=0
+          scripts/denylist-check.sh files || status=1
+          scripts/denylist-check.sh history || status=1
+          printf '%s\n' "$BRANCH" | scripts/denylist-check.sh text "the branch name" || status=1
+          exit "$status"
+
+  # Enable once plugin code exists (SPEC 11, 15.2 item 5).
+  #
+  # validate:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #       with:
+  #         persist-credentials: false
+  #     - run: npm install -g @anthropic-ai/claude-code
+  #     - run: claude plugin validate .
+  #
+  # typecheck:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #       with:
+  #         persist-credentials: false
+  #     - run: npm ci
+  #     - run: npx tsc -p .
+  #
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #       with:
+  #         persist-credentials: false
+  #     - run: npm install -g @anthropic-ai/claude-code
+  #     - run: claude plugin test .

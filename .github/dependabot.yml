@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Enable once package.json exists.
+  # - package-ecosystem: npm
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+
+# Not covered by Dependabot: the gitleaks version and checksum pinned in
+# .github/workflows/ci.yml. Bump those by hand.
