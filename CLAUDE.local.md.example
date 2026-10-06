@@ -1,0 +1,12 @@
+# Local notes (gitignored, never commit)
+
+Copy this file to CLAUDE.local.md and fill it in. CLAUDE.local.md is
+gitignored; nothing in it may be copied into a tracked file.
+
+- Host: <host-name>. How you reach it: <e.g. SSH + tmux from laptop and phone>.
+- Host OS / headless: <distro and version>. <Headless or desktop>.
+- Audio (SPEC D7): <none | player available: name>.
+- Toolchain: Claude Code <version>, git <version>, node <version>, npm <version>, gh <version>, php <version or missing>, gitleaks <version or missing>.
+- Jira instance(s): <https://example.atlassian.net or none>. Access via <Atlassian MCP connector | REST API token in plugin userConfig>.
+- Regulated codebases you work in: <none | description>. If any, keep the privacy filter on, strict mode.
+- Phone play: <yes | no>. If yes, run /calibrate (SPEC 7.3).

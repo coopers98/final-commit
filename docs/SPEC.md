@@ -361,6 +361,7 @@ Public repository rules: see section 15.
 - Public repo guardrails in place before the first code commit (section 15.6)
 - Store schema + migrations
 - Manual `/epic`, `/mission`, `/mission complete` + git branch detection
+- Privacy filter (section 5.3), on by default, before system generation sends any epic text to the model
 - System generation with art validation and parts-library fallback
 - Encounter roll, rarity, attachments
 - Seal the Lattice + calibration
@@ -374,7 +375,6 @@ Public repository rules: see section 15.
 - Crew subagents, red alert, captain's log
 
 ### v3: Puzzles
-- Privacy filter
 - Pattern ID, Complexity Read, Code Trace, Bug Hunt
 - Answer verification, dispute key
 - Dossier pane, spaced repetition
