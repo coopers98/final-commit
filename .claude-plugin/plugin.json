@@ -1,0 +1,39 @@
+{
+  "name": "final-commit",
+  "version": "0.1.0",
+  "description": "A sci-fi creature-collection game built from your real dev work.",
+  "author": {
+    "name": "coopers98"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "generationModel": {
+      "type": "string",
+      "title": "System generation model",
+      "description": "Model that charts a star system, one call per epic.",
+      "options": [
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default": "opus"
+    },
+    "privacyMode": {
+      "type": "string",
+      "title": "Privacy filter",
+      "description": "Filter applied to epic text before it reaches the model. strict also removes capitalized words that could be names.",
+      "options": [
+        "standard",
+        "strict",
+        "off"
+      ],
+      "default": "strict"
+    },
+    "devMode": {
+      "type": "boolean",
+      "title": "Developer mode",
+      "description": "Enables /encounter, which forces an encounter for playtesting.",
+      "default": false
+    }
+  }
+}

@@ -1,0 +1,308 @@
+import { expect, test } from 'claude-code/testing'
+import { GENERATION } from '../src/config'
+import {
+  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash,
+  setCompanion, startEpic, startMission,
+} from '../src/game'
+import { classifyBash } from '../src/detect/git'
+import { DAY_MS } from '../src/encounter/roll'
+import { createRng } from '../src/rng'
+import { migrate } from '../src/store/migrate'
+import { createMemoryStore, createRepo } from '../src/store/repo'
+import type { Complete } from '../src/world/generate'
+import { ENCOUNTER } from '../src/config'
+
+const offline: Complete = async () => ({ ok: false, reason: 'offline' })
+
+async function fresh(now = 0) {
+  const store = createMemoryStore()
+  await migrate(store, now)
+  return { store, repo: createRepo(store) }
+}
+
+async function withEpic(seed = 1) {
+  const { store, repo } = await fresh()
+  const deps = { repo, now: 0, rng: createRng(seed) }
+  await startEpic({ ...deps, epic: { key: 'NOVA-1', title: 'Billing export', description: '' }, complete: offline, privacy: 'standard' })
+  return { store, repo, deps }
+}
+
+test('parseEpicKey takes a key and nothing else', async () => {
+  expect(parseEpicKey('NOVA-1')).toBe('NOVA-1')
+  expect(parseEpicKey(' nova-2 ')).toBe('NOVA-2')
+  for (const bad of ['', 'complete', 'NOVA', 'NOVA-1 Billing export', 'NOVA-01']) expect(parseEpicKey(bad)).toBe(undefined)
+})
+
+test('starting an epic charts a system and makes it active', async () => {
+  const { repo } = await withEpic()
+  const ids = await repo.systemIds()
+  expect(ids.length).toBe(1)
+  const system = (await repo.system(ids[0]!))!
+  expect(system.epicKey).toBe('NOVA-1')
+  expect(system.species.filter(s => s.kind === 'fauna').length).toBe(Object.values(GENERATION.faunaSlots).reduce((a, b) => a + b, 0))
+  expect((await repo.meta())!.activeEpicKey).toBe('NOVA-1')
+})
+
+test('starting the same epic again does not chart a second system', async () => {
+  const { repo, deps } = await withEpic()
+  const out = await startEpic({ ...deps, epic: { key: 'NOVA-1', title: 'x', description: '' }, complete: offline, privacy: 'standard' })
+  expect(out.text).toContain('already charted')
+  expect((await repo.systemIds()).length).toBe(1)
+})
+
+test('out-of-order commands explain themselves and change nothing', async () => {
+  const { store, repo } = await fresh()
+  const deps = { repo, now: 0, rng: createRng(1) }
+  const before = JSON.stringify(store.dump())
+  expect((await startMission({ ...deps, issueKey: 'NOVA-2' })).text).toContain('No active epic')
+  expect((await completeMission(deps)).text).toContain('No active mission')
+  expect((await completeEpic(deps)).text).toContain('No active epic')
+  expect((await attemptContainment({ ...deps, cell: 'standard', latticeBonus: 0 })).text).toContain('Nothing to contain')
+  expect((await forceEncounter(deps)).text).toContain('No active epic')
+  expect(JSON.stringify(store.dump())).toBe(before)
+})
+
+test('a second mission while one is active is refused', async () => {
+  const { deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  expect((await startMission({ ...deps, issueKey: 'NOVA-3' })).text).toContain('already active')
+})
+
+test('a malformed mission key is refused', async () => {
+  const { deps } = await withEpic()
+  expect((await startMission({ ...deps, issueKey: 'not a key' })).text).toContain('Usage')
+})
+
+test('the first completed mission guarantees an encounter', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission({ ...deps, now: 1000 })
+  expect(out.text).toContain('Encounter waiting')
+  expect(await repo.pending()).toBeDefined()
+  expect((await repo.meta())!.completedMissions).toBe(1)
+})
+
+test('the daily soft cap stops mission encounters for the day', async () => {
+  const { repo, deps } = await withEpic()
+  const day = '2026-10-06'
+  let count = 0
+  for (let i = 0; i < 10; i += 1) {
+    await startMission({ ...deps, issueKey: `NOVA-${i + 2}` })
+    // Six days apart in clock time (a guaranteed encounter) but the same calendar day key.
+    await completeMission({ ...deps, now: i * 6 * DAY_MS, day })
+    if (await repo.pending()) {
+      count += 1
+      await repo.clearPending()
+    }
+  }
+  expect(count).toBe(ENCOUNTER.dailySoftCap)
+})
+
+test('a new day resets the cap', async () => {
+  const { repo, deps } = await withEpic()
+  for (const day of ['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-07']) {
+    await startMission({ ...deps, issueKey: `NOVA-${Math.floor(Math.random() * 1e6) + 2}` })
+    await completeMission({ ...deps, now: 6 * DAY_MS, day })
+    await repo.clearPending()
+  }
+  expect((await repo.meta())!.encountersToday).toEqual({ day: '2026-10-07', count: 1 })
+})
+
+test('passing tests during a mission earn a Reinforced Cell and raise quality', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false })
+  expect((await repo.activeMission())!.testsGreen).toBe(true)
+  await completeMission(deps)
+  expect((await repo.inventory()).reinforced).toBe(1)
+  expect((await repo.pending())!.quality).toBe(0.5)
+})
+
+test('a piped or guarded test run never counts as green', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  for (const c of ['npm test | tail -3', 'npm test || true', 'npm test &']) {
+    await recordBash({ ...deps, signals: classifyBash(c), commits: 0, isError: false })
+    expect((await repo.activeMission())!.testsGreen).toBe(false)
+  }
+})
+
+test('a failing last test run clears testsGreen', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: true })
+  expect((await repo.activeMission())!.testsGreen).toBe(false)
+  expect((await repo.activeMission())!.testRuns).toBe(2)
+})
+
+test('commits are counted on the active mission only', async () => {
+  const { repo, deps } = await withEpic()
+  await recordBash({ ...deps, signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  expect((await repo.activeMission())!.commits).toBe(1)
+})
+
+test('a slow /epic does not roll back progress saved while it charted', async () => {
+  const { repo, deps } = await withEpic()
+  let release: () => void = () => {}
+  const slow: Complete = () => new Promise(resolve => { release = () => resolve({ ok: false, reason: 'offline' }) })
+  const charting = startEpic({ ...deps, epic: { key: 'NOVA-50', title: 'x', description: '' }, complete: slow, privacy: 'standard' })
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission(deps)
+  const during = (await repo.meta())!
+  expect(during.completedMissions).toBe(1)
+  release()
+  await charting
+  const after = (await repo.meta())!
+  expect(after.completedMissions).toBe(1)
+  expect(after.lastEncounterAt).toBe(during.lastEncounterAt)
+  expect(after.activeEpicKey).toBe('NOVA-50')
+})
+
+test('two epics charted at once get distinct systems', async () => {
+  const { repo } = await fresh()
+  const deps = { repo, now: 0, rng: createRng(1) }
+  await Promise.all([
+    startEpic({ ...deps, epic: { key: 'NOVA-1', title: 'a', description: '' }, complete: offline, privacy: 'standard' }),
+    startEpic({ ...deps, rng: createRng(2), epic: { key: 'NOVA-2', title: 'b', description: '' }, complete: offline, privacy: 'standard' }),
+  ])
+  const ids = await repo.systemIds()
+  expect(new Set(ids).size).toBe(2)
+  const keys = await Promise.all(ids.map(async id => (await repo.system(id))!.epicKey))
+  expect(keys.sort()).toEqual(['NOVA-1', 'NOVA-2'])
+})
+
+test('a branch with an issue key starts that mission', async () => {
+  const { repo, deps } = await withEpic()
+  await onBranch({ ...deps, branch: 'feature/NOVA-7-thing' })
+  expect((await repo.activeMission())!.issueKey).toBe('NOVA-7')
+  expect(await onBranch({ ...deps, branch: 'feature/NOVA-8-other' })).toBe(undefined)
+  expect((await repo.activeMission())!.issueKey).toBe('NOVA-7')
+})
+
+test('a branch from another project starts nothing', async () => {
+  const { repo, deps } = await withEpic()
+  for (const b of ['renovate/node-20', 'fix/utf-8-decoding', 'feature/sha-256', 'feature/OTHER-3-x']) {
+    expect(await onBranch({ ...deps, branch: b })).toBe(undefined)
+  }
+  expect(await repo.activeMission()).toBe(undefined)
+})
+
+test('checking out a finished mission branch does not restart it', async () => {
+  const { repo, deps } = await withEpic()
+  await onBranch({ ...deps, branch: 'feature/NOVA-7-thing' })
+  await completeMission(deps)
+  expect(await onBranch({ ...deps, branch: 'feature/NOVA-7-thing' })).toBe(undefined)
+  expect(await repo.activeMission()).toBe(undefined)
+})
+
+test('a branch without an epic starts nothing', async () => {
+  const { repo } = await fresh()
+  expect(await onBranch({ repo, now: 0, rng: createRng(1), branch: 'feature/NOVA-7-thing' })).toBe(undefined)
+})
+
+test('a later same-day mission usually has no encounter', async () => {
+  let encounters = 0
+  for (let seed = 0; seed < 200; seed += 1) {
+    const { repo, deps } = await withEpic(seed)
+    await startMission({ ...deps, issueKey: 'NOVA-2' })
+    await completeMission(deps)
+    await repo.clearPending()
+    await startMission({ ...deps, issueKey: 'NOVA-3' })
+    await completeMission({ ...deps, now: 1000 })
+    if (await repo.pending()) encounters += 1
+  }
+  expect(encounters).toBeGreaterThan(5)
+  expect(encounters).toBeLessThan(50)
+})
+
+test('five days without an encounter guarantees one', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission(deps)
+  await repo.clearPending()
+  await startMission({ ...deps, now: 5 * DAY_MS, issueKey: 'NOVA-3' })
+  await completeMission({ ...deps, now: 5 * DAY_MS + 1 })
+  expect(await repo.pending()).toBeDefined()
+})
+
+test('a pending encounter is not overwritten by a new mission', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission(deps)
+  const first = (await repo.pending())!.id
+  await startMission({ ...deps, issueKey: 'NOVA-3' })
+  await completeMission({ ...deps, now: 6 * DAY_MS })
+  expect((await repo.pending())!.id).toBe(first)
+})
+
+test('containment resolves: contained, broke free, or fled, never leaving a bad state', async () => {
+  const seen = new Set<string>()
+  for (let seed = 0; seed < 60; seed += 1) {
+    const { repo, deps } = await withEpic(seed)
+    await forceEncounter(deps)
+    const out = await attemptContainment({ ...deps, cell: 'standard', latticeBonus: 0 })
+    if (!('outcome' in out)) throw new Error('expected an outcome')
+    seen.add(out.outcome)
+    const pending = await repo.pending()
+    const specimens = await repo.specimens()
+    if (out.outcome === 'contained') {
+      expect(pending).toBe(undefined)
+      expect(specimens.length).toBe(1)
+      expect((await repo.meta())!.companionId).toBe(specimens[0]!.id)
+    } else if (out.outcome === 'fled') {
+      expect(pending).toBe(undefined)
+      expect((await repo.catalog()).some(c => c.status === 'escaped')).toBe(true)
+    } else {
+      expect(pending!.attempts).toBe(1)
+    }
+  }
+  expect(seen.size).toBe(3)
+})
+
+test('a Reinforced Cell is spent only when held', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  await attemptContainment({ ...deps, cell: 'reinforced', latticeBonus: 0 })
+  expect((await repo.inventory()).reinforced).toBe(0)
+  await repo.saveInventory({ ...(await repo.inventory()), reinforced: 2 })
+  await repo.clearPending()
+  await forceEncounter(deps)
+  await attemptContainment({ ...deps, cell: 'reinforced', latticeBonus: 0 })
+  expect((await repo.inventory()).reinforced).toBe(1)
+})
+
+test('completing an epic with an encounter waiting is refused and changes nothing', async () => {
+  const { store, repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  const before = JSON.stringify(store.dump())
+  expect((await completeEpic(deps)).text).toContain('already waiting')
+  expect(JSON.stringify(store.dump())).toBe(before)
+  expect((await repo.meta())!.activeEpicKey).toBe('NOVA-1')
+})
+
+test('completing an epic surveys it and grants a non-Common encounter', async () => {
+  for (let seed = 0; seed < 30; seed += 1) {
+    const { repo, deps } = await withEpic(seed)
+    const out = await completeEpic(deps)
+    expect(out.text).toContain('Surveyed')
+    expect((await repo.pending())!.tier).not.toBe('common')
+    expect((await repo.meta())!.activeEpicKey).toBe(null)
+  }
+})
+
+test('setCompanion accepts a specimen id and refuses an unknown one', async () => {
+  const { repo, deps } = await withEpic()
+  await repo.addSpecimen({ id: 'spec-1-42', speciesId: 'x', systemId: 'sys-1', tier: 'common', level: 1, xp: 0, stage: 0, containedAt: 0 })
+  expect((await setCompanion({ ...deps, specimenId: 'spec-1-42' })).text).toBe('Companion set.')
+  expect((await setCompanion({ ...deps, specimenId: 'nope' })).text).toContain('No such specimen')
+})
+
+test('command text never carries game flavor words', async () => {
+  const { deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission(deps)
+  expect(out.text).not.toMatch(/wild|stirs|dark|!|Encounter!/)
+})

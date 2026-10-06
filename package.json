@@ -1,0 +1,17 @@
+{
+  "name": "final-commit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A sci-fi creature-collection game built from your real dev work.",
+  "license": "MIT",
+  "scripts": {
+    "types": "scripts/dev-types.sh",
+    "typecheck": "tsc -p .",
+    "test": "claude plugin test .",
+    "validate": "claude plugin validate ."
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
