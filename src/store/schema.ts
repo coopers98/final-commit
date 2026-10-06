@@ -93,3 +93,13 @@ export type SaveMeta = {
 
 /** `salt` makes client keys unguessable from the values they hash (generated once per install). */
 export type Calibration = { clients: Record<string, { offsetMs: number; measuredAt: number }>; salt: string }
+
+/**
+ * SPEC 4.2: where tracker sync left off. `lastSync` is null until the first
+ * sync, which starts from that moment (nothing before it is awarded).
+ * `processed` holds `<issueKey>:<transitionId>` for each applied transition.
+ */
+export type SyncState = { lastSync: number | null; processed: string[] }
+
+/** SPEC 9.2: one `/captains-log` entry. */
+export type LogEntry = { at: number; stardate: string; lines: string[] }

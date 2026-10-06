@@ -72,13 +72,20 @@ export function parseEpicKey(args: string): string | undefined {
   return ISSUE_KEY.test(key) ? key : undefined
 }
 
+/**
+ * `activate: false` charts without making the epic active: a chart the tracker
+ * started must not move play away from a running mission (its issue's start
+ * activates it, SPEC 4.2).
+ */
 export async function startEpic(
-  deps: GameDeps & { epic: EpicInput; complete: Complete; privacy: PrivacyMode },
+  deps: GameDeps & { epic: EpicInput; complete: Complete; privacy: PrivacyMode; activate?: boolean },
 ): Promise<Outcome> {
   const { repo, now, rng, epic } = deps
   await requireMeta(repo)
   const existing = await findSystemByEpic(repo, epic.key)
+  const activate = deps.activate ?? true
   if (existing) {
+    if (!activate) return { text: `Epic ${epic.key} is already charted.` }
     await repo.patchMeta(m => ({ ...m, activeEpicKey: epic.key }))
     return { text: `Epic ${epic.key} is already charted; it is now the active epic.` }
   }
@@ -87,7 +94,7 @@ export async function startEpic(
   const { system, notes } = await generateSystem({ epic, systemId, privacy: deps.privacy, complete: deps.complete, rng, now })
   await repo.saveSystem(system)
   // Re-read meta: generation can take minutes and other actions may have saved since.
-  await repo.patchMeta(m => ({ ...m, activeEpicKey: epic.key }))
+  if (activate) await repo.patchMeta(m => ({ ...m, activeEpicKey: epic.key }))
   const fauna = system.species.filter(s => s.kind === 'fauna').length
   return {
     text: `Charted epic ${epic.key}.${notes.length > 0 ? ' Some content is procedural.' : ''}`,
@@ -136,16 +143,17 @@ async function markCatalog(repo: Repo, entry: CatalogEntry): Promise<void> {
   await repo.saveCatalog([...all.filter(e => !same(e)), entry])
 }
 
-export async function completeEpic(deps: GameDeps): Promise<Outcome> {
+/** Surveys the active epic, or `epicKey` when the tracker closed a particular one (SPEC 4.1). */
+export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promise<Outcome> {
   const { repo, now } = deps
   const meta = await requireMeta(repo)
-  const system = await activeSystem(repo, meta)
-  if (!system) return { text: 'No active epic. Start one with /epic <KEY>.' }
+  const system = deps.epicKey ? await findSystemByEpic(repo, deps.epicKey) : await activeSystem(repo, meta)
+  if (!system) return { text: deps.epicKey ? `Epic ${deps.epicKey} is not charted.` : 'No active epic. Start one with /epic <KEY>.' }
   if (system.status === 'surveyed') return { text: `Epic ${system.epicKey} is already surveyed.` }
   // The survey's guaranteed encounter (SPEC 6.1) needs the encounter slot free; refusing keeps it from being lost.
   if (await repo.pending()) return { text: 'An encounter is already waiting. Resolve it with /contain, then complete the epic.' }
   await repo.saveSystem({ ...system, status: 'surveyed', surveyedAt: now })
-  await repo.patchMeta(m => ({ ...m, activeEpicKey: null }))
+  await repo.patchMeta(m => (m.activeEpicKey === system.epicKey ? { ...m, activeEpicKey: null } : m))
   const pending = await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
   const species = system.species.find(s => s.id === pending.speciesId)
   return {
@@ -160,7 +168,8 @@ export async function completeEpic(deps: GameDeps): Promise<Outcome> {
   }
 }
 
-export async function startMission(deps: GameDeps & { issueKey: string }): Promise<Outcome> {
+/** `startedAt`: when the work started, if earlier than now (a tracker start seen at the next poll). */
+export async function startMission(deps: GameDeps & { issueKey: string; startedAt?: number }): Promise<Outcome> {
   const { repo, now } = deps
   const key = deps.issueKey.toUpperCase()
   if (!ISSUE_KEY.test(key)) return { text: 'Usage: /mission <KEY>, for example /mission NOVA-12.' }
@@ -170,15 +179,21 @@ export async function startMission(deps: GameDeps & { issueKey: string }): Promi
   const active = await repo.activeMission()
   if (active) return { text: `Mission ${active.issueKey} is already active. Finish it with /mission complete.` }
   const mission: Mission = {
-    issueKey: key, systemId: system.id, startedAt: now, commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false,
+    issueKey: key, systemId: system.id, startedAt: Math.min(deps.startedAt ?? now, now), commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false,
   }
   await repo.saveActiveMission(mission)
-  await repo.patchMeta(m => (m.firstTrackedAt === null ? { ...m, firstTrackedAt: now } : m))
+  await repo.patchMeta(m => (m.firstTrackedAt === null ? { ...m, firstTrackedAt: mission.startedAt } : m))
   return { text: `Mission ${key} started.` }
 }
 
-export async function completeMission(deps: GameDeps): Promise<Outcome> {
+/**
+ * `attachedWork: false` (a tracker closure with no tracked work, SPEC 4.3)
+ * completes the mission without rewards (no encounter, no cells), and
+ * without using up the first mission's guaranteed encounter.
+ */
+export async function completeMission(deps: GameDeps & { attachedWork?: boolean }): Promise<Outcome> {
   const { repo, now, rng } = deps
+  const attachedWork = deps.attachedWork ?? true
   const mission = await repo.activeMission()
   if (!mission) return { text: 'No active mission. Start one with /mission <KEY>.' }
   const meta = await requireMeta(repo)
@@ -187,7 +202,7 @@ export async function completeMission(deps: GameDeps): Promise<Outcome> {
   await repo.clearActiveMission()
 
   const notes: string[] = []
-  if (done.testsGreen) {
+  if (done.testsGreen && attachedWork) {
     const inv = await repo.inventory()
     await repo.saveInventory({ ...inv, reinforced: inv.reinforced + REWARDS.reinforcedForGreenTests })
     notes.push(`Reinforced Cells +${REWARDS.reinforcedForGreenTests}`)
@@ -200,7 +215,7 @@ export async function completeMission(deps: GameDeps): Promise<Outcome> {
   const ctx = {
     now, lastEncounterAt: meta.lastEncounterAt, firstTrackedAt: meta.firstTrackedAt ?? done.startedAt, completedMissions: meta.completedMissions,
   }
-  await repo.patchMeta(m => ({ ...m, completedMissions: m.completedMissions + 1 }))
+  if (attachedWork) await repo.patchMeta(m => ({ ...m, completedMissions: m.completedMissions + 1 }))
 
   const hasPending = (await repo.pending()) !== undefined
   const underCap = today < ENCOUNTER.dailySoftCap
@@ -209,7 +224,7 @@ export async function completeMission(deps: GameDeps): Promise<Outcome> {
     `Commits ${done.commits} · Test runs ${done.testRuns}${done.testRuns > 0 ? (done.testsGreen ? ' · green' : ' · not green') : ''}`,
     ...notes,
   ]
-  if (system && !hasPending && underCap && shouldEncounter(ctx, rng)) {
+  if (system && attachedWork && !hasPending && underCap && shouldEncounter(ctx, rng)) {
     const pending = await createEncounter(deps, system, quality)
     await repo.patchMeta(m => ({ ...m, encountersToday: { day, count: today + 1 } }))
     const species = system.species.find(s => s.id === pending.speciesId)
@@ -219,11 +234,26 @@ export async function completeMission(deps: GameDeps): Promise<Outcome> {
       report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), reinforced },
     }
   }
-  const why = hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
+  const why = !attachedWork
+    ? 'No encounter: no work was tracked on it.'
+    : hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
   return {
     text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''}`,
     report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why], encounter: null, reinforced },
   }
+}
+
+/**
+ * The tracker closed an issue that was never the active mission (SPEC 4.3:
+ * an administrative closure). Logged so a later checkout of its branch
+ * cannot start it; no rewards.
+ */
+export async function recordClosure(deps: GameDeps & { issueKey: string; systemId: string }): Promise<void> {
+  if ((await deps.repo.missionLog()).some(m => m.issueKey === deps.issueKey)) return
+  await deps.repo.appendMission({
+    issueKey: deps.issueKey, systemId: deps.systemId, startedAt: deps.now, completedAt: deps.now,
+    commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false,
+  })
 }
 
 /**

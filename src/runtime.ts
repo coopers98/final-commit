@@ -72,13 +72,14 @@ export async function snapshot(
   mood: MoodState,
   now: number,
   charting: ChartingEntry[] = [],
+  isAlert = false,
 ): Promise<{ status: string | undefined; band: BandView | null }> {
   const meta = await repo.meta()
   const mission = await repo.activeMission()
   const system = await activeSystem(repo, meta?.activeEpicKey)
   const first = charting[0]
   const status = statusText({
-    system, mission, pending: await repo.pending(),
+    system, mission, pending: await repo.pending(), isAlert,
     ...(first ? { charting: { key: first.key, elapsedMs: now - first.startedAt } } : {}),
   })
 

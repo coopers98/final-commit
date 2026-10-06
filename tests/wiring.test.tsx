@@ -441,3 +441,97 @@ test('typing r on the report contains with a Reinforced Cell', async ($, on) => 
   expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('throw Reinforced Cell')
   await lattice.unmount()
 })
+
+test('a failing test run during a mission raises a red alert that flashes, then clears', async ($, on) => {
+  const w = world(on, { branch: 'feature/NOVA-5-x' })
+  let next: { result: unknown; isError?: true } = { result: { stdout: '' } }
+  on('tool.call', () => next as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await $.tool.call({ tool: 'Bash', command: 'git switch feature/NOVA-5-x' } as never)
+  next = { result: { stdout: ' 1 fail\n' }, isError: true }
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  expect(w.toasts).toContain('Red alert! Tests failing on NOVA-5.')
+  expect(w.status.at(-1)).toMatch(/^! RED ALERT/)
+  // A grep with no match is a routine non-zero exit, not an alert.
+  const toasts = w.toasts.length
+  await $.tool.call({ tool: 'Bash', command: 'grep nothing file' } as never)
+  expect(w.toasts.length).toBe(toasts)
+  await w.clock.advance(10_000)
+  expect(w.status.at(-1)).toBe('NOVA-5 · ' + w.status.at(-1)!.split(' · ')[1])
+  expect(w.status.at(-1)).not.toMatch(/RED ALERT/)
+})
+
+test('a failed tool call with no mission raises nothing', async ($, on) => {
+  const w = world(on)
+  on('tool.call', () => ({ result: {}, isError: true }) as never)
+  await $.session.start(START)
+  await $.tool.call({ tool: 'Edit', file_path: '/work/a', old_string: 'x', new_string: 'y' } as never)
+  expect(w.toasts.some(t => t.startsWith('Red alert'))).toBe(false)
+})
+
+test('/captains-log writes a session summary from a fork and shows it in the report pane', async ($, on) => {
+  const w = world(on)
+  const forks: string[] = []
+  on('model.fork', (_$, e) => {
+    forks.push(e.prompt)
+    return { value: { isAnswered: true, text: '- Added the export button\n\n- Next: tests', usage: {} } } as never
+  })
+  await $.session.start(START)
+  expect((await run($, 'captains-log')).text).toBe("Writing a session summary to the captain's log.")
+  await w.clock.settle()
+  expect(forks.length).toBe(1)
+  expect(w.opened).toContain('fc-report')
+  const pane = await $.ui.mount(PANE('fc-report'))
+  const texts = (await pane.findAll({ type: "Text" })).map(t => t.text)
+  expect(texts.some(t => /^Captain's log, stardate \d{5}\.\d$/.test(t))).toBe(true)
+  expect(texts).toContain('- Added the export button')
+  expect(texts).toContain('- Next: tests')
+  await pane.unmount()
+})
+
+test('/captains-log before any reply says there is nothing to log', async ($, on) => {
+  const w = world(on)
+  on('model.fork', () => ({ value: { isAnswered: false, reason: 'nothing-to-fork' } }) as never)
+  await $.session.start(START)
+  await run($, 'captains-log')
+  await w.clock.settle()
+  expect(w.toasts).toContain('Nothing to log yet: the session has no replies.')
+  expect(w.opened).not.toContain('fc-report')
+})
+
+test('an interrupted call raises no red alert', async ($, on) => {
+  const w = world(on)
+  let next: { result: unknown; isError?: true; text?: string } = { result: {} }
+  on('tool.call', () => next as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  next = { result: 'Interrupted by user', isError: true, text: 'Interrupted by user' }
+  await $.tool.call({ tool: 'Edit', file_path: '/work/a', old_string: 'x', new_string: 'y' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  expect(w.toasts.some(t => t.startsWith('Red alert'))).toBe(false)
+  next = { result: 'String not found', isError: true, text: 'String not found' }
+  await $.tool.call({ tool: 'Edit', file_path: '/work/a', old_string: 'x', new_string: 'y' } as never)
+  expect(w.toasts).toContain('Red alert! Edit failed on NOVA-2.')
+})
+
+test('a captain\'s log finished while a report is open does not replace it', async ($, on) => {
+  const w = world(on)
+  let answer: (v: unknown) => void = () => {}
+  on('model.fork', () => new Promise(resolve => { answer = resolve }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await run($, 'captains-log')
+  await run($, 'mission', 'complete')
+  const opened = w.opened.length
+  answer({ value: { isAnswered: true, text: '- Did things', usage: {} } })
+  await w.clock.settle()
+  expect(w.opened.length).toBe(opened)
+  expect(w.toasts.some(t => /^Captain's log, stardate .*, recorded\.$/.test(t))).toBe(true)
+  const pane = await $.ui.mount(PANE('fc-report'))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('Mission NOVA-2 complete')
+  await pane.unmount()
+})

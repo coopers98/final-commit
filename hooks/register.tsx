@@ -1,12 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, ChartingEntry, EpicFormView, ReportView } from '../types'
+import type { BandView, CalibrationView, ChartingEntry, EpicFormView, LatticeView, ReportView } from '../types'
+import { NO_ALERT, redAlert } from '../src/bridge/alert'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
-import { CHARTING, COMPANION, GENERATION, GIT, type GenerationModel } from '../src/config'
+import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
+import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
-import { classifyBash } from '../src/detect/git'
+import { classifyBash, testRunFailed } from '../src/detect/git'
 import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
@@ -27,6 +29,9 @@ const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as 
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
+const alert = atom({ plugin: 'final-commit', key: 'alert' } as const, NO_ALERT)
+const lattice = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
+const calibration = atom({ plugin: 'final-commit', key: 'calibration' } as const, null as CalibrationView | null)
 
 const NOT_READY = { text: 'The Final Commit could not load its save; see the debug log (claude --debug).' }
 
@@ -37,6 +42,8 @@ const NOT_READY = { text: 'The Final Commit could not load its save; see the deb
  */
 const live = new Set<string>()
 let actions = 0
+/** True while a /captains-log summary is being written. */
+let logging = false
 let settings: Settings = readSettings({})
 
 // The engine lets `$` reach only top-level functions of the same file: these
@@ -67,7 +74,8 @@ function completeVia($: EngineInterface, model: GenerationModel): Complete {
 }
 
 async function refresh($: EngineInterface) {
-  const s = await snapshot(repoOf($), await read($, mood), await $.clock.now(), await read($, charting))
+  const now = await $.clock.now()
+  const s = await snapshot(repoOf($), await read($, mood), now, await read($, charting), now < (await read($, alert)).until)
   $.ui.status(s.status)
   await update($, band, prev => (s.band && prev ? { ...s.band, isBlinking: prev.isBlinking } : s.band))
 }
@@ -166,6 +174,70 @@ async function encounter($: EngineInterface): Promise<{ text: string }> {
   return { text: out.text }
 }
 
+/**
+ * The captain's log (SPEC 9.2): a summary of this session from a fork of its
+ * own transcript, saved and shown in the report pane. Runs after the command
+ * returns, as a fork takes a while.
+ */
+async function writeLog($: EngineInterface) {
+  logging = true
+  try {
+    const reply = await $.model.fork({ prompt: LOG_PROMPT })
+    if (!reply.isAnswered) {
+      $.ui.toast(reply.reason === 'nothing-to-fork' ? "Nothing to log yet: the session has no replies." : `The captain's log could not be written (${reply.reason}).`)
+      return
+    }
+    const now = await $.clock.now()
+    const entry = { at: now, stardate: stardate(now), lines: logLines(reply.text) }
+    const repo = repoOf($)
+    await repo.saveCaptainsLog(appendLog(await repo.captainsLog(), entry))
+    // Finished in the background: never take over a pane in use (a report with an encounter, a timing game, the form).
+    const isBusy = (await read($, report)) !== null || (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, form)) !== null
+    if (isBusy) {
+      $.ui.toast(`Captain's log, stardate ${entry.stardate}, recorded.`)
+      return
+    }
+    await announce($, {
+      text: '',
+      toast: `Captain's log, stardate ${entry.stardate}, recorded.`,
+      report: { title: `Captain's log, stardate ${entry.stardate}`, lines: entry.lines, encounter: null, reinforced: (await repo.inventory()).reinforced },
+    })
+  } catch (err) {
+    $.ui.log(`final-commit: captain's log: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+  } finally {
+    logging = false
+  }
+}
+
+async function captainsLog($: EngineInterface): Promise<{ text: string }> {
+  if (!(await read($, ready))) return NOT_READY
+  if (logging) return { text: 'A session summary is already being written.' }
+  void writeLog($)
+  return { text: 'Writing a session summary to the captain\'s log.' }
+}
+
+/**
+ * An errored call that was interrupted (Esc) rather than failed. The engine
+ * gives no flag for an errored call, only the error text the model reads, so
+ * this goes by that text.
+ */
+function wasInterrupted(ran: { result?: unknown; text?: string }): boolean {
+  const said = [ran.text, typeof ran.result === 'string' ? ran.result : undefined].join(' ')
+  return /interrupt/i.test(said) || (ran.result as { interrupted?: unknown } | null)?.interrupted === true
+}
+
+/** SPEC 9.2: a failed test run or tool call during a mission flashes the status line, and toasts outside the cooldown. */
+async function raiseAlert($: EngineInterface, tool: string, isError: boolean, testFailed: boolean) {
+  const mission = (await repoOf($).activeMission())?.issueKey
+  const raised = redAlert({ tool, isError, testFailed, mission, now: await $.clock.now(), state: await read($, alert) })
+  if (!raised) return
+  await update($, alert, () => raised.state)
+  if (raised.toast) $.ui.toast(raised.toast)
+  $.clock.after(RED_ALERT.flashMs, () => {
+    void refresh($)
+  })
+}
+
 /** Session state from the save: run at start, and again after a /clear starts the state over. */
 async function prepareSession($: EngineInterface) {
   const now = await $.clock.now()
@@ -194,6 +266,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
+  await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
   if (settings.devMode) await $.command.register({ name: 'encounter', description: 'Force an encounter (developer mode)' })
   // Idle animation (SPEC 9.3): a short blink every few seconds.
   $.clock.every(COMPANION.blinkEveryMs, () => {
@@ -208,7 +281,7 @@ async function startSession($: EngineInterface) {
  * SPEC 4.2: what one Bash call says about the active mission. Results of a
  * backgrounded command are ignored: they return before the command finishes.
  */
-async function observeBash($: EngineInterface, command: string, result: unknown, isError: boolean) {
+async function observeBash($: EngineInterface, command: string, result: unknown, isError: boolean, interrupted: boolean) {
   if (!(await read($, ready))) return
   const record = (result ?? {}) as {
     backgroundTaskId?: unknown
@@ -226,6 +299,7 @@ async function observeBash($: EngineInterface, command: string, result: unknown,
   // The end of the output is where runners print their summaries.
   const output = [record.stdout, record.stderr].filter((x): x is string => typeof x === 'string').join('\n').slice(-GIT.outputTailChars)
   if (commits > 0 || signals.isTestRun) await recordBash({ ...d, signals, commits, isError, output })
+  if (!interrupted) await raiseAlert($, 'Bash', isError, testRunFailed(signals, isError, output))
   if (signals.mayChangeBranch && !isError) {
     const head = await $.process.run(['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], { timeoutMs: GIT.timeoutMs })
     if (head.exitCode === 0) {
@@ -259,6 +333,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'epic' }, async ($, e) => epic($, e.args))
   on('command.run', { command: 'mission' }, async ($, e) => mission($, e.args))
   on('command.run', { command: 'encounter' }, async $ => encounter($))
+  on('command.run', { command: 'captains-log' }, async $ => captainsLog($))
 
   on('ui.close', { id: EPIC_PANE }, async ($, e, next) => {
     await update($, form, () => null)
@@ -291,9 +366,24 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
     try {
-      await observeBash($, e.command, ran.result, ran.isError === true)
+      await observeBash($, e.command, ran.result, ran.isError === true, wasInterrupted(ran))
     } catch (err) {
       $.ui.log(`final-commit: Bash observer: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+    }
+    return ran
+  })
+
+  // SPEC 9.2: any other tool failing during a mission raises a red alert (Bash is judged above).
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+    if (e.tool === 'Bash' || ran.deny !== undefined || ran.isError !== true || wasInterrupted(ran)) return ran
+    try {
+      if (await read($, ready)) {
+        await raiseAlert($, e.tool, true, false)
+        await refresh($)
+      }
+    } catch (err) {
+      $.ui.log(`final-commit: alert: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
     }
     return ran
   })

@@ -82,3 +82,12 @@ export function testVerdictFromOutput(output: string): TestVerdict | undefined {
   if (PASS_SUMMARY.some(p => p.test(output))) return 'pass'
   return undefined
 }
+
+/**
+ * A test run that failed: by exit status when it is the runner's, else by
+ * the runner's summary. A run with no summary visible is not called failed.
+ */
+export function testRunFailed(signals: BashSignals, isError: boolean, output: string): boolean {
+  if (!signals.isTestRun) return false
+  return signals.isTestStatusReliable ? isError : testVerdictFromOutput(output) === 'fail'
+}

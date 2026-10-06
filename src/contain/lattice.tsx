@@ -8,6 +8,7 @@ import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
 import { clientKey } from './calibrate-math'
 import { advance, createLattice, latticeBonus, press, renderBar, renderLocks, type LatticeState } from './lattice-model'
+import { wrap } from '../bridge/text'
 
 // Seal the Lattice (SPEC 7.3). /contain opens a focused pane whose Input takes
 // the keys (a Client only gets keys after a mouse click, so it cannot be used
@@ -226,8 +227,8 @@ export function wireLattice(on: On): void {
           <Text>{row}</Text>
         ))}
         <Text bold>{fit(r.title, width)}</Text>
-        {r.lines.map(line => (
-          <Text>{fit(line, width)}</Text>
+        {r.lines.flatMap(line => wrap(line, width)).map(line => (
+          <Text>{line}</Text>
         ))}
         {r.encounter && <Text bold>{fit(r.encounter.heading, width)}</Text>}
         {hintLines(hints, width).map(line => (

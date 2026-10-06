@@ -1,6 +1,6 @@
 import { STORE, TIERS, type Tier } from '../config'
 import type {
-  CatalogEntry, Calibration, Inventory, Mission, PendingEncounter, SaveMeta, Specimen, StarSystem, Versioned,
+  CatalogEntry, Calibration, Inventory, LogEntry, Mission, PendingEncounter, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
 } from './schema'
 
 export type StoreLike = {
@@ -22,6 +22,8 @@ export const KEYS = {
   catalog: `${p}catalog`,
   pending: `${p}pending`,
   calibration: `${p}calibration`,
+  sync: `${p}sync`,
+  captainsLog: `${p}log`,
 } as const
 
 export function createMemoryStore(): StoreLike & { dump(): Record<string, unknown> } {
@@ -124,5 +126,13 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
 
     calibration: () => readRecord<Calibration>(KEYS.calibration, { clients: {}, salt: '' }, v => isObject(v.clients) && typeof v.salt === 'string'),
     saveCalibration: (c: Calibration) => store.set(KEYS.calibration, stamp(c)),
+
+    sync: () =>
+      readRecord<SyncState>(KEYS.sync, { lastSync: null, processed: [] }, v =>
+        (v.lastSync === null || typeof v.lastSync === 'number') && Array.isArray(v.processed)),
+    saveSync: (s: SyncState) => store.set(KEYS.sync, stamp(s)),
+
+    captainsLog: () => readList<LogEntry>(KEYS.captainsLog, v => isObject(v) && typeof v.stardate === 'string' && Array.isArray(v.lines)),
+    saveCaptainsLog: (entries: LogEntry[]) => writeList(KEYS.captainsLog, entries),
   }
 }

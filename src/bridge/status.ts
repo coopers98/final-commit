@@ -16,15 +16,17 @@ export function chartingText(key: string, elapsedMs: number): string {
  * SPEC 9 status line, compact: the engine prefixes the plugin's name (about
  * 18 cells), so the text itself gets STATUS.maxColumns. Priority: a waiting
  * encounter, then a system being charted, then the mission, then the system
- * name (cut to what is left).
+ * name (cut to what is left). A red alert (SPEC 9.2) leads while it flashes.
  */
 export function statusText(s: {
   system?: StarSystem
   mission?: Mission
   pending?: PendingEncounter
   charting?: { key: string; elapsedMs: number }
+  isAlert?: boolean
 }): string | undefined {
   const head = [
+    s.isAlert ? '! RED ALERT' : undefined,
     s.pending ? `${TIER_SPECS[s.pending.tier].glyph} /contain` : undefined,
     s.charting ? chartingText(s.charting.key, s.charting.elapsedMs) : undefined,
     s.mission?.issueKey,

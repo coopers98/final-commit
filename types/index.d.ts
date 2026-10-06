@@ -64,6 +64,8 @@ declare module 'claude-code' {
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null
+      /** SPEC 9.2 red alert: the status line flashes before `until`; toasts keep a cooldown from `lastToastAt`. */
+      alert: { until: number; lastToastAt: number | null }
       calibration: CalibrationView | null
       bay: string[]
     }

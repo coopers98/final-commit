@@ -92,11 +92,15 @@ Detection is automatic. Jira is the source of truth; git and session activity ar
 2. During a session: poll every 10 to 15 minutes via `$.clock`.
 3. Git signals: observe `tool.call` on `Bash` for `git checkout`, `git switch`, `git commit`, test commands (`php artisan test`, `pest`, `phpunit`, `npm test`). Also read `git` state via `$.process` on session start.
 4. **Idempotency:** every processed transition is recorded as `<issueKey>:<transitionId>`. Reloads and restarts never double-award.
+5. **Order and waiting** (`src/detect/sync.ts`): transitions apply oldest first; at one instant a start goes before a Done. Each query reaches back one minute before `lastSync`; the processed list (newest 500) drops repeats. The first sync only records its start: nothing earlier is awarded. A transition that cannot apply yet waits: an issue whose epic is still being charted (its start charts the epic, SPEC 4.1), an issue's Done while its epic is still being charted, or an epic Done while an encounter holds the slot. A waiting transition holds back later ones for the same epic, so an issue's Done is never read before its start, and `lastSync` does not move past it.
+6. **Mapping:** a chart the tracker starts does not change the active epic. An issue's start makes its epic the active one and starts the mission (timed from the tracker's start, not the poll that saw it), unless a mission is already active (one at a time; the second issue is not tracked) or that issue was completed before. An issue outside any epic is ignored. Done on the active mission completes it; Done on any other issue of a charted epic is logged as an administrative closure (no rewards; its branch can no longer start it). An epic's Done surveys that epic and leaves a different active epic alone.
+
+The sync engine runs against the `WorkSource` interface (`src/detect/work-source.ts`). No backend exists yet, so nothing calls it in a session: the session-start catch-up and the 12-minute poll are wired with the first backend.
 
 ### 4.3 Anti-farming
 
-1. A Done issue only rolls an encounter if it has **attached work**: commits on its branch or session activity tied to its key. Administrative closures count toward epic progress only. (v2: needs Jira.)
-2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. (v2.)
+1. A Done issue only rolls an encounter if it has **attached work**: commits on its branch or session activity tied to its key. Administrative closures count toward epic progress only. Applies to tracker closures; `/mission complete` is the manual override and is not checked.
+2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. Together with rule 1: a commit (a non-empty diff) qualifies at once; test runs alone need the 20 minutes. A closure that fails these completes without rewards (no encounter, no Reinforced Cell) and does not use up the first mission's guarantee (D10).
 3. Soft cap of 2 encounters per calendar day (host local time, configurable). **Enforced in v1** for mission encounters; epic surveys and developer-mode encounters are exempt.
 4. **v1:** a branch only starts a mission when its key belongs to the active epic's project and that mission was never completed, so checkouts cannot pay out twice.
 5. **v1:** a plain test run is judged by its exit status. One whose exit status may not be the runner's (piped `| tail`, guarded `|| true`, backgrounded `&`) is judged by the runner's own summary in the end of its output (bun/`claude plugin test`, jest, vitest, pest, pytest, phpunit, go, cargo formats); with no summary visible it counts as not passing. Wrappers that pass the exit status through (`timeout`, `time`, `nice`, `env`) are seen past, and redirections like `2>&1` change nothing. Failed commits are not counted.
@@ -303,8 +307,8 @@ Crew are real subagent types via `$.agent`. Their prompts are working instructio
 
 ### 9.2 Alerts
 
-- **Red alert:** failed test run or failed tool call during a mission. Toast + status flash + sound if available.
-- **Captain's log:** `/captains-log` generates a stardate-stamped session summary (standup notes) via `$.model.fork`.
+- **Red alert:** failed test run or failed tool call during a mission. The status line leads with `! RED ALERT` for 8 s; a toast at most once per 5 minutes. A Bash call counts only as a failed test run (judged as in 4.3 rule 5): a shell command exiting non-zero (`grep` with no match) is routine. A call the user interrupted is not a failure (the engine flags none, so the error text decides). No sound (D7).
+- **Captain's log:** `/captains-log` generates a stardate-stamped session summary (standup notes) via `$.model.fork`, in the background, and shows it in the report pane (lines wrap); if a game pane is open when it finishes, a toast says it was recorded instead. The prompt is a plain working instruction; the stardate is added in code (`YYDDD.T`: year, day of year, tenth of the day). The newest 20 entries are saved.
 
 ### 9.3 Companion
 
@@ -321,7 +325,9 @@ Crew are real subagent types via `$.agent`. Their prompts are working instructio
 All keys prefixed `fc:`. Every value carries `schemaVersion`.
 
 ```ts
-type SaveMeta     = { schemaVersion: number; createdAt: string; lastSync: string }
+type SaveMeta     = { schemaVersion: number; createdAt: string }
+type SyncState    = { lastSync: number | null; processed: string[] /* <issueKey>:<transitionId> */ }
+type LogEntry     = { at: number; stardate: string; lines: string[] }
 type StarSystem   = { id: string; epicKey: string; name: string; starClass: string;
                       biomes: Biome[]; species: Species[]; status: 'open'|'surveyed';
                       chartedAt: string; surveyedAt?: string }
@@ -360,12 +366,13 @@ src/
   game.ts                         game actions over the save (pure)
   store/                          schema.ts, repo.ts, migrate.ts
   detect/git.ts                   branch -> issue key, Bash command signals
+  detect/work-source.ts, sync.ts  tracker interface (4.4); transitions -> game actions (4.2)
   world/                          generate.ts, validate-art.ts, parts-library.ts
   encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
   contain/                        lattice-model.ts, calibrate-math.ts, resolve.ts (pure);
                                   lattice.tsx, calibrate.tsx (panes)
   puzzle/privacy-filter.ts        section 5.3
-  bridge/                         status.ts, bay.ts (pure); band.tsx, bay-pane.tsx
+  bridge/                         status.ts, bay.ts, alert.ts, log.ts, text.ts (pure); band.tsx, bay-pane.tsx
 tests/                            *.test.ts(x) (claude plugin test)
 ```
 
@@ -396,9 +403,10 @@ The "First Diffling" slice is implemented: every item below except the Bridge pa
 
 ### v2: Automatic detection
 - Jira `WorkSource` (MCP and REST)
-- Session catch-up sync, polling, idempotency
-- Anti-farming rules
-- Crew subagents, red alert, captain's log
+- Session catch-up sync, polling, idempotency (sync engine done against the interface; wired with the first backend)
+- Anti-farming rules (done for tracker closures)
+- Crew subagents
+- Red alert, captain's log (done)
 
 ### v3: Puzzles
 - Pattern ID, Complexity Read, Code Trace, Bug Hunt
@@ -520,3 +528,6 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Calibration | 8 beats 750 ms apart after a 1 s lead-in; offset = median press error, clamped to +/-400 ms |
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
 | Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |
+| Tracker sync | Poll every 12 minutes; each query reaches back 60 s; 500 processed transitions kept |
+| Red alert | Status flash 8 s; toast cooldown 5 minutes |
+| Captain's log | 20 entries kept; at most 12 lines each |

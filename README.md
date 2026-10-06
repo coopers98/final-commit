@@ -31,6 +31,11 @@ There is no release yet. To play from a clone, see
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
 | `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
+| `/captains-log` | Writes a short summary of the session (standup notes) and shows it in a pane. The last 20 are kept. |
+
+A failed test run, or a failed tool call other than a shell command, during a
+mission raises a red alert: the status line flashes, and a toast appears at
+most once every five minutes.
 
 ## What data the mod sends, and where
 
@@ -41,6 +46,9 @@ the `/epic` form, after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
+`/captains-log` asks your session's own model to summarize the session it
+already holds; the mod adds only a fixed instruction, and the summary is
+stored locally.
 
 **Where it goes:** only through your own Claude Code session and account.
 The mod makes no other network calls.

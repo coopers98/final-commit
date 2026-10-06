@@ -132,3 +132,17 @@ export const CHARTING = { spinnerMs: 400, frames: ['|', '/', '-', '\\'] } as con
 // DEFAULT: how long a git call from the Bash observer may take, and how much
 // of a command's output (its end, where runners print summaries) is read.
 export const GIT = { timeoutMs: 5_000, outputTailChars: 4_000 } as const
+
+// SPEC 4.2: tracker sync. A poll every 12 minutes (inside the 10 to 15 the
+// SPEC gives); each query reaches back `overlapMs` before the last sync so a
+// tracker clock a little behind ours loses nothing (idempotency drops repeats).
+export const SYNC = { pollMs: 720_000, overlapMs: 60_000, maxProcessed: 500 } as const
+
+// SPEC 4.3 rules 1 and 2: what a tracker-closed mission needs to roll an encounter.
+export const ANTI_FARMING = { minMissionMs: 1_200_000 } as const
+
+// DEFAULT: SPEC 9.2 red alert. The status line flashes on every alert; a toast at most once per cooldown.
+export const RED_ALERT = { flashMs: 8_000, toastCooldownMs: 300_000 } as const
+
+// DEFAULT: SPEC 9.2 captain's log. Entries kept in the save, and the most lines one shows.
+export const CAPTAINS_LOG = { keep: 20, maxLines: 12 } as const
