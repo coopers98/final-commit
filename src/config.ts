@@ -129,5 +129,6 @@ export const STATUS = { maxColumns: 22 } as const
 // DEFAULT: the status line's charting indicator (a spinner frame per step).
 export const CHARTING = { spinnerMs: 400, frames: ['|', '/', '-', '\\'] } as const
 
-// DEFAULT: how long a git call from the Bash observer may take.
-export const GIT = { timeoutMs: 5_000 } as const
+// DEFAULT: how long a git call from the Bash observer may take, and how much
+// of a command's output (its end, where runners print summaries) is read.
+export const GIT = { timeoutMs: 5_000, outputTailChars: 4_000 } as const

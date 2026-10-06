@@ -99,7 +99,7 @@ Detection is automatic. Jira is the source of truth; git and session activity ar
 2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. (v2.)
 3. Soft cap of 2 encounters per calendar day (host local time, configurable). **Enforced in v1** for mission encounters; epic surveys and developer-mode encounters are exempt.
 4. **v1:** a branch only starts a mission when its key belongs to the active epic's project and that mission was never completed, so checkouts cannot pay out twice.
-5. **v1:** a test run counts as passing only when the Bash result can show the runner's exit status: piped (`| tail`), guarded (`|| true`) or backgrounded runs can clear "tests passing" but never set it. Failed commits are not counted.
+5. **v1:** a plain test run is judged by its exit status. One whose exit status may not be the runner's (piped `| tail`, guarded `|| true`, backgrounded `&`) is judged by the runner's own summary in the end of its output (bun/`claude plugin test`, jest, vitest, pest, pytest, phpunit, go, cargo formats); with no summary visible it counts as not passing. Wrappers that pass the exit status through (`timeout`, `time`, `nice`, `env`) are seen past, and redirections like `2>&1` change nothing. Failed commits are not counted.
 
 ### 4.4 Access options
 

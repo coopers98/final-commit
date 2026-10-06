@@ -339,3 +339,13 @@ test('a result stays up until Enter, and late Spaces land in the pane, not the p
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['Nothing to contain.'])
   await ui.unmount()
 })
+
+test('the Bash observer reads a piped run\'s summary from the tool output', async ($, on) => {
+  const w = world(on)
+  on('tool.call', () => ({ result: { stdout: 'tests/a.test.ts:\n(pass) x\n\n 3 pass\n 0 fail\n', stderr: '' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm test 2>&1 | tail -5' } as never)
+  expect((await run($, 'mission', 'complete')).text).toContain('Reinforced Cells +1')
+})

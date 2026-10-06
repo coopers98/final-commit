@@ -26,7 +26,7 @@ There is no release yet. To play from a clone, see
 |---|---|
 | `/epic NOVA-1` | Opens a form for the epic's title and description, then charts it as a star system in the background. |
 | `/mission NOVA-12` | Starts a mission. Checking out a branch like `feature/NOVA-12-x` (in the epic's project) starts it too. |
-| `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. A test run only counts as passing when its exit status is the runner's: `npm test` counts, `npm test \| tail` or `npm test \|\| true` do not. |
+| `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. A plain `npm test` counts by its exit status; a piped or guarded run (`npm test \| tail`) counts by the runner's summary line, so keep that line in the output. |
 | `/contain [reinforced]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. |
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |

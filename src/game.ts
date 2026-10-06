@@ -1,6 +1,6 @@
 import { CELLS, ENCOUNTER, REWARDS, type Cell } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
-import type { BashSignals } from './detect/git'
+import { testVerdictFromOutput, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
 import { rollAttachment } from './encounter/attachments'
 import { missionQuality } from './encounter/quality'
@@ -210,14 +210,20 @@ export async function onBranch(deps: GameDeps & { branch: string }): Promise<Out
 
 /**
  * Records Bash activity on the active mission. `isError` is the tool result's
- * error flag; a test run whose exit status the result cannot show (piped,
- * `|| true`, backgrounded) can turn testsGreen off but never on.
+ * error flag. A plain test run is judged by its exit status. One whose exit
+ * status may not be the runner's (piped, `|| true`, backgrounded) is judged
+ * by the runner's summary in `output`; with no summary visible it counts as
+ * not passing, so it can turn testsGreen off but never on.
  */
-export async function recordBash(deps: GameDeps & { signals: BashSignals; commits: number; isError: boolean }): Promise<void> {
+export async function recordBash(
+  deps: GameDeps & { signals: BashSignals; commits: number; isError: boolean; output?: string },
+): Promise<void> {
   const mission = await deps.repo.activeMission()
   const { signals } = deps
   if (!mission || (deps.commits === 0 && !signals.isTestRun)) return
-  const passed = signals.isTestRun && !deps.isError && signals.isTestStatusReliable
+  const passed =
+    signals.isTestRun &&
+    (signals.isTestStatusReliable ? !deps.isError : testVerdictFromOutput(deps.output ?? '') === 'pass')
   await deps.repo.saveActiveMission({
     ...mission,
     commits: mission.commits + deps.commits,

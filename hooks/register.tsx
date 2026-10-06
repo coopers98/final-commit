@@ -187,7 +187,12 @@ async function startSession($: EngineInterface) {
  */
 async function observeBash($: EngineInterface, command: string, result: unknown, isError: boolean) {
   if (!(await read($, ready))) return
-  const record = (result ?? {}) as { backgroundTaskId?: unknown; gitOperation?: { commit?: { kind?: unknown } } }
+  const record = (result ?? {}) as {
+    backgroundTaskId?: unknown
+    stdout?: unknown
+    stderr?: unknown
+    gitOperation?: { commit?: { kind?: unknown } }
+  }
   if (record.backgroundTaskId !== undefined) return
   const d = await deps($)
   const signals = classifyBash(command)
@@ -195,7 +200,9 @@ async function observeBash($: EngineInterface, command: string, result: unknown,
   await update($, mood, m => ({ last: event ? { event, at: d.now } : m.last, lastActivityAt: d.now }))
   const reported = record.gitOperation?.commit?.kind === 'committed' ? 1 : 0
   const commits = isError ? 0 : Math.max(signals.commits, reported)
-  if (commits > 0 || signals.isTestRun) await recordBash({ ...d, signals, commits, isError })
+  // The end of the output is where runners print their summaries.
+  const output = [record.stdout, record.stderr].filter((x): x is string => typeof x === 'string').join('\n').slice(-GIT.outputTailChars)
+  if (commits > 0 || signals.isTestRun) await recordBash({ ...d, signals, commits, isError, output })
   if (signals.mayChangeBranch && !isError) {
     const head = await $.process.run(['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], { timeoutMs: GIT.timeoutMs })
     if (head.exitCode === 0) {

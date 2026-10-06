@@ -127,6 +127,19 @@ test('a piped or guarded test run never counts as green', async () => {
   }
 })
 
+test('a piped test run counts by the summary it prints', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const piped = classifyBash('npm test 2>&1 | tail -3')
+  await recordBash({ ...deps, signals: piped, commits: 0, isError: false, output: ' 12 pass\n 0 fail\nRan 12 tests' })
+  expect((await repo.activeMission())!.testsGreen).toBe(true)
+  await recordBash({ ...deps, signals: piped, commits: 0, isError: false, output: ' 11 pass\n 1 fail' })
+  expect((await repo.activeMission())!.testsGreen).toBe(false)
+  await recordBash({ ...deps, signals: piped, commits: 0, isError: false, output: ' 12 pass\n 0 fail' })
+  await recordBash({ ...deps, signals: classifyBash('npm test | grep -c pass'), commits: 0, isError: false, output: '12' })
+  expect((await repo.activeMission())!.testsGreen).toBe(false)
+})
+
 test('a failing last test run clears testsGreen', async () => {
   const { repo, deps } = await withEpic()
   await startMission({ ...deps, issueKey: 'NOVA-2' })
