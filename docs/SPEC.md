@@ -196,7 +196,7 @@ The epic key never enters a prompt. Known limit: a lowercase name in plain prose
 
 Mission quality shifts rarity odds upward (tests run and passing, Tactical review clean). It does not change encounter frequency.
 
-Color is never the only indicator: every tier has a glyph and a text label (colorblind-safe, theme-safe).
+Color is never the only indicator: every tier has a glyph and a text label (colorblind-safe, theme-safe). Tier colors draw a creature's sprite and name wherever it appears (report, containment, band, Bridge, `/bay`, `/scan`); the Anomaly's color cycles. The Bridge's status lines use theme keys (`success`, `warning`, `error`) so they follow the person's theme: the red alert, hull (all passing, some, none), shields (up or down) and fuel (below 25%, below 10%). Tuned in `COLORS` (`src/config.ts`).
 
 ### 6.3 Attachments (independent of tier)
 

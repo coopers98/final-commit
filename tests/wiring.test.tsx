@@ -1,5 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { tierColor } from '../src/bridge/color'
+import { COLORS } from '../src/config'
 
 // Engine-level tests: the plugin loaded by the engine's own host, with the
 // clock, store, env, model and UI operations answered beneath it.
@@ -867,4 +869,24 @@ test('an Engineering LINT verdict counts as the mission\'s lint, so /mission com
   nextId = 'e2'
   await crewRun($, 'engineering', 'e2', 'All checks ran clean.\nLINT: PASS')
   expect((await run($, 'mission', 'complete')).text).toContain('Mission NOVA-2 complete.')
+})
+
+test('the encounter report draws its creature in its tier color, and the Bridge colors the shields', async ($, on) => {
+  const w = world(on)
+  on('tool.call', () => ({ result: { stdout: 'ok' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm run lint' } as never)
+  await run($, 'mission', 'complete anyway') // the first mission always has an encounter
+  const ui = await $.ui.mount(PANE('fc-report'))
+  const texts = await ui.findAll({ type: 'Text' })
+  const heading = texts.find(t => /\((Common|Uncommon|Rare|Exotic|Legendary|Anomaly)\)/.test(t.text))!
+  const tier = /\((\w+)\)/.exec(heading.text)![1]!.toLowerCase() as 'common'
+  expect(heading.props.color).toBe(tierColor(tier, w.clock.now()))
+  await ui.unmount()
+  await run($, 'bridge')
+  const bridge = await $.ui.mount(PANE('fc-bridge', 60))
+  expect((await bridge.findAll({ type: 'Text' })).find(t => t.text.startsWith('Shields'))!.props.color).toBe(COLORS.good)
+  await bridge.unmount()
 })

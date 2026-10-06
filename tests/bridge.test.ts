@@ -42,13 +42,13 @@ test('bay rows mark the companion and fit the width', async () => {
     { id: 'b', speciesId: 'gone', systemId: 'sys-1', tier: 'rare' as const, level: 3, xp: 0, stage: 0 as const, containedAt: 0, attachment: { class: 'minor' as const, item: 'scarf' } },
   ]
   const rows = bayRows(specimens, [system], 'b', 40)
-  expect(rows[0]).toBe('  1 · Glimmer L1')
-  expect(rows[1]).toBe('> 2 ◆ Unknown L3 +scarf')
-  for (const r of bayRows(specimens, [system], null, 12)) expect([...r].length).toBeLessThanOrEqual(12)
+  expect(rows[0]).toEqual({ text: '  1 · Glimmer L1', tier: 'common' })
+  expect(rows[1]).toEqual({ text: '> 2 ◆ Unknown L3 +scarf', tier: 'rare' })
+  for (const r of bayRows(specimens, [system], null, 12)) expect([...r.text].length).toBeLessThanOrEqual(12)
 })
 
 test('empty bay', async () => {
-  expect(bayRows([], [], null, 40)[0]).toContain('No specimens')
+  expect(bayRows([], [], null, 40)[0]!.text).toContain('No specimens')
 })
 
 test('charting shows a turning spinner, the key and whole seconds', async () => {

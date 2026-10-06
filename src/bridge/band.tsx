@@ -2,6 +2,7 @@ import { atom, read } from 'claude-code'
 import type { On } from 'claude-code'
 import type { BandView, CalibrationView, LatticeView, ReportView } from '../../types'
 import { COMPANION, SPRITE } from '../config'
+import { tierColor } from './color'
 
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 const lattice = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
@@ -43,6 +44,7 @@ export function wireBand(on: On): void {
     if (!v || e.props.hasSurvey || isPlaying) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns
+    const color = tierColor(v.tierName, await $.clock.now())
     // The companion keeps to the right edge; whatever else draws in the band keeps the left.
     const beneath = await next(e)
     const showSprite = e.props.maxRows >= COMPANION.spriteMinRows && columns >= SPRITE.cols && v.sprite.length > 0
@@ -51,7 +53,7 @@ export function wireBand(on: On): void {
       return (
         <Box flexDirection="row">
           <Box flexGrow={1} flexShrink={1}>{beneath}</Box>
-          <Box flexShrink={0}><Text dimColor>{line}</Text></Box>
+          <Box flexShrink={0}><Text dimColor color={color}>{line}</Text></Box>
         </Box>
       )
     }
@@ -65,11 +67,11 @@ export function wireBand(on: On): void {
         <Box flexGrow={1} flexShrink={1}>{beneath}</Box>
         {lines.length > 0 && (
           <Box flexDirection="column" justifyContent="center" flexShrink={0} width={textColumns} marginRight={COMPANION.spriteGap}>
-            {lines.map((line, i) => (i === 0 ? <Text bold>{line}</Text> : <Text dimColor>{line}</Text>))}
+            {lines.map((line, i) => (i === 0 ? <Text bold color={color}>{line}</Text> : i === 1 ? <Text color={color}>{line}</Text> : <Text dimColor>{line}</Text>))}
           </Box>
         )}
         <Box flexDirection="column" flexShrink={0} width={spriteColumns}>
-          {sprite.map(row => <Text>{row}</Text>)}
+          {sprite.map(row => <Text color={color}>{row}</Text>)}
         </Box>
       </Box>
     )

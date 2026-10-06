@@ -1,4 +1,4 @@
-import { BRIDGE } from '../config'
+import { BRIDGE, COLORS, type Tier } from '../config'
 import { crewLines, type CrewState, type Role } from '../crew/roster'
 import type { LogEntry } from '../store/schema'
 
@@ -19,8 +19,13 @@ export type BridgeData = {
   /** Officers with a saved report (the number keys reopen it). */
   reportRoles?: Role[]
   isPending: boolean
+  /** The waiting encounter's tier, to color its line. */
+  pendingTier?: Tier
   isAlert: boolean
 }
+
+/** A Bridge row: a status `color` (a theme key) or a `tier` the pane colors at draw time. */
+export type BridgeRow = { text: string; color?: string; tier?: Tier }
 
 const fit = (text: string, width: number) => [...text].slice(0, Math.max(0, width)).join('')
 
@@ -32,22 +37,39 @@ export function gauge(fraction: number): string {
 
 const pct = (fraction: number) => `${Math.round(fraction * 100)}%`
 
-export function bridgeRows(d: BridgeData, width: number): string[] {
-  const rows: string[] = []
-  rows.push(d.system ? `${d.system.name} (${d.system.starClass})${d.system.isSurveyed ? ' surveyed' : ''}` : 'No system charted: /epic <KEY>')
-  if (d.isAlert) rows.push('! RED ALERT')
-  if (d.isPending) rows.push('Encounter waiting: /contain')
-  rows.push('')
+/** Hull color by pass rate: all passing, some, none. */
+function hullColor(rate: number): string {
+  return rate >= COLORS.hullCautionBelow ? COLORS.good : rate > 0 ? COLORS.caution : COLORS.bad
+}
+
+function fuelColor(fuel: number): string | undefined {
+  return fuel < COLORS.fuelBadBelow ? COLORS.bad : fuel < COLORS.fuelCautionBelow ? COLORS.caution : undefined
+}
+
+export function bridgeRows(d: BridgeData, width: number): BridgeRow[] {
+  const rows: BridgeRow[] = []
+  const add = (text: string, style: Omit<BridgeRow, 'text'> = {}) => rows.push({ text, ...style })
+  add(d.system ? `${d.system.name} (${d.system.starClass})${d.system.isSurveyed ? ' surveyed' : ''}` : 'No system charted: /epic <KEY>')
+  if (d.isAlert) add('! RED ALERT', { color: COLORS.bad })
+  if (d.isPending) add('Encounter waiting: /contain', d.pendingTier ? { tier: d.pendingTier } : {})
+  add('')
   const m = d.mission
-  rows.push(m ? `Mission  ${m.key} · ${m.commits} commit${m.commits === 1 ? '' : 's'}` : 'Mission  none')
+  add(m ? `Mission  ${m.key} · ${m.commits} commit${m.commits === 1 ? '' : 's'}` : 'Mission  none')
   const t = d.gauges.tests
-  rows.push(t.runs > 0 ? `Hull     ${gauge(t.passes / t.runs)} ${pct(t.passes / t.runs)}` : 'Hull     no test runs yet')
-  rows.push(`Shields  ${d.gauges.lint === 'pass' ? 'up' : d.gauges.lint === 'fail' ? 'DOWN: lint failing' : 'no lint run yet'}`)
-  rows.push(d.fuel === undefined ? 'Fuel     not measured yet' : `Fuel     ${gauge(d.fuel / 100)} ${Math.round(d.fuel)}%`)
-  if (d.crew) rows.push('Crew', ...crewLines(d.crew, d.reportRoles ?? []))
-  if (d.log) {
-    rows.push('', `Captain's log ${d.log.stardate}`)
-    for (const line of d.log.lines.slice(0, BRIDGE.logLines)) rows.push(`  ${line}`)
+  if (t.runs > 0) add(`Hull     ${gauge(t.passes / t.runs)} ${pct(t.passes / t.runs)}`, { color: hullColor(t.passes / t.runs) })
+  else add('Hull     no test runs yet')
+  const lint = d.gauges.lint
+  add(`Shields  ${lint === 'pass' ? 'up' : lint === 'fail' ? 'DOWN: lint failing' : 'no lint run yet'}`, lint ? { color: lint === 'pass' ? COLORS.good : COLORS.bad } : {})
+  if (d.fuel === undefined) add('Fuel     not measured yet')
+  else {
+    const color = fuelColor(d.fuel)
+    add(`Fuel     ${gauge(d.fuel / 100)} ${Math.round(d.fuel)}%`, color ? { color } : {})
   }
-  return rows.map(r => fit(r, width))
+  if (d.crew) for (const line of ['Crew', ...crewLines(d.crew, d.reportRoles ?? [])]) add(line)
+  if (d.log) {
+    add('')
+    add(`Captain's log ${d.log.stardate}`)
+    for (const line of d.log.lines.slice(0, BRIDGE.logLines)) add(`  ${line}`)
+  }
+  return rows.map(r => ({ ...r, text: fit(r.text, width) }))
 }

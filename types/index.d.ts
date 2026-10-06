@@ -1,8 +1,12 @@
 // $.state contract for The Final Commit: what the panes and the band draw.
 // Saved game data lives in $.store (src/store); these are views of it.
 
+/** A rarity tier (src/config TIERS): views carry it so a drawing can color by it (SPEC 6.2). */
+export type TierName = 'common' | 'uncommon' | 'rare' | 'exotic' | 'legendary' | 'anomaly'
+
 export type LatticeView = {
   heading: string
+  tier: TierName
   sprite: string[]
   bar: string
   locks: string
@@ -13,7 +17,9 @@ export type LatticeView = {
 
 export type BandView = {
   name: string
+  /** The tier's glyph and label, as shown. */
   tier: string
+  tierName: TierName
   mood: string
   sprite: string[]
   mission: string | null
@@ -38,7 +44,7 @@ export type ReportView = {
   title: string
   lines: string[]
   /** The creature that turned up, if one did. */
-  encounter: { heading: string; sprite: string[] } | null
+  encounter: { heading: string; sprite: string[]; tier: TierName } | null
   /** Reinforced Cells held after the mission, offered for containing from the report. */
   reinforced: number
 }
@@ -50,7 +56,10 @@ export type ConfirmView = { issueKey: string; items: string[] }
 export type QueuedMission = { issueKey: string; epicKey: string; at: number }
 
 /** One row of the /scan pane (SPEC 9.4); `isArt` rows are cut, never wrapped. */
-export type ScanRow = { text: string; style?: 'bold' | 'dim'; isArt?: boolean }
+export type ScanRow = { text: string; style?: 'bold' | 'dim'; isArt?: boolean; tier?: TierName }
+
+/** One row of the Specimen Bay pane. */
+export type BayRow = { text: string; tier?: TierName }
 
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
@@ -91,7 +100,7 @@ declare module 'claude-code' {
       /** SPEC 9 Bridge gauges for this session: test runs (hull) and the last lint verdict (shields). */
       gauges: { tests: { runs: number; passes: number }; lint: 'pass' | 'fail' | null }
       calibration: CalibrationView | null
-      bay: string[]
+      bay: BayRow[]
     }
   }
 }

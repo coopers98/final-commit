@@ -1,6 +1,6 @@
 import type { ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
-import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell } from './config'
+import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { lintVerdict, testVerdictFromOutput, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
@@ -27,11 +27,12 @@ import { type Complete, type EpicInput, generateSystem } from './world/generate'
  */
 export type Outcome = { text: string; toast?: string; report?: ReportView }
 
-function encounterHeading(species: Species | undefined, pending: PendingEncounter): { heading: string; sprite: string[] } {
+function encounterHeading(species: Species | undefined, pending: PendingEncounter): { heading: string; sprite: string[]; tier: Tier } {
   const spec = TIER_SPECS[pending.tier]
   return {
     heading: `${spec.glyph} ${species?.name ?? 'Something'} (${spec.label})${pending.attachment ? ` +${pending.attachment.item}` : ''}`,
     sprite: species?.stages[0]?.rows ?? [],
+    tier: pending.tier,
   }
 }
 /** `day` is the host-local calendar date (YYYY-MM-DD) for the daily soft cap (SPEC 4.3). */

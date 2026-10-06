@@ -126,6 +126,22 @@ export const SCAN = {
   silhouetteChar: '#',
 } as const
 
+// DEFAULT: drawing colors (SPEC 6.2, 9). Tier colors are in TIER_SPECS; the
+// Anomaly's `cycle` steps through `cycle` every `cycleMs`. Status colors are
+// theme keys, so they follow the person's light or dark theme.
+export const COLORS = {
+  cycle: ['red', 'yellow', 'green', 'cyan', 'blue', 'magenta'] as readonly string[],
+  cycleMs: 1_000,
+  good: 'success',
+  caution: 'warning',
+  bad: 'error',
+  /** Hull below this pass rate is a warning; at zero, an error. */
+  hullCautionBelow: 1,
+  /** Fuel percent below these is a warning, then an error. */
+  fuelCautionBelow: 25,
+  fuelBadBelow: 10,
+} as const
+
 // SPEC 10
 export const STORE = { prefix: 'fc:', schemaVersion: 2 } as const
 

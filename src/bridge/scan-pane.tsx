@@ -4,6 +4,7 @@ import type { ScanRow } from '../../types'
 import { parseEpicKey } from '../game'
 import { createRepo, type Repo } from '../store/repo'
 import { scanRows } from './scan'
+import { tierColor } from './color'
 import { wrap } from './text'
 
 export const SCAN_PANE = 'fc-scan'
@@ -43,12 +44,13 @@ export function wireScan(on: On): void {
     const { Box, Text } = $.ui.resolve(e)
     const width = e.props.bodyColumns
     const list = await read($, rows)
+    const now = await $.clock.now()
     // Sprites are cut to the width; prose wraps.
     const lines = list.flatMap(r => (r.isArt ? [{ ...r, text: [...r.text].slice(0, width).join('') }] : wrap(r.text, width).map(text => ({ ...r, text }))))
     return (
       <Box flexDirection="column">
         {lines.map(r => (
-          <Text bold={r.style === 'bold'} dimColor={r.style === 'dim'}>
+          <Text bold={r.style === 'bold'} dimColor={r.style === 'dim'} color={r.tier ? tierColor(r.tier, now) : undefined}>
             {r.text}
           </Text>
         ))}

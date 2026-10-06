@@ -91,6 +91,7 @@ export async function snapshot(
     band = {
       name: species?.name ?? 'Unknown',
       tier: `${TIER_SPECS[specimen.tier].glyph} ${TIER_SPECS[specimen.tier].label}`,
+      tierName: specimen.tier,
       mood: moodOf(now, mood),
       sprite: species?.stages[specimen.stage]?.rows ?? species?.stages[0]?.rows ?? [],
       mission: mission?.issueKey ?? null,

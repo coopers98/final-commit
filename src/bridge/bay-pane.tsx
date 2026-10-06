@@ -1,14 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
-import type { BandView, ChartingEntry } from '../../types'
+import type { BandView, BayRow, ChartingEntry } from '../../types'
 import { setCompanion } from '../game'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
 import type { StarSystem } from '../store/schema'
 import { bayRows } from './bay'
+import { tierColor } from './color'
 
 export const BAY_PANE = 'fc-bay'
-const rows = atom({ plugin: 'final-commit', key: 'bay' } as const, [] as string[])
+const rows = atom({ plugin: 'final-commit', key: 'bay' } as const, [] as BayRow[])
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
@@ -58,10 +59,11 @@ export function wireBay(on: On): void {
   on('ui.render', { component: 'Pane', requestId: BAY_PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const list = await read($, rows)
+    const now = await $.clock.now()
     return (
       <Box flexDirection="column">
         {list.map(r => (
-          <Text>{[...r].slice(0, e.props.bodyColumns).join('')}</Text>
+          <Text color={r.tier ? tierColor(r.tier, now) : undefined}>{[...r.text].slice(0, e.props.bodyColumns).join('')}</Text>
         ))}
         <Text dimColor>/bay companion N sets your companion. Esc closes.</Text>
       </Box>

@@ -48,15 +48,15 @@ export function scanRows(system: StarSystem, catalog: readonly CatalogEntry[], r
     for (const tier of TIERS) {
       const group = shown.filter(s => s.kind === kind && s.tier === tier)
       if (group.length === 0) continue
-      rows.push({ text: '' }, { text: `${TIER_SPECS[tier].glyph} ${TIER_SPECS[tier].label} ${kind}`, style: 'bold' })
+      rows.push({ text: '' }, { text: `${TIER_SPECS[tier].glyph} ${TIER_SPECS[tier].label} ${kind}`, style: 'bold', tier })
       let unidentified = 0
       for (const s of group) {
         const status = met.get(s.id)
-        if (status) rows.push({ text: `${s.name}  ${status}` }, { text: s.readout, style: 'dim' })
-        else if (named(tier)) rows.push({ text: `${s.name}  not yet encountered` }, { text: s.readout, style: 'dim' })
+        if (status) rows.push({ text: `${s.name}  ${status}`, tier }, { text: s.readout, style: 'dim' })
+        else if (named(tier)) rows.push({ text: `${s.name}  not yet encountered`, tier }, { text: s.readout, style: 'dim' })
         else if (resolved.includes(s.id)) {
           rows.push({ text: 'Unidentified, shape resolved' })
-          for (const r of silhouette(s.stages[0]?.rows ?? [])) rows.push({ text: r, isArt: true })
+          for (const r of silhouette(s.stages[0]?.rows ?? [])) rows.push({ text: r, isArt: true, tier })
         } else unidentified += 1
       }
       if (unidentified > 0) rows.push({ text: `${unidentified} signal${unidentified === 1 ? '' : 's'}, unidentified`, style: 'dim' })

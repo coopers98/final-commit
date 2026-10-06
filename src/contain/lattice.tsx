@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
 import type { BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
-import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell } from '../config'
+import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell, type Tier } from '../config'
+import { tierColor } from '../bridge/color'
 import { attemptContainment } from '../game'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
@@ -33,6 +34,7 @@ type Run = {
   typed: number
   cell: Cell
   heading: string
+  tier: Tier
   sprite: string[]
   timer: Timer
   message: string
@@ -87,6 +89,7 @@ function hintLines(parts: string[], width: number): string[] {
 function show(r: Run, isOver = false): LatticeView {
   return {
     heading: r.heading,
+    tier: r.tier,
     sprite: r.sprite,
     bar: renderBar(r.model),
     locks: renderLocks(r.model),
@@ -177,6 +180,7 @@ async function open($: EngineInterface, args: string): Promise<string> {
     typed: 0,
     cell,
     heading: `${spec.glyph} ${species?.name ?? 'Unknown'} (${spec.label})${pending.attachment ? ` +${pending.attachment.item}` : ''}`,
+    tier: pending.tier,
     sprite: species?.stages[0]?.rows ?? [],
     message: measured ? '' : 'Tip: run /calibrate on this device.',
     timer: $.clock.every(LATTICE_SHARED.frameMs, () => {
@@ -217,6 +221,7 @@ export function wireLattice(on: On): void {
     const r = await read($, report)
     const width = e.props.bodyColumns
     if (!r) return <Text dimColor>Nothing to report.</Text>
+    const color = r.encounter ? tierColor(r.encounter.tier, await $.clock.now()) : undefined
     const hints = r.encounter
       ? ['Enter: contain now', ...(r.reinforced > 0 ? [`r Enter: use a Reinforced Cell (${r.reinforced})`] : []), 'Esc: later']
       : ['Enter or Esc: close']
@@ -224,13 +229,13 @@ export function wireLattice(on: On): void {
     return (
       <Box flexDirection="column">
         {r.encounter?.sprite.map(row => (
-          <Text>{row}</Text>
+          <Text color={color}>{row}</Text>
         ))}
         <Text bold>{fit(r.title, width)}</Text>
         {r.lines.flatMap(line => wrap(line, width)).map(line => (
           <Text>{line}</Text>
         ))}
-        {r.encounter && <Text bold>{fit(r.encounter.heading, width)}</Text>}
+        {r.encounter && <Text bold color={color}>{fit(r.encounter.heading, width)}</Text>}
         {hintLines(hints, width).map(line => (
           <Text dimColor>{line}</Text>
         ))}
@@ -262,13 +267,14 @@ export function wireLattice(on: On): void {
     const v = await read($, view)
     const width = e.props.bodyColumns
     if (!v) return <Text dimColor>Nothing to contain.</Text>
+    const color = tierColor(v.tier, await $.clock.now())
     // A short terminal clips a pane from the top, so the sprite comes first and the essentials last.
     return (
       <Box flexDirection="column">
         {v.sprite.map(row => (
-          <Text>{row}</Text>
+          <Text color={color}>{row}</Text>
         ))}
-        <Text bold>{fit(v.heading, width)}</Text>
+        <Text bold color={color}>{fit(v.heading, width)}</Text>
         <Text>{v.bar}</Text>
         <Text>{v.locks}</Text>
         {v.message !== '' && <Text>{fit(v.message, width)}</Text>}

@@ -7,6 +7,7 @@ import { NO_ALERT } from './alert'
 import type { ReportView } from '../../types'
 import { BRIDGE_KEYS, crewTask, NO_CREW, REPORT_KEYS, ROLE_LABELS, TASK_ROLE, type CrewTask, type Role } from '../crew/roster'
 import { bridgeRows, NO_GAUGES, type BridgeData } from './bridge'
+import { tierColor } from './color'
 import { createRepo, type Repo } from '../store/repo'
 
 export const BRIDGE_PANE = 'fc-bridge'
@@ -51,6 +52,7 @@ async function gather($: EngineInterface): Promise<BridgeData> {
   const log = (await repo.captainsLog()).at(-1)
   const fuel = await fuelOf($)
   const reports = await repo.crewReports()
+  const pending = await repo.pending()
   return {
     ...(system ? { system } : {}),
     ...(mission ? { mission: { key: mission.issueKey, commits: mission.commits, testRuns: mission.testRuns } } : {}),
@@ -59,7 +61,8 @@ async function gather($: EngineInterface): Promise<BridgeData> {
     ...(log ? { log } : {}),
     crew: await read($, crew),
     reportRoles: (Object.keys(reports) as Role[]).filter(r => reports[r] !== undefined),
-    isPending: (await repo.pending()) !== undefined,
+    isPending: pending !== undefined,
+    ...(pending ? { pendingTier: pending.tier } : {}),
     isAlert: (await $.clock.now()) < (await read($, alert)).until,
   }
 }
@@ -125,21 +128,21 @@ async function onAsk($: EngineInterface, question: string) {
 }
 
 /** The companion at the foot of the pane, laid out as the band lays it out: facts to the left of the sprite. */
-function companionBlock(Box: any, Text: any, v: BandView, width: number) {
+function companionBlock(Box: any, Text: any, v: BandView, width: number, color: string) {
   const sprite = trimSprite(v.isBlinking || v.mood === 'asleep' ? blink(v.sprite) : v.sprite)
   const spriteColumns = Math.max(0, ...sprite.map(r => r.length))
   const room = width - spriteColumns - COMPANION.spriteGap
   const lines = room >= COMPANION.besideMinColumns ? besideLines(v, room) : []
-  if (sprite.length === 0 || spriteColumns > width) return <Text dimColor>{`${v.tier} ${v.name} · ${v.mood}`.slice(0, width)}</Text>
+  if (sprite.length === 0 || spriteColumns > width) return <Text dimColor color={color}>{`${v.tier} ${v.name} · ${v.mood}`.slice(0, width)}</Text>
   return (
     <Box flexDirection="row" marginTop={1}>
       {lines.length > 0 && (
         <Box flexDirection="column" justifyContent="center" marginRight={COMPANION.spriteGap}>
-          {lines.map((line, n) => (n === 0 ? <Text bold>{line}</Text> : <Text dimColor>{line}</Text>))}
+          {lines.map((line, n) => (n === 0 ? <Text bold color={color}>{line}</Text> : n === 1 ? <Text color={color}>{line}</Text> : <Text dimColor>{line}</Text>))}
         </Box>
       )}
       <Box flexDirection="column">
-        {sprite.map(row => <Text>{row}</Text>)}
+        {sprite.map(row => <Text color={color}>{row}</Text>)}
       </Box>
     </Box>
   )
@@ -176,16 +179,20 @@ export function wireBridge(on: On): void {
     const companion = await read($, band)
     const width = e.props.bodyColumns
     const rows = bridgeRows(await gather($), width)
+    const now = await $.clock.now()
+    const color = companion ? tierColor(companion.tierName, now) : ''
     const i = await read($, input)
     const hints = ['e: run tests', 'l: lint', 's: ask Science', 't: security review', '1-3: last report', 'Esc: close']
     const joined = hints.join('  ')
     const hintRows = [...joined].length <= width ? [joined] : [`${hints[0]}  ${hints[1]}  ${hints[2]}`, `${hints[3]}  ${hints[4]}`, hints[5]!]
     return (
       <Box flexDirection="column">
-        {rows.map((r, n) => (n === 0 ? <Text bold>{r}</Text> : <Text>{r === '' ? ' ' : r}</Text>))}
+        {rows.map((r, n) => (
+          <Text bold={n === 0} color={r.tier ? tierColor(r.tier, now) : r.color}>{r.text === '' ? ' ' : r.text}</Text>
+        ))}
         <Text> </Text>
         {i.isAsking ? <Text dimColor>Type a question for Science, then Enter.</Text> : hintRows.map(hint => <Text dimColor>{hint}</Text>)}
-        {companion && companionBlock(Box, Text, companion, width)}
+        {companion && companionBlock(Box, Text, companion, width, color)}
         {Input && i.isAsking && (
           <Input key={`bridge-ask-${i.generation}`} autoFocus label="Question" onInput={() => {}} onSubmit={(q: string) => void onAsk($, q)} />
         )}
