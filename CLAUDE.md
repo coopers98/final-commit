@@ -53,4 +53,4 @@ At runtime:
 
 ## Current phase
 
-v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; what remains is the work sources epic (SPEC 4.4: Jira MCP and REST, GitHub Issues, Linear, plan documents), which also wires the sync into the session. Next after it: v3 puzzles with content adapters and runners (SPEC 8.3).
+v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; the source layer is wired (`workSources` setting, per-source sync, catch-up and poll); what remains of the work sources epic is the backends (SPEC 4.4: plan documents, GitHub Issues, Jira REST and MCP, Linear), each added to `backendsOf` in `hooks/register.tsx`. Next after it: v3 puzzles with content adapters and runners (SPEC 8.3).

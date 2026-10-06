@@ -34,6 +34,13 @@
       "title": "Developer mode",
       "description": "Enables /encounter, which forces an encounter for playtesting.",
       "default": false
+    },
+    "workSources": {
+      "type": "string",
+      "multiple": true,
+      "title": "Work sources",
+      "description": "Trackers read for automatic detection, by name (SPEC 4.4). This build has no backends yet; each is added by name as it ships.",
+      "default": []
     }
   }
 }

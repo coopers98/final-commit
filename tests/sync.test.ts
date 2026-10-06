@@ -63,7 +63,7 @@ test('the first sync only records where it starts: nothing earlier is awarded', 
   const r = await syncWork(h.deps(1_000 * MIN, source))
   expect(r.applied).toBe(0)
   expect(source.queries.length).toBe(0)
-  expect((await h.repo.sync()).lastSync).toBe(1_000 * MIN)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(1_000 * MIN)
   expect(h.charted).toEqual([])
 })
 
@@ -94,14 +94,14 @@ test('a child issue starting charts its epic, and the mission starts once the ch
   expect(first.deferred).toBe(1)
   expect(await h.repo.activeMission()).toBe(undefined)
   // lastSync holds at the waiting transition so the next query still returns it.
-  expect((await h.repo.sync()).lastSync).toBe(5 * MIN)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(5 * MIN)
 
   await finishChart(h, EPIC, 11 * MIN)
   const second = await syncWork(h.deps(12 * MIN, source))
   expect(second.applied).toBe(1)
   expect((await h.repo.activeMission())?.issueKey).toBe('NOVA-2')
   expect(second.outcomes[0]?.toast).toBe('Mission NOVA-2 started.')
-  expect((await h.repo.sync()).lastSync).toBe(12 * MIN)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(12 * MIN)
 })
 
 test('a worked mission closed in the tracker completes with its encounter roll', async () => {
@@ -148,7 +148,7 @@ test('an issue closed without ever being the mission is logged, so its branch ca
   await finishChart(h, EPIC, 0)
   const log: WorkTransition[] = [move(issue(3), 'done', 2 * MIN, EPIC)]
   const source = scripted(log)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const r = await syncWork(h.deps(3 * MIN, source))
   expect(r.outcomes).toEqual([])
   expect((await h.repo.missionLog()).map(m => m.issueKey)).toEqual(['NOVA-3'])
@@ -160,7 +160,7 @@ test('an issue closed without ever being the mission is logged, so its branch ca
 test('a second issue in progress is not tracked while a mission is active', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const source = scripted([move(issue(2), 'in_progress', 1 * MIN, EPIC), move(issue(4), 'in_progress', 2 * MIN, EPIC)])
   await syncWork(h.deps(3 * MIN, source))
   expect((await h.repo.activeMission())?.issueKey).toBe('NOVA-2')
@@ -170,7 +170,7 @@ test('a mission under another epic makes that epic active', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
   await finishChart(h, OTHER_EPIC, 1)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   await syncWork(h.deps(3 * MIN, scripted([move(issue(51), 'in_progress', 1 * MIN, OTHER_EPIC)])))
   expect((await h.repo.meta())!.activeEpicKey).toBe('NOVA-50')
   expect((await h.repo.activeMission())?.issueKey).toBe('NOVA-51')
@@ -180,13 +180,13 @@ test('an epic closed in the tracker is surveyed, and waits while an encounter ho
   const h = await harness()
   await finishChart(h, EPIC, 0)
   await finishChart(h, OTHER_EPIC, 1)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   await h.repo.savePending({ id: 'e', systemId: 'x', speciesId: 'y', tier: 'common', quality: 0, attempts: 0, createdAt: 0 })
   const log = [move(EPIC, 'done', 1 * MIN)]
   const source = scripted(log)
   const held = await syncWork(h.deps(2 * MIN, source))
   expect(held.deferred).toBe(1)
-  expect((await h.repo.sync()).lastSync).toBe(1 * MIN)
+  expect((await h.repo.sync('scripted')).lastSync).toBe(1 * MIN)
 
   await h.repo.clearPending()
   await h.repo.patchMeta(m => ({ ...m, activeEpicKey: 'NOVA-50' }))
@@ -199,7 +199,7 @@ test('an epic closed in the tracker is surveyed, and waits while an encounter ho
 test('a waiting epic holds back its own later changes, not other epics', async () => {
   const h = await harness()
   await finishChart(h, OTHER_EPIC, 1)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   // NOVA-2 waits for NOVA-1 to chart, so NOVA-2's Done must wait too, or it would be read as a closure.
   const log = [
     move(issue(2), 'in_progress', 1 * MIN, EPIC),
@@ -215,12 +215,12 @@ test('a waiting epic holds back its own later changes, not other epics', async (
 test('idempotency: a restart replaying the same transitions applies nothing twice', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const log = [move(issue(2), 'in_progress', 1 * MIN, EPIC), move(issue(2), 'done', 2 * MIN, EPIC)]
   await syncWork(h.deps(3 * MIN, scripted(log)))
   const before = (await h.repo.missionLog()).length
   // The same changes reported again (overlap window, a reload, a source that repeats itself).
-  await h.repo.saveSync({ ...(await h.repo.sync()), lastSync: 0 })
+  await h.repo.saveSync('scripted', { ...(await h.repo.sync('scripted')), lastSync: 0 })
   const again = await syncWork(h.deps(4 * MIN, scripted([...log, ...log])))
   expect(again.applied).toBe(0)
   expect((await h.repo.missionLog()).length).toBe(before)
@@ -229,27 +229,27 @@ test('idempotency: a restart replaying the same transitions applies nothing twic
 test('each query reaches back by the overlap, and the processed list stays bounded', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 100 * MIN, processed: Array.from({ length: SYNC.maxProcessed }, (_, i) => `NOVA-9:${i}`) })
+  await h.repo.saveSync('scripted', { lastSync: 100 * MIN, processed: Array.from({ length: SYNC.maxProcessed }, (_, i) => `NOVA-9:${i}`) })
   const source = scripted([move(EPIC, 'todo', 101 * MIN)])
   await syncWork(h.deps(102 * MIN, source))
   expect(source.queries).toEqual([100 * MIN - SYNC.overlapMs])
-  const s = await h.repo.sync()
+  const s = await h.repo.sync('scripted')
   expect(s.processed.length).toBe(SYNC.maxProcessed)
   expect(s.processed.at(-1)).toMatch(/^NOVA-1:/)
 })
 
 test('a failing source changes nothing and reports why', async () => {
   const h = await harness()
-  await h.repo.saveSync({ lastSync: 5, processed: [] })
+  await h.repo.saveSync('down', { lastSync: 5, processed: [] })
   const r = await syncWork(h.deps(10, { name: 'down', changedSince: async () => { throw new Error('503') } }))
   expect(r.error).toBe('503')
-  expect((await h.repo.sync()).lastSync).toBe(5)
+  expect((await h.repo.sync('down')).lastSync).toBe(5)
 })
 
 test('a tracker-started mission runs from the tracker\'s start, not from the poll that saw it', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const log = [move(issue(2), 'in_progress', 1 * MIN, EPIC)]
   const source = scripted(log)
   await syncWork(h.deps(12 * MIN, source))
@@ -264,7 +264,7 @@ test('a tracker-started mission runs from the tracker\'s start, not from the pol
 test('an unworked closure earns no Reinforced Cell, even with green tests', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const log = [move(issue(2), 'in_progress', 1 * MIN, EPIC)]
   const source = scripted(log)
   await syncWork(h.deps(2 * MIN, source))
@@ -278,7 +278,7 @@ test('an unworked closure earns no Reinforced Cell, even with green tests', asyn
 test('charting for the tracker never moves the active epic away from a running mission', async () => {
   const h = await harness()
   await finishChart(h, OTHER_EPIC, 1)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const log = [move(issue(51), 'in_progress', 1 * MIN, OTHER_EPIC), move(issue(5), 'in_progress', 2 * MIN, EPIC)]
   const source = scripted(log)
   await syncWork(h.deps(3 * MIN, source))
@@ -292,14 +292,14 @@ test('charting for the tracker never moves the active epic away from a running m
 test('a start and a Done at the same instant apply start first, whatever order the source lists them', async () => {
   const h = await harness()
   await finishChart(h, EPIC, 0)
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const r = await syncWork(h.deps(3 * MIN, scripted([move(issue(2), 'done', 1 * MIN, EPIC), move(issue(2), 'in_progress', 1 * MIN, EPIC)])))
   expect(r.outcomes.map(o => o.text)).toEqual(['Mission NOVA-2 started.', 'Mission NOVA-2 complete.'])
 })
 
 test('a closure while its epic is still charting waits for the chart, so it is not lost', async () => {
   const h = await harness()
-  await h.repo.saveSync({ lastSync: 0, processed: [] })
+  await h.repo.saveSync('scripted', { lastSync: 0, processed: [] })
   const source = scripted([move(EPIC, 'in_progress', 1 * MIN), move(issue(3), 'done', 2 * MIN, EPIC)])
   const r = await syncWork(h.deps(3 * MIN, source))
   expect(r.deferred).toBe(1)

@@ -104,9 +104,10 @@ async function applyIssue(deps: SyncDeps, t: WorkTransition, charting: Set<strin
  */
 export async function syncWork(deps: SyncDeps): Promise<SyncResult> {
   const { repo, now } = deps
-  const state = await repo.sync()
+  const name = deps.source.name
+  const state = await repo.sync(name)
   if (state.lastSync === null) {
-    await repo.saveSync({ lastSync: now, processed: [] })
+    await repo.saveSync(name, { lastSync: now, processed: [] })
     return { outcomes: [], applied: 0, deferred: 0 }
   }
   let found: WorkTransition[]
@@ -146,7 +147,7 @@ export async function syncWork(deps: SyncDeps): Promise<SyncResult> {
     if (result.outcome) outcomes.push(result.outcome)
   }
 
-  await repo.saveSync({
+  await repo.saveSync(name, {
     lastSync: deferredAt === undefined ? now : Math.min(deferredAt, now),
     processed: [...state.processed, ...applied].slice(-SYNC.maxProcessed),
   })

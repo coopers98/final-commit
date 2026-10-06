@@ -11,10 +11,12 @@ import { wireBay } from '../src/bridge/bay-pane'
 import { wireScan } from '../src/bridge/scan-pane'
 import { wrap } from '../src/bridge/text'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
-import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel } from '../src/config'
+import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
+import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
+import type { WorkSource } from '../src/detect/work-source'
 import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
@@ -55,6 +57,12 @@ const live = new Set<string>()
 let actions = 0
 /** True while a /captains-log summary is being written. */
 let logging = false
+/** The configured work sources, built once per session start (a backend may keep what it last read). */
+let sources: WorkSource[] = []
+/** One sync at a time (SPEC 4.2); made by the first `startSync` of this module instance and kept, so a later start cannot overlap a sync still running. */
+let syncGate: ReturnType<typeof createSyncGate> | undefined
+/** Work sources whose failure has been reported (SPEC 4.4 rule 5: once per outage). */
+let failing = new Set<string>()
 let settings: Settings = readSettings({})
 
 // The engine lets `$` reach only top-level functions of the same file: these
@@ -96,7 +104,8 @@ async function deps($: EngineInterface) {
   return { repo: repoOf($), now, rng: await rngOf($), day: localDay(now) }
 }
 
-async function chart($: EngineInterface, key: string, title: string, description: string) {
+/** `activate: false` for a chart a work source starts: an issue's start makes its epic active (SPEC 4.2 rule 6). */
+async function chart($: EngineInterface, key: string, title: string, description: string, activate = true) {
   live.add(key)
   const startedAt = await $.clock.now()
   await update($, charting, list => [...list.filter(c => c.key !== key), { key, startedAt }])
@@ -106,10 +115,12 @@ async function chart($: EngineInterface, key: string, title: string, description
   })
   await refresh($)
   try {
-    const out = await startEpic({ ...(await deps($)), epic: { key, title, description }, complete: completeVia($, settings.generationModel), privacy: settings.privacyMode })
+    const out = await startEpic({ ...(await deps($)), epic: { key, title, description }, activate, complete: completeVia($, settings.generationModel), privacy: settings.privacyMode })
     $.ui.toast(out.toast ?? out.text)
     await startQueued($, key, true)
     await refresh($)
+    // A chart a source started holds back that source's mission: sync now rather than at the next poll.
+    if (!activate) syncGate?.request({ again: true })
   } catch (err) {
     $.ui.toast(`Charting ${key} failed: ${err instanceof Error ? err.message : String(err)}`)
     await startQueued($, key, false)
@@ -130,7 +141,7 @@ async function startQueued($: EngineInterface, epicKey: string, isCharted: boole
     $.ui.toast(`Mission ${q.issueKey} was not started: charting ${epicKey} failed. Run /mission ${q.issueKey} again.`)
     return
   }
-  const out = await startMission({ ...(await deps($)), issueKey: q.issueKey, startedAt: q.at })
+  const out = await startMission({ ...(await deps($)), issueKey: q.issueKey, startedAt: q.at, epicKey: q.epicKey })
   $.ui.toast(out.text)
 }
 
@@ -163,6 +174,54 @@ async function announce($: EngineInterface, out: Outcome) {
     await update($, report, () => null)
   }
   if (out.toast) $.ui.toast(out.toast)
+}
+
+/**
+ * SPEC 4.4: the backends this build has, by the name `workSources` lists.
+ * Each closes over `$` here, as `$` reaches only this file's functions.
+ */
+function backendsOf(_$: EngineInterface): Record<string, Backend> {
+  return {}
+}
+
+/** One sync of every configured work source (SPEC 4.2): at session start, then each poll. */
+async function syncTracked($: EngineInterface) {
+  try {
+    if (sources.length === 0 || !(await read($, ready))) return
+    const r = await syncSources({
+      ...(await deps($)), sources, failing, charting: new Set(live),
+      chart: e => void chart($, e.key, e.title, e.description, false),
+    })
+    failing = r.failing
+    for (const t of r.toasts) $.ui.toast(t)
+    await refresh($)
+    // One report pane at a time: an outcome after the first report is told by toast.
+    let isReporting = false
+    for (const out of r.outcomes) {
+      if (out.report && !isReporting) {
+        isReporting = true
+        await announce($, out)
+      } else {
+        $.ui.toast(out.toast ?? out.text)
+      }
+    }
+  } catch (err) {
+    $.ui.log(`final-commit: work sync: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+  }
+}
+
+/** SPEC 4.2: the catch-up sync now, then a poll on the clock. Names no backend answers to are said once. */
+async function startSync($: EngineInterface) {
+  const resolved = resolveSources(settings.workSources, backendsOf($))
+  sources = resolved.sources
+  const gate = (syncGate ??= createSyncGate(() => syncTracked($)))
+  const { unknown, incomplete } = resolved
+  for (const name of unknown) $.ui.toast(`Work source ${name} is not available in this build; it is ignored.`)
+  for (const name of incomplete) $.ui.toast(`Work source ${name} is missing settings; it is ignored until they are set.`)
+  if (sources.length === 0) return
+  $.clock.every(SYNC.pollMs, () => gate.request())
+  // In the background: a slow tracker never holds up the session's start.
+  gate.request()
 }
 
 async function epic($: EngineInterface, args: string): Promise<{ text: string }> {
@@ -371,6 +430,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
   await registerCrew($)
   if (settings.devMode) await $.command.register({ name: 'encounter', description: 'Force an encounter (developer mode)' })
+  await startSync($)
   // Idle animation (SPEC 9.3): a short blink every few seconds.
   $.clock.every(COMPANION.blinkEveryMs, () => {
     void update($, band, v => (v ? { ...v, isBlinking: true } : v))

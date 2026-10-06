@@ -2,6 +2,7 @@ import type { PluginOptions } from 'claude-code'
 import type { BandView, ChartingEntry, MoodState } from '../types'
 import { COMPANION, GENERATION, TIER_SPECS, type GenerationModel } from './config'
 import { statusText } from './bridge/status'
+import { sourceNames } from './detect/sources'
 import type { PrivacyMode } from './puzzle/privacy-filter'
 import { createRng, seedFromCrypto, type Rng } from './rng'
 import type { Repo } from './store/repo'
@@ -11,7 +12,7 @@ import type { StarSystem } from './store/schema'
 // reach only functions in the same file, so nothing here takes `$`: each
 // wiring file adapts `$.store` and `$.model` itself and hands the result in.
 
-export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean }
+export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[] }
 
 export function readSettings(options: PluginOptions): Settings {
   const model = options.generationModel
@@ -21,6 +22,7 @@ export function readSettings(options: PluginOptions): Settings {
     // Strict unless the user chose otherwise: the safe direction for a privacy default.
     privacyMode: privacy === 'strict' || privacy === 'off' || privacy === 'standard' ? privacy : 'strict',
     devMode: options.devMode === true,
+    workSources: sourceNames(options.workSources),
   }
 }
 

@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { tierColor } from '../src/bridge/color'
-import { COLORS } from '../src/config'
+import { COLORS, SYNC } from '../src/config'
 
 // Engine-level tests: the plugin loaded by the engine's own host, with the
 // clock, store, env, model and UI operations answered beneath it.
@@ -106,6 +106,22 @@ test('developer mode registers /encounter', { options: { devMode: true } }, asyn
   const w = world(on)
   await $.session.start(START)
   expect(w.commands).toContain('encounter')
+})
+
+test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['jira', 'Jira'] } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await w.clock.settle()
+  expect(w.toasts).toEqual(['Work source jira is not available in this build; it is ignored.'])
+  await w.clock.advance(SYNC.pollMs * 2)
+  expect(w.toasts.length).toBe(1)
+})
+
+test('with no work sources configured, session start toasts nothing about them', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await w.clock.settle()
+  expect(w.toasts.some(t => t.startsWith('Work source'))).toBe(false)
 })
 
 test('epic text is typed into a pane, filtered, and never put in command output', async ($, on) => {

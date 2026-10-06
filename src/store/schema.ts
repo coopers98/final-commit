@@ -97,9 +97,10 @@ export type SaveMeta = {
 export type Calibration = { clients: Record<string, { offsetMs: number; measuredAt: number }>; salt: string }
 
 /**
- * SPEC 4.2: where tracker sync left off. `lastSync` is null until the first
- * sync, which starts from that moment (nothing before it is awarded).
- * `processed` holds `<issueKey>:<transitionId>` for each applied transition.
+ * SPEC 4.2: where one work source's sync left off (one record per source,
+ * SPEC 4.4). `lastSync` is null until that source's first sync, which starts
+ * from that moment (nothing before it is awarded). `processed` holds
+ * `<issueKey>:<transitionId>` for each applied transition.
  */
 export type SyncState = { lastSync: number | null; processed: string[] }
 

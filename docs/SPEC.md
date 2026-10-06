@@ -95,7 +95,7 @@ Detection is automatic. The configured work sources (section 4.4: a tracker, or 
 5. **Order and waiting** (`src/detect/sync.ts`): transitions apply oldest first; at one instant a start goes before a Done. Each query reaches back one minute before `lastSync`; the processed list (newest 500) drops repeats. The first sync only records its start: nothing earlier is awarded. A transition that cannot apply yet waits: an issue whose epic is still being charted (its start charts the epic, SPEC 4.1), an issue's Done while its epic is still being charted, or an epic Done while an encounter holds the slot. A waiting transition holds back later ones for the same epic, so an issue's Done is never read before its start, and `lastSync` does not move past it.
 6. **Mapping:** a chart the tracker starts does not change the active epic. An issue's start makes its epic the active one and starts the mission (timed from the tracker's start, not the poll that saw it), unless a mission is already active (one at a time; the second issue is not tracked) or that issue was completed before. An issue outside any epic is ignored. Done on the active mission completes it; Done on any other issue of a charted epic is logged as an administrative closure (no rewards; its branch can no longer start it). An epic's Done surveys that epic and leaves a different active epic alone.
 
-The sync engine runs against the `WorkSource` interface (`src/detect/work-source.ts`). No backend exists yet, so nothing calls it in a session: the session-start catch-up and the 12-minute poll are wired with the first backend.
+The sync engine runs against the `WorkSource` interface (`src/detect/work-source.ts`), once per configured source (`src/detect/sources.ts`, 4.4). The wiring runs the catch-up in the background at session start, so a slow tracker never holds up the session, then polls every 12 minutes. One sync runs at a time: a poll that finds the last one still running skips. A chart a source started syncs again when it finishes (once more after a running sync, if one is), so the mission waiting on it starts without waiting for the next poll. Sources are built once per session start. With no source configured nothing polls.
 
 ### 4.3 Anti-farming
 
@@ -107,7 +107,7 @@ The sync engine runs against the `WorkSource` interface (`src/detect/work-source
 
 ### 4.4 Work sources
 
-Each source is an adapter behind the `WorkSource` interface (`src/detect/work-source.ts`); the sync (4.2) never knows which one it reads. Sources are chosen in plugin `userConfig`, and **several can run at once in one save** (D2): each is named, and its keys are namespaced by that name so two sources never share a key.
+Each source is an adapter behind the `WorkSource` interface (`src/detect/work-source.ts`); the sync (4.2) never knows which one it reads. Sources are chosen in the `workSources` setting (a list of names), and **several can run at once in one save** (D2). A source is named by its backend: `plans`, `github`, `jira`, `linear`. A backend's own settings (a token, a prefix, folders) are fields of its own, and they ship with it. The name keys the source's sync record (`fc:sync:<name>`: its own `lastSync` and processed list), so two sources never share processed keys, and a source added later starts from its own first sync. Game keys stay as each source maps them (rule 2). Two sources that map to the same key mean the same mission, so give each source its own prefix. A name this build has no backend for, or one whose settings are incomplete, gets one toast at session start and is ignored. Within one sync an epic that one source starts charting counts as charting for the sources after it, so it is charted once.
 
 | Source | Access | Epic | Mission | Timeline |
 |---|---|---|---|---|
@@ -121,11 +121,11 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 2. **Keys:** a source maps its ids to game keys (`[A-Z][A-Z0-9]{1,9}-N`). Jira and Linear keys are used as they are; GitHub issue `#12` in a repo becomes the source's configured prefix plus the number (`NOVA-12`). The mapping is stable across reads, so idempotency (4.2) holds.
 3. **Plan documents** (D13): a markdown file in the configured folders (default `docs/plans/`) is an epic; its title is the first heading. Each `- [ ]` task is a mission, keyed by an explicit key in its text (`NOVA-12`) or else by the plan's prefix and the task's ordinal. `- [~]` marks a task in progress (as do a branch checkout of its key and `/mission`); `- [x]` is its Done; all tasks done is the epic's Done. The source keeps the last state it read and reports differences as transitions, timed when they were seen.
 4. **Privacy:** a source's titles and descriptions reach a prompt only through the privacy filter (5.3), like `/epic` text. Nothing a source returns is ever written to the repository; tests use invented `NOVA-` data and recorded fake responses, never a live tracker.
-5. A source that fails (offline, expired token) is reported once by toast and retried at the next poll; the others keep running.
+5. A source that fails (offline, expired token, or a transition it reported that could not be applied) is reported once by toast for each outage and retried at the next poll; the others keep running. Its `lastSync` does not move, so the next poll reads the same changes again: what it had applied before failing is recognized and not applied twice, but that sync's announcements are not shown. A source that recovers and fails again is reported again.
 
 ### 4.5 Manual overrides
 
-`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks. `/mission <KEY>` typed while an epic is being charted, with no mission active, is queued: it starts on that epic (the latest one charting in the key's project, else the latest of all) when its charting finishes, timed from when it was typed. One mission waits at a time; a second `/mission` replaces it. A charting that fails or is cut off by a reload drops the queued mission, with a toast.
+`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks. `/mission <KEY>` typed while an epic is being charted, with no mission active, is queued: it starts on that epic, which becomes the active one, (the latest one charting in the key's project, else the latest of all) when its charting finishes, timed from when it was typed. One mission waits at a time; a second `/mission` replaces it. A charting that fails or is cut off by a reload drops the queued mission, with a toast.
 
 Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
@@ -363,7 +363,7 @@ All keys prefixed `fc:`. Every value carries `schemaVersion`.
 
 ```ts
 type SaveMeta     = { schemaVersion: number; createdAt: string }
-type SyncState    = { lastSync: number | null; processed: string[] /* <issueKey>:<transitionId> */ }
+type SyncState    = { lastSync: number | null; processed: string[] /* <issueKey>:<transitionId> */ }  // one per source: fc:sync:<name>
 type LogEntry     = { at: number; stardate: string; lines: string[] }
 type StarSystem   = { id: string; epicKey: string; name: string; starClass: string;
                       biomes: Biome[]; species: Species[]; status: 'open'|'surveyed';
@@ -387,7 +387,7 @@ type PuzzleStat   = { category: string; attempts: number; correct: number; lastS
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value.
 
 ---
 
@@ -405,6 +405,7 @@ src/
   store/                          schema.ts, repo.ts, migrate.ts
   detect/git.ts                   branch -> issue key, Bash command signals
   detect/work-source.ts, sync.ts  tracker interface (4.4); transitions -> game actions (4.2)
+  detect/sources.ts               configured sources: names -> backends, one sync per source (4.4)
   crew/                           roster.ts (agent specs, verdicts; pure); crew-wire.ts (spawn -> finished turn)
   world/                          generate.ts, validate-art.ts, parts-library.ts
   encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
@@ -442,7 +443,7 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 
 ### v2: Automatic detection
 - Work sources (4.4): Jira (MCP and REST), GitHub Issues, Linear, plan documents; several at once
-- Session catch-up sync, polling, idempotency (sync engine done against the interface; wired with the first backend)
+- Session catch-up sync, polling, idempotency (done: per-source sync records, `workSources` setting, catch-up and poll wired; no backend yet)
 - Anti-farming rules (done for tracker closures)
 - Crew subagents, red alert, captain's log (done)
 

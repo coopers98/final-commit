@@ -23,6 +23,17 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 2 })
   },
+  // 2 -> 3: sync state is kept per work source (`fc:sync:<name>`). The single
+  // `fc:sync` record belonged to no source (none was wired), so it is dropped.
+  2: async store => {
+    await store.delete(`${STORE.prefix}sync`)
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (isObject(value) && value.schemaVersion === 2) await store.set(key, { ...value, schemaVersion: 3 })
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 3 })
+  },
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

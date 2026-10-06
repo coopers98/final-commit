@@ -22,7 +22,9 @@ export const KEYS = {
   catalog: `${p}catalog`,
   pending: `${p}pending`,
   calibration: `${p}calibration`,
-  sync: `${p}sync`,
+  /** SPEC 4.4: one sync record per work source, keyed by the source's name. */
+  syncPrefix: `${p}sync:`,
+  sync: (source: string) => `${p}sync:${source}`,
   captainsLog: `${p}log`,
   crewReports: `${p}crew-reports`,
   resolved: `${p}resolved`,
@@ -132,10 +134,10 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     calibration: () => readRecord<Calibration>(KEYS.calibration, { clients: {}, salt: '' }, v => isObject(v.clients) && typeof v.salt === 'string'),
     saveCalibration: (c: Calibration) => store.set(KEYS.calibration, stamp(c)),
 
-    sync: () =>
-      readRecord<SyncState>(KEYS.sync, { lastSync: null, processed: [] }, v =>
+    sync: (source: string) =>
+      readRecord<SyncState>(KEYS.sync(source), { lastSync: null, processed: [] }, v =>
         (v.lastSync === null || typeof v.lastSync === 'number') && Array.isArray(v.processed)),
-    saveSync: (s: SyncState) => store.set(KEYS.sync, stamp(s)),
+    saveSync: (source: string, s: SyncState) => store.set(KEYS.sync(source), stamp(s)),
 
     captainsLog: () => readList<LogEntry>(KEYS.captainsLog, v => isObject(v) && typeof v.stardate === 'string' && Array.isArray(v.lines)),
     saveCaptainsLog: (entries: LogEntry[]) => writeList(KEYS.captainsLog, entries),

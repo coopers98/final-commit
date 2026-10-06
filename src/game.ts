@@ -190,8 +190,9 @@ export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promi
 
 /**
  * The epic a `/mission <KEY>` waits for while epics are being charted: the
- * latest one of the key's project, else the latest of all. Charting makes an
- * epic active when it finishes, so that is where the mission belongs.
+ * latest one of the key's project, else the latest of all. The mission starts
+ * on that epic (`startMission`'s `epicKey`) when it is charted, whether or not
+ * the chart itself made it active (a source's chart does not).
  */
 export function queueTarget(issueKey: string, charting: readonly { key: string; startedAt: number }[]): string | undefined {
   const latest = (list: readonly { key: string; startedAt: number }[]) =>
@@ -200,11 +201,18 @@ export function queueTarget(issueKey: string, charting: readonly { key: string; 
   return latest(charting.filter(c => projectOf(c.key) === projectOf(key))) ?? latest(charting)
 }
 
-/** `startedAt`: when the work started, if earlier than now (a tracker start seen at the next poll). */
-export async function startMission(deps: GameDeps & { issueKey: string; startedAt?: number }): Promise<Outcome> {
-  const { repo, now } = deps
+/**
+ * `startedAt`: when the work started, if earlier than now (a tracker start
+ * seen at the next poll). `epicKey`: the epic the mission belongs to, made
+ * active first when it is charted and no mission is running.
+ */
+export async function startMission(deps: GameDeps & { issueKey: string; startedAt?: number; epicKey?: string }): Promise<Outcome> {
+  const { repo, now, epicKey } = deps
   const key = deps.issueKey.toUpperCase()
   if (!ISSUE_KEY.test(key)) return { text: 'Usage: /mission <KEY>, for example /mission NOVA-12.' }
+  if (epicKey && !(await repo.activeMission()) && (await findSystemByEpic(repo, epicKey))) {
+    await repo.patchMeta(m => ({ ...m, activeEpicKey: epicKey }))
+  }
   const meta = await requireMeta(repo)
   const system = await activeSystem(repo, meta)
   if (!system) return { text: 'No active epic. Start one with /epic <KEY>.' }

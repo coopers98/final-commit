@@ -347,3 +347,20 @@ test('queueTarget picks the latest charting epic of the key\'s project, else the
   expect(queueTarget('VEGA-3', charting)).toBe('ORION-4')
   expect(queueTarget('NOVA-2', [])).toBe(undefined)
 })
+
+test('a mission started with its epic makes that charted epic active; with a mission running it changes nothing', async () => {
+  const { repo, deps } = await withEpic()
+  // A second epic charted for a source: charted, not made active.
+  await startEpic({ ...deps, epic: { key: 'NOVA-20', title: 'Search', description: '' }, complete: offline, privacy: 'standard', activate: false })
+  expect((await repo.meta())!.activeEpicKey).toBe('NOVA-1')
+  expect((await startMission({ ...deps, issueKey: 'NOVA-21', epicKey: 'NOVA-20' })).text).toBe('Mission NOVA-21 started.')
+  expect((await repo.meta())!.activeEpicKey).toBe('NOVA-20')
+  const nova20 = (await repo.activeMission())!.systemId
+  expect((await repo.system(nova20))!.epicKey).toBe('NOVA-20')
+  await startMission({ ...deps, issueKey: 'NOVA-2', epicKey: 'NOVA-1' })
+  expect((await repo.meta())!.activeEpicKey).toBe('NOVA-20')
+  // An epic not charted is not made active.
+  const fresh2 = await withEpic()
+  await startMission({ ...fresh2.deps, issueKey: 'NOVA-31', epicKey: 'NOVA-30' })
+  expect((await fresh2.repo.meta())!.activeEpicKey).toBe('NOVA-1')
+})
