@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Blocks a commit that would add a secret or a denylisted term.
+# Install: git config core.hooksPath scripts/hooks (see README).
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed; refusing to commit. See README." >&2
+  exit 1
+fi
+
+gitleaks git --staged --pre-commit --redact --no-banner \
+  --config "$root/.gitleaks.toml" "$root"
+
+"$root/scripts/denylist-check.sh" files --cached

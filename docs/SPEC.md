@@ -431,7 +431,7 @@ This repository is public from the first commit. Git history is permanent: anyth
 
 1. **GitHub secret scanning + push protection:** enable in repo Settings > Code security (free for public repos). Blocks pushes containing known token formats.
 2. **gitleaks pre-commit hook** locally and as a CI job, with a custom rule for Atlassian tokens (`ATATT...`).
-3. **Denylist check in CI:** a script fails the build if tracked files contain terms listed in a gitignored local denylist (employer names, client names, real project keys, hostnames). CI runs it with a denylist stored as a repository secret, so the denylist itself is never public.
+3. **Denylist check:** `scripts/denylist-check.sh` fails if tracked files, commit messages, or the branch name contain terms from a denylist (employer names, client names, real project keys, hostnames). One literal term per line, matched case-insensitively as a substring. Locally the terms come from a gitignored `denylist.txt` and run in the `pre-commit` and `commit-msg` hooks (`git config core.hooksPath scripts/hooks`). CI reads them from the `DENYLIST` repository secret, so the denylist itself is never public. Output names only the location of a match, never the term. Pull requests from forks receive no secrets, so they skip the check with a warning; it runs again on merge to `main`.
 4. **`.gitignore`** covers `CLAUDE.local.md`, `.env*` (except `.env.example`), `.final-commit/`, `*.log`, editor and OS files.
 5. **Branch protection on `main`:** CI must pass (validate, typecheck, tests, gitleaks, denylist).
 6. **Dependabot** for dependency updates; keep dependencies minimal.
@@ -469,4 +469,5 @@ Users' own work flows into model prompts. The README must state plainly:
 | `.gitleaks.toml` | Custom rules |
 | `.github/workflows/ci.yml` | Validate, typecheck, test, gitleaks, denylist |
 | `.github/dependabot.yml` | Dependency updates |
+| `scripts/denylist-check.sh`, `scripts/hooks/` | Denylist check and local git hooks (section 15.2 items 2 and 3) |
 | `CLAUDE.local.md.example` | Template for machine-specific notes |

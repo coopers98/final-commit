@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Blocks a commit whose message or branch name contains a denylisted term.
+# Install: git config core.hooksPath scripts/hooks (see README).
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+check="$root/scripts/denylist-check.sh"
+
+# Git strips # lines from the message, so do not check them.
+{ grep -v '^#' "$1" || true; } | "$check" text "the commit message"
+
+if branch=$(git symbolic-ref --quiet --short HEAD); then
+  printf '%s\n' "$branch" | "$check" text "the branch name"
+fi

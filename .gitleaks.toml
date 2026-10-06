@@ -1,0 +1,17 @@
+# gitleaks configuration. Used by the pre-commit hook and the CI job.
+title = "final-commit gitleaks config"
+
+# Keep every built-in rule; the rules below are additions.
+[extend]
+useDefault = true
+
+# The built-in atlassian-api-token rule only matches a complete ATATT3 token
+# of exactly 186 characters followed by a delimiter. This rule also catches
+# truncated, wrapped, or concatenated tokens, which is how a token usually
+# ends up pasted into a note or a fixture.
+[[rules]]
+id = "atlassian-api-token-prefix"
+description = "Atlassian API token (ATATT prefix, any length)"
+regex = '''ATATT[A-Za-z0-9_\-=]{32,}'''
+entropy = 3.0
+keywords = ["atatt"]
