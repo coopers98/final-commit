@@ -4,8 +4,9 @@
 #
 # Terms come from the DENYLIST environment variable (CI, from a repository
 # secret) or, if that is unset, from denylist.txt at the repo root (local,
-# gitignored). One literal term per line, matched case-insensitively as a
-# substring. Blank lines and lines starting with # are ignored.
+# gitignored; a linked worktree uses the main checkout's copy). One literal
+# term per line, matched case-insensitively as a substring. Blank lines and
+# lines starting with # are ignored.
 #
 # Output names only where a match is (file:line or commit SHA), never the
 # term or the matching text, so CI logs on this public repo stay clean.
@@ -20,14 +21,18 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
+# A linked worktree has no copy of the gitignored denylist; use the main checkout's.
+main_root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
 
 terms=$(mktemp)
-trap 'rm -f "$terms"' EXIT
+trap 'rm -f "$terms" "$terms.raw"' EXIT
 
 if [[ -n "${DENYLIST:-}" ]]; then
   printf '%s\n' "$DENYLIST" > "$terms.raw"
 elif [[ -f "$root/denylist.txt" ]]; then
   cp "$root/denylist.txt" "$terms.raw"
+elif [[ -f "$main_root/denylist.txt" ]]; then
+  cp "$main_root/denylist.txt" "$terms.raw"
 else
   echo "denylist: no terms. Create denylist.txt at the repo root (one term per line); see README." >&2
   exit 2
