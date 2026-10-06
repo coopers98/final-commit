@@ -40,7 +40,7 @@ At runtime:
 - A plugin's own `$.command.run` skips that plugin's own hooks, so it cannot run its own commands: call the function directly (same file).
 - Edits made during the session's own turn reload the mod when the turn ends, not before.
 - Slash command arguments and output go into the transcript the model reads.
-- In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic.
+- In tests, nothing answers engine events: stand in for `session.start`, `command.register`, `ui.*`, `process.run` and `model.complete` (operations answer `{ value }`). The kit cannot raise a person's Escape. `FINAL_COMMIT_SEED` makes rolls deterministic. A plugin's own `$.agent.spawn` reaches the test's `agent.spawn` hook as an Agent tool call (`subagent_type`, `prompt`), and only an answer in that tool's shape, `{ result: { status: 'async_launched', agentId }, model }`, gives the plugin an `agentId`.
 
 ## Rules
 
