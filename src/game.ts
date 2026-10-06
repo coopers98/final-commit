@@ -361,6 +361,15 @@ export async function recordTactical(deps: { repo: Repo; verdict: 'clean' | 'iss
   return { counted: clean }
 }
 
+/**
+ * An Engineering lint run's verdict (its `LINT:` line, SPEC 9.1) is the
+ * active mission's lint verdict, as a lint command's exit status is.
+ */
+export async function recordLint(deps: { repo: Repo; verdict: 'pass' | 'fail' }): Promise<void> {
+  const mission = await deps.repo.activeMission()
+  if (mission) await deps.repo.saveActiveMission({ ...mission, lint: deps.verdict })
+}
+
 export async function forceEncounter(deps: GameDeps): Promise<Outcome> {
   const meta = await requireMeta(deps.repo)
   const system = await activeSystem(deps.repo, meta)

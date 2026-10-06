@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 import type { CalibrationView, EpicFormView, LatticeView, ReportView } from '../../types'
-import { recordTactical } from '../game'
+import { recordLint, recordTactical } from '../game'
 import { createRepo, type Repo } from '../store/repo'
 import { NO_GAUGES } from '../bridge/bridge'
 import { NO_CREW, parseLint, parseVerdict, reportLines, roleOf, ROLE_LABELS, type Role } from './roster'
@@ -64,9 +64,12 @@ async function finished($: EngineInterface, agentId: string, answer: string, isA
   if (!isAborted && answer.trim() !== '') {
     await repoOf($).saveCrewReport({ role, at: await $.clock.now(), lines: reportLines(answer) })
   }
-  // An Engineering lint run ends with LINT: PASS or FAIL: the Bridge's shields, even where an exit status was not seen.
+  // An Engineering lint run ends with LINT: PASS or FAIL: the Bridge's shields and the mission's lint, even where an exit status was not seen.
   const lint = role === 'engineering' && !isAborted ? parseLint(answer) : undefined
-  if (lint) await update($, gauges, g => ({ ...g, lint }))
+  if (lint) {
+    await update($, gauges, g => ({ ...g, lint }))
+    if (await read($, ready)) await recordLint({ repo: repoOf($), verdict: lint })
+  }
   if (isFromBridge) await showReport($, role, answer, isAborted)
   const now = await $.clock.now()
   const verdict = role === 'tactical' && !isAborted ? parseVerdict(answer) : undefined

@@ -852,3 +852,19 @@ test('/scan opens a pane for the active system and keeps species names out of it
   expect(texts.every(t => [...t].length <= 40)).toBe(true)
   await ui.unmount()
 })
+
+test('an Engineering LINT verdict counts as the mission\'s lint, so /mission complete stops asking about it', async ($, on) => {
+  const w = world(on)
+  let nextId = 'e1'
+  on('agent.spawn', () => ({ model: 'm', agentId: nextId }) as never)
+  on('tool.call', () => ({ result: { stdout: 'ok' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await crewRun($, 'engineering', 'e1', 'src/a.ts:4 unused import\nLINT: FAIL')
+  expect((await run($, 'mission', 'complete')).text).toContain('open items: Lint failing (the last run failed).')
+  nextId = 'e2'
+  await crewRun($, 'engineering', 'e2', 'All checks ran clean.\nLINT: PASS')
+  expect((await run($, 'mission', 'complete')).text).toContain('Mission NOVA-2 complete.')
+})
