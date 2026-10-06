@@ -77,6 +77,19 @@ test('session start registers the commands', async ($, on) => {
   expect(w.commands).not.toContain('encounter')
 })
 
+test('a /clear draws the status line again from the save, without registering commands twice', async ($, on) => {
+  const w = world(on)
+  on('classic.SessionStart', () => ({}))
+  await $.session.start(START)
+  const commands = w.commands.length
+  const drawn = w.status.length
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  expect(w.status.length).toBe(drawn + 1)
+  expect(w.commands.length).toBe(commands)
+  await $.classic.SessionStart({ source: 'resume' } as never)
+  expect(w.status.length).toBe(drawn + 1)
+})
+
 test('developer mode registers /encounter', { options: { devMode: true } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)

@@ -166,7 +166,8 @@ async function encounter($: EngineInterface): Promise<{ text: string }> {
   return { text: out.text }
 }
 
-async function startSession($: EngineInterface) {
+/** Session state from the save: run at start, and again after a /clear starts the state over. */
+async function prepareSession($: EngineInterface) {
   const now = await $.clock.now()
   try {
     await migrate(storeOf($), now, line => $.ui.log(line, { to: 'debug' }))
@@ -183,6 +184,11 @@ async function startSession($: EngineInterface) {
     await update($, ready, () => false)
     $.ui.log(`final-commit: ${err instanceof Error ? err.message : String(err)}`)
   }
+  if (await read($, ready)) await refresh($)
+}
+
+async function startSession($: EngineInterface) {
+  await prepareSession($)
   await $.command.register({ name: 'epic', description: 'Chart an epic as a star system, or survey it', argumentHint: '<KEY> | complete' })
   await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete' })
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
@@ -196,7 +202,6 @@ async function startSession($: EngineInterface) {
       void update($, band, v => (v ? { ...v, isBlinking: false } : v))
     })
   })
-  if (await read($, ready)) await refresh($)
 }
 
 /**
@@ -241,6 +246,13 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await startSession($)
+    return next(e)
+  })
+
+  // A /clear fires no session.start and starts the session's state over
+  // (the band, the ready flag): set it up again from the save.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear') await prepareSession($)
     return next(e)
   })
 
