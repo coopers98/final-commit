@@ -11,6 +11,11 @@ from your own diffs improve your odds and double as interview practice.
 It runs entirely in the terminal: ASCII art, keyboard only, 40 columns
 minimum, playable over SSH and tmux, including from a phone.
 
+![A companion Diffling, Gnaw Rat, shown above the Claude Code prompt with its tier, mood and mission](docs/images/companion.svg)
+
+*Your companion above the prompt, from a real game: name, tier, mood and
+current mission beside its sprite, with the game's status line below.*
+
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Jira sync, puzzles and
 crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
