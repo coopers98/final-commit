@@ -70,7 +70,12 @@ declare module 'claude-code' {
       crew: {
         running: Record<string, 'engineering' | 'science' | 'tactical'>
         last: Partial<Record<'engineering' | 'science' | 'tactical', { outcome: 'done' | 'clean' | 'issues' | 'stopped'; at: number }>>
+        fromBridge: string[]
       }
+      /** The Bridge pane's input: the Science question being typed, and a counter that clears the field. */
+      bridgeInput: { isAsking: boolean; generation: number }
+      /** True while the Bridge pane is open: the companion draws there and the band steps aside. */
+      bridgeOpen: boolean
       /** SPEC 9 Bridge gauges for this session: test runs (hull) and the last lint verdict (shields). */
       gauges: { tests: { runs: number; passes: number }; lint: 'pass' | 'fail' | null }
       calibration: CalibrationView | null

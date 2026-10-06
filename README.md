@@ -36,7 +36,7 @@ There is no release yet. To play from a clone, see
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
 | `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
-| `/bridge` | The bridge: the active system and mission, hull (this session's test pass rate), shields (the last lint or type-check), fuel (context window left) and the latest captain's log. |
+| `/bridge` | The bridge: the active system and mission, hull (this session's test pass rate), shields (the last lint or type-check), fuel (context window left), crew status and the latest captain's log, with your companion at the foot. Keys send the crew: **e** run tests, **l** lint, **s** ask a question, **t** security review; the report opens when the run finishes. |
 | Crew | Three read-only subagents Claude (or you) can dispatch: `final-commit:engineering` runs and explains tests, `final-commit:science` answers questions about the code, `final-commit:tactical` reviews your branch for security issues before a push. A clean Tactical review after your last commit raises the mission's quality (better odds of rarer Difflings). |
 | `/captains-log` | Writes a short summary of the session (standup notes) and shows it in a pane. The last 20 are kept. |
 

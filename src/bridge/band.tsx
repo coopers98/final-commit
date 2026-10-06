@@ -7,6 +7,7 @@ const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as Band
 const lattice = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
 const calibration = atom({ plugin: 'final-commit', key: 'calibration' } as const, null as CalibrationView | null)
 const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
+const bridgeOpen = atom({ plugin: 'final-commit', key: 'bridgeOpen' } as const, false)
 
 /** Eyes close for a blink frame. */
 export function blink(rows: string[]): string[] {
@@ -37,8 +38,8 @@ export function besideLines(v: Pick<BandView, 'name' | 'tier' | 'mood' | 'missio
 export function wireBand(on: On): void {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await read($, band)
-    // A game pane needs the rows: the band steps aside while one is open.
-    const isPlaying = (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, report)) !== null
+    // A game pane needs the rows: the band steps aside while one is open. The Bridge draws the companion itself.
+    const isPlaying = (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, report)) !== null || (await read($, bridgeOpen))
     if (!v || e.props.hasSurvey || isPlaying) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns

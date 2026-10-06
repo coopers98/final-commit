@@ -71,8 +71,51 @@ export function parseVerdict(answer: string): Verdict | undefined {
 
 /** What the crew is doing this session: running agents by id, and each officer's last result. */
 export type CrewOutcome = 'done' | 'clean' | 'issues' | 'stopped'
-export type CrewState = { running: Record<string, Role>; last: Partial<Record<Role, { outcome: CrewOutcome; at: number }>> }
-export const NO_CREW: CrewState = { running: {}, last: {} }
+/** `fromBridge`: runs launched from the Bridge pane, whose reports open in the report pane. */
+export type CrewState = { running: Record<string, Role>; last: Partial<Record<Role, { outcome: CrewOutcome; at: number }>>; fromBridge: string[] }
+export const NO_CREW: CrewState = { running: {}, last: {}, fromBridge: [] }
+
+/** What a Bridge key sends an officer to do. */
+export type CrewTask = 'tests' | 'lint' | 'question' | 'review'
+export const TASK_ROLE: Record<CrewTask, Role> = { tests: 'engineering', lint: 'engineering', question: 'science', review: 'tactical' }
+
+/** The Bridge's keys: `e` tests and `l` lint (Engineering), `s` a question (Science), `t` a security review (Tactical). */
+export const BRIDGE_KEYS: Record<string, CrewTask> = { e: 'tests', l: 'lint', s: 'question', t: 'review' }
+
+/** The prompt a Bridge key gives an officer: plain working instructions, like the agent prompts. */
+export function crewTask(task: CrewTask, question = ''): { prompt: string; description: string } {
+  switch (task) {
+    case 'tests':
+      return { prompt: 'Run the project\'s test suite and report the results.', description: 'Run the tests' }
+    case 'lint':
+      return {
+        prompt: [
+          'Run the project\'s linters and type checkers (for example its lint and typecheck scripts, eslint, tsc, phpstan, ruff) and report every problem with file:line.',
+          'Run each command on its own, not piped into another command, so its exit status is kept.',
+          'End your reply with exactly one line: "LINT: PASS" when every check passed, or "LINT: FAIL" otherwise.',
+        ].join(' '),
+        description: 'Run lint and type checks',
+      }
+    case 'review':
+      return { prompt: 'Review the changes on the current branch that are not yet pushed, plus any uncommitted changes, for security issues.', description: 'Security review' }
+    case 'question':
+      return { prompt: question.trim(), description: 'Answer a question' }
+  }
+}
+
+/** The lint verdict an Engineering report ends with: the last `LINT:` line, or undefined. */
+export function parseLint(answer: string): 'pass' | 'fail' | undefined {
+  const last = [...answer.matchAll(/^\s*\**LINT:\s*(PASS|FAIL)\b/gim)].at(-1)?.[1]
+  return last === undefined ? undefined : last.toUpperCase() === 'PASS' ? 'pass' : 'fail'
+}
+
+/** A finished run's answer as report lines: blank lines dropped, cut to CREW.reportLines with a note. */
+export function reportLines(answer: string): string[] {
+  const lines = answer.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '')
+  if (lines.length === 0) return ['(no report)']
+  if (lines.length <= CREW.reportLines) return lines
+  return [...lines.slice(0, CREW.reportLines - 1), `(${lines.length - CREW.reportLines + 1} more lines not shown)`]
+}
 
 /** One line per officer for the Bridge: busy, idle, or its last result. */
 export function crewLines(s: CrewState): string[] {

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { CREW_SPECS, crewLines, NO_CREW, parseVerdict, roleOf, ROLES } from '../src/crew/roster'
+import { BRIDGE_KEYS, CREW_SPECS, crewLines, crewTask, NO_CREW, parseLint, parseVerdict, roleOf, ROLES, TASK_ROLE } from '../src/crew/roster'
 import { recordBash, recordTactical, startEpic, startMission } from '../src/game'
 import { classifyBash } from '../src/detect/git'
 import { createRng } from '../src/rng'
@@ -34,7 +34,7 @@ test('parseVerdict takes the last VERDICT line, bold or not', async () => {
 
 test('crewLines: busy wins over a last result; idle by default', async () => {
   expect(crewLines(NO_CREW).every(l => / idle$/.test(l))).toBe(true)
-  const lines = crewLines({ running: { a: 'science' }, last: { science: { outcome: 'done', at: 0 }, tactical: { outcome: 'clean', at: 0 } } })
+  const lines = crewLines({ running: { a: 'science' }, last: { science: { outcome: 'done', at: 0 }, tactical: { outcome: 'clean', at: 0 } }, fromBridge: [] })
   expect(lines[1]).toMatch(/Science +busy$/)
   expect(lines[2]).toMatch(/Tactical +all clear$/)
   for (const l of lines) expect([...l].length).toBeLessThanOrEqual(40)
@@ -69,4 +69,17 @@ test('a review with issues clears a clean verdict; no mission, nothing recorded'
   expect((await repo.activeMission())!.tacticalClean).toBe(false)
   await repo.clearActiveMission()
   expect((await recordTactical({ repo, verdict: 'clean' })).counted).toBe(false)
+})
+
+test('Bridge tasks: the lint prompt asks for unpiped runs and a LINT verdict, with no game words', async () => {
+  expect(BRIDGE_KEYS).toEqual({ e: 'tests', l: 'lint', s: 'question', t: 'review' })
+  expect(TASK_ROLE.lint).toBe('engineering')
+  const lint = crewTask('lint').prompt
+  expect(lint).toContain('not piped')
+  expect(lint).toContain('LINT: PASS')
+  for (const t of ['tests', 'lint', 'review'] as const) expect(/diffling|shield|bridge|crew|mission/i.test(crewTask(t).prompt)).toBe(false)
+  expect(crewTask('question', '  why?  ').prompt).toBe('why?')
+  expect(parseLint('ok\nLINT: PASS')).toBe('pass')
+  expect(parseLint('**LINT: FAIL**')).toBe('fail')
+  expect(parseLint('lint passed')).toBe(undefined)
 })

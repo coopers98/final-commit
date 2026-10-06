@@ -287,7 +287,7 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 
 | Surface | Content |
 |---|---|
-| **Bridge pane** (`/bridge`) | Active system, current mission, hull (test pass rate), shields (lint), fuel (context remaining), crew status, captain's log tail. Built (basic): hull is this session's test runs (judged as missions judge them), shields the last lint or type-check verdict by exit status (eslint, tsc, phpstan, pint, ruff and the like; a piped run gives none), fuel the context window left from `$.session.usage()`, plus a red alert and a waiting encounter. Crew status: each officer idle, busy, or its last result. Drawn from the save at draw time, redrawn with the band. |
+| **Bridge pane** (`/bridge`) | Active system, current mission, hull (test pass rate), shields (lint), fuel (context remaining), crew status, captain's log tail. Built (basic): hull is this session's test runs (judged as missions judge them), shields the last lint or type-check verdict by exit status (eslint, tsc, phpstan, pint, ruff and the like; a piped run gives none), fuel the context window left from `$.session.usage()`, plus a red alert and a waiting encounter. Crew status: each officer idle, busy, or its last result. Keys send the crew: `e` Engineering runs the tests, `l` Engineering runs lint and type checks (its `LINT: PASS`/`FAIL` line sets the shields), `s` asks Science a typed question, `t` Tactical reviews the branch; a run sent from here reports in the report pane, never taking over a pane in use. While the Bridge is open the companion draws at its foot and the band steps aside. Drawn from the save at draw time, redrawn with the band. |
 | **Band above prompt** | Active companion sprite (animated idle), mood, tiny mission indicator |
 | **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then a system being charted (`/ charting NOVA-1 42s`, a spinner and seconds), then the mission, then the system, within 22 columns (section 2, constraint 5). A charting interrupted by a hot reload is reported by a toast at the next start, never left spinning |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
@@ -305,7 +305,7 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 
 Crew are real subagent types via `$.agent`. Their prompts are working instructions only; no role-play voice in model output.
 
-Built: each is registered at session start as `final-commit:engineering`, `final-commit:science` and `final-commit:tactical` (`src/crew/roster.ts`), read-only (no edit tools; the prompt forbids changing files, committing or pushing), dispatched by the model or the user through the Agent tool. Tactical ends with `VERDICT: CLEAN` or `VERDICT: ISSUES`. A clean verdict during a mission sets `tacticalClean` (mission quality, SPEC 16) only once the mission has a commit to review, and any later commit clears it: the new code is unreviewed. A verdict with issues clears it too. The Bridge shows each officer as idle, busy, or its last result; a Tactical verdict also toasts.
+Built: each is registered at session start as `final-commit:engineering`, `final-commit:science` and `final-commit:tactical` (`src/crew/roster.ts`), read-only (no edit tools; the prompt forbids changing files, committing or pushing), dispatched by the model or the user through the Agent tool. Tactical ends with `VERDICT: CLEAN` or `VERDICT: ISSUES`. The Bridge sends them too (SPEC 9). A background run's finish also reaches the main conversation, as any background agent's does. A clean verdict during a mission sets `tacticalClean` (mission quality, SPEC 16) only once the mission has a commit to review, and any later commit clears it: the new code is unreviewed. A verdict with issues clears it too. The Bridge shows each officer as idle, busy, or its last result; a Tactical verdict also toasts.
 
 ### 9.2 Alerts
 
@@ -316,6 +316,7 @@ Built: each is registered at session start as `final-commit:engineering`, `final
 
 - One active Diffling shown in the band as a compact block at the right edge: the sprite trimmed to its drawing, its name, tier, mood and mission one per line beside it. The rest of the band is left to whatever draws beneath (the engine, other plugins). With too few rows for the sprite, one line.
 - The band is drawn again after a `/clear`, which resets session state without a session start.
+- While the Bridge pane is open the companion moves into it, at its foot, and the band steps aside; closing the Bridge brings it back.
 - Reacts to events: build pass (eats), stack trace (flinches), idle 10+ min (sleeps).
 - Earns XP from completed missions; evolves at levels 10 and 25.
 - **Perks affect game mechanics only** (encounter odds, harvest yield). Never code behavior.
@@ -534,4 +535,4 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Red alert | Status flash 8 s; toast cooldown 5 minutes |
 | Captain's log | 20 entries kept; at most 12 lines each |
 | Bridge | Gauges 10 cells wide; 3 lines of the newest captain's log |
-| Crew | At most 40 turns per officer run |
+| Crew | At most 40 turns per officer run; a Bridge report shows at most 40 lines |

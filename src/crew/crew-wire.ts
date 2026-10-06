@@ -1,8 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
+import type { CalibrationView, EpicFormView, LatticeView, ReportView } from '../../types'
 import { recordTactical } from '../game'
 import { createRepo, type Repo } from '../store/repo'
-import { NO_CREW, parseVerdict, roleOf, ROLE_LABELS } from './roster'
+import { NO_GAUGES } from '../bridge/bridge'
+import { NO_CREW, parseLint, parseVerdict, reportLines, roleOf, ROLE_LABELS, type Role } from './roster'
+
+/** The report pane, drawn in src/contain/lattice.tsx. */
+const REPORT_PANE = 'fc-report'
 
 // SPEC 9.1: follows the crew's subagents from spawn to finished turn. The
 // agent types are registered at session start (hooks/register.tsx, as a
@@ -10,6 +15,11 @@ import { NO_CREW, parseVerdict, roleOf, ROLE_LABELS } from './roster'
 
 const crew = atom({ plugin: 'final-commit', key: 'crew' } as const, NO_CREW)
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
+const gauges = atom({ plugin: 'final-commit', key: 'gauges' } as const, NO_GAUGES)
+const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
+const lattice = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
+const calibration = atom({ plugin: 'final-commit', key: 'calibration' } as const, null as CalibrationView | null)
+const form = atom({ plugin: 'final-commit', key: 'epicForm' } as const, null as EpicFormView | null)
 
 function repoOf($: EngineInterface): Repo {
   return createRepo(
@@ -18,14 +28,42 @@ function repoOf($: EngineInterface): Repo {
   )
 }
 
+/**
+ * A run launched from the Bridge reports in the report pane, as nothing else
+ * relays its answer. A pane already in use (a report, a timing game, the
+ * epic form) is never taken over: a toast says the run finished instead.
+ */
+async function showReport($: EngineInterface, role: Role, answer: string, isAborted: boolean) {
+  const title = `${ROLE_LABELS[role]} report`
+  const busy = (await read($, report)) !== null || (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, form)) !== null
+  if (busy || isAborted) {
+    $.ui.toast(isAborted ? `${ROLE_LABELS[role]} stopped before reporting.` : `${title} finished while a pane was open; it was not shown.`)
+    return
+  }
+  const r: ReportView = { title, lines: reportLines(answer), encounter: null, reinforced: 0 }
+  await update($, report, () => r)
+  const placed = await $.ui.open({ id: REPORT_PANE, title, focus: true, closeOnEscape: true })
+  if (!placed.isPlaced) {
+    await update($, report, () => null)
+    $.ui.toast(`${title} is ready, but no pane could open here.`)
+  }
+}
+
 async function finished($: EngineInterface, agentId: string, answer: string, isAborted: boolean) {
   let role: ReturnType<typeof roleOf>
+  let isFromBridge = false
   await update($, crew, c => {
     role = c.running[agentId]
     const { [agentId]: _done, ...running } = c.running
-    return role ? { ...c, running } : c
+    const fromBridge = c.fromBridge ?? []
+    isFromBridge = fromBridge.includes(agentId)
+    return role ? { ...c, running, fromBridge: fromBridge.filter(id => id !== agentId) } : c
   })
   if (!role) return
+  // An Engineering lint run ends with LINT: PASS or FAIL: the Bridge's shields, even where an exit status was not seen.
+  const lint = role === 'engineering' && !isAborted ? parseLint(answer) : undefined
+  if (lint) await update($, gauges, g => ({ ...g, lint }))
+  if (isFromBridge) await showReport($, role, answer, isAborted)
   const now = await $.clock.now()
   const verdict = role === 'tactical' && !isAborted ? parseVerdict(answer) : undefined
   const outcome = isAborted ? 'stopped' : verdict ?? 'done'

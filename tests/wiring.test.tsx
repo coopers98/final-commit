@@ -624,3 +624,98 @@ test('agents that are not crew are left alone', async ($, on) => {
   await $.turn.complete({ agentId: 'x1', answer: 'VERDICT: CLEAN', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
   expect(w.toasts.some(t => t.startsWith('Tactical'))).toBe(false)
 })
+
+/** Developer-mode encounters until one is contained, so a companion exists. */
+async function getCompanion($: any) {
+  for (let i = 0; i < 30; i += 1) {
+    await run($, 'encounter')
+    await containWith($, async ui => {
+      await ui.input({ key: 'keys', text: '', kind: 'submit' })
+      await ui.input({ key: 'done', text: '', kind: 'submit' })
+    })
+    if ((await run($, 'bay')).text !== 'Opened the specimen bay (0 specimens).') return
+  }
+  throw new Error('no specimen contained in 30 tries')
+}
+
+test('Bridge keys send the crew; a finished run opens its report', async ($, on) => {
+  const w = world(on)
+  const spawned: { type: string; prompt: string }[] = []
+  // The plugin's own spawn reaches the kit as an Agent tool call, answered in that tool's result shape.
+  on('agent.spawn', (_$, e) => {
+    const s = e as unknown as { subagent_type: string; prompt: string }
+    spawned.push({ type: s.subagent_type, prompt: s.prompt })
+    return { result: { status: 'async_launched', agentId: `id${spawned.length}` }, model: 'm' } as never
+  })
+  await $.session.start(START)
+  await run($, 'bridge')
+  const pane = await $.ui.mount(PANE('fc-bridge', 60))
+  await pane.input({ key: 'bridge-keys-1', text: 't', kind: 'change' })
+  expect(spawned.at(-1)?.type).toBe('final-commit:tactical')
+  expect(w.toasts).toContain('Tactical is on it.')
+  // A second t while it runs sends nobody.
+  await pane.input({ key: 'bridge-keys-2', text: 't', kind: 'change' })
+  expect(spawned.length).toBe(1)
+  expect(w.toasts).toContain('Tactical is already on it.')
+  // s asks for a question first; Enter sends it.
+  await pane.input({ key: 'bridge-keys-3', text: 's', kind: 'change' })
+  await pane.input({ key: 'bridge-ask-4', text: 'Where is paging handled?', kind: 'submit' })
+  expect(spawned.at(-1)).toEqual({ type: 'final-commit:science', prompt: 'Where is paging handled?' })
+  await pane.unmount()
+
+  await $.turn.complete({ agentId: 'id1', answer: 'Checked 2 files.\nVERDICT: CLEAN', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+  expect(w.opened).toContain('fc-report')
+  const report = await $.ui.mount(PANE('fc-report', 60))
+  const texts = (await report.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('Tactical report')
+  expect(texts).toContain('Checked 2 files.')
+  expect(texts).toContain('VERDICT: CLEAN')
+  await report.unmount()
+})
+
+test('l on the Bridge sends Engineering to lint, and its verdict sets the shields', async ($, on) => {
+  const w = world(on)
+  const spawned: string[] = []
+  on('agent.spawn', (_$, e) => (spawned.push((e as { prompt: string }).prompt), { result: { status: 'async_launched', agentId: 'lint1' }, model: 'm' }) as never)
+  await $.session.start(START)
+  await run($, 'bridge')
+  const pane = await $.ui.mount(PANE('fc-bridge', 60))
+  await pane.input({ key: 'bridge-keys-1', text: 'l', kind: 'change' })
+  expect(spawned[0]).toContain('LINT: PASS')
+  await pane.unmount()
+  await $.turn.complete({ agentId: 'lint1', answer: 'src/a.ts:4 unused import\nLINT: FAIL', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+  const after = await $.ui.mount(PANE('fc-bridge', 60))
+  expect((await after.findAll({ type: 'Text' })).map(t => t.text)).toContain('Shields  DOWN: lint failing')
+  await after.unmount()
+  expect(w.toasts).toContain('Engineering is on it.')
+})
+
+test('while the Bridge is open the companion draws in it, and returns to the band when it closes', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await getCompanion($)
+  const BAND = {
+    plugin: 'final-commit', surface: 'terminal' as const, component: 'AbovePrompt' as const,
+    props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 60 } as never,
+  }
+  const bandTexts = async () => {
+    const b = await $.ui.mount(BAND)
+    const t = (await b.findAll({ type: 'Text' })).map(x => x.text)
+    await b.unmount()
+    return t
+  }
+  const name = (await bandTexts())[1]!
+  await run($, 'bridge')
+  expect(await bandTexts()).toEqual(['engine band'])
+  const pane = await $.ui.mount(PANE('fc-bridge', 60))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain(name)
+  expect(texts.some(t => /idle|content|startled|asleep/.test(t))).toBe(true)
+  await pane.unmount()
+  // The kit cannot raise a person's Escape (CLAUDE.md); closing was checked live in tmux.
+})

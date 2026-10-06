@@ -151,4 +151,5 @@ export const CAPTAINS_LOG = { keep: 20, maxLines: 12 } as const
 export const BRIDGE = { gaugeCells: 10, logLines: 3 } as const
 
 // DEFAULT: crew subagents (SPEC 9.1). The most turns each officer takes.
-export const CREW = { maxTurns: { engineering: 40, science: 40, tactical: 40 } } as const
+// `reportLines`: the most lines of a report the report pane shows for a crew run launched from the Bridge.
+export const CREW = { maxTurns: { engineering: 40, science: 40, tactical: 40 }, reportLines: 40 } as const
