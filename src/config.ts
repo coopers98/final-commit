@@ -146,3 +146,6 @@ export const RED_ALERT = { flashMs: 8_000, toastCooldownMs: 300_000 } as const
 
 // DEFAULT: SPEC 9.2 captain's log. Entries kept in the save, and the most lines one shows.
 export const CAPTAINS_LOG = { keep: 20, maxLines: 12 } as const
+
+// DEFAULT: the Bridge pane (SPEC 9). Gauge bar width in cells, and log lines shown from the newest entry.
+export const BRIDGE = { gaugeCells: 10, logLines: 3 } as const

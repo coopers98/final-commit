@@ -17,7 +17,7 @@ export function issueKeyFromBranch(branch: string): string | undefined {
  * `isTestStatusReliable` is false when the command's exit status may not be
  * the test runner's: piped (`| tail`), guarded (`|| true`) or backgrounded (`&`).
  */
-export type BashSignals = { mayChangeBranch: boolean; commits: number; isTestRun: boolean; isTestStatusReliable: boolean }
+export type BashSignals = { mayChangeBranch: boolean; commits: number; isTestRun: boolean; isLintRun: boolean; isTestStatusReliable: boolean }
 
 const ENV_PREFIX = /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*/
 // Commands that run another command and pass its exit status through.
@@ -33,11 +33,14 @@ function unwrap(part: string): string {
   return out
 }
 const GIT = /^git(?:\s+-C\s+\S+)?\s+/
+// Linters and type checkers: the Bridge's shields (SPEC 9).
+const LINT_RUNNER =
+  /^(?:(?:npx|pnpm\s+exec|yarn)\s+)?(?:eslint|tsc|biome\s+(?:check|lint)|(?:vendor\/bin\/)?(?:phpstan|pint|phpcs|psalm)|ruff(?:\s+check)?|flake8|mypy|golangci-lint|cargo\s+clippy|(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:lint|typecheck|type-check))\b/
 const TEST_RUNNER =
   /^(?:(?:npx|pnpm\s+exec|yarn)\s+)?(?:php\s+artisan\s+test|(?:vendor\/bin\/)?(?:pest|phpunit)|(?:npm|pnpm|yarn)\s+(?:run\s+)?test|vitest|jest|pytest|go\s+test|cargo\s+test|claude\s+plugin\s+test)\b/
 
 export function classifyBash(command: string): BashSignals {
-  const signals: BashSignals = { mayChangeBranch: false, commits: 0, isTestRun: false, isTestStatusReliable: true }
+  const signals: BashSignals = { mayChangeBranch: false, commits: 0, isTestRun: false, isLintRun: false, isTestStatusReliable: true }
   // A pipe (`|`, `|&`), an `||` guard, or a backgrounding `&`. Redirections like
   // `2>&1` and `&>` are none of these and leave the exit status alone.
   if (/\|\||\|&|(?<![|&<>])\|(?![|&])|(?<![|&<>])&(?![|&>])/.test(command)) signals.isTestStatusReliable = false
@@ -49,6 +52,7 @@ export function classifyBash(command: string): BashSignals {
       if (/^commit\b/.test(sub)) signals.commits += 1
     }
     if (TEST_RUNNER.test(part)) signals.isTestRun = true
+    if (LINT_RUNNER.test(part)) signals.isLintRun = true
   }
   return signals
 }
@@ -90,4 +94,14 @@ export function testVerdictFromOutput(output: string): TestVerdict | undefined {
 export function testRunFailed(signals: BashSignals, isError: boolean, output: string): boolean {
   if (!signals.isTestRun) return false
   return signals.isTestStatusReliable ? isError : testVerdictFromOutput(output) === 'fail'
+}
+
+/**
+ * A lint or type-check run's verdict by its exit status, or undefined when
+ * that status may not be the linter's (piped, guarded, backgrounded): linters
+ * print no common summary to read instead.
+ */
+export function lintVerdict(signals: BashSignals, isError: boolean): TestVerdict | undefined {
+  if (!signals.isLintRun || !signals.isTestStatusReliable) return undefined
+  return isError ? 'fail' : 'pass'
 }

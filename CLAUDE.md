@@ -53,4 +53,4 @@ At runtime:
 
 ## Current phase
 
-v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert and captain's log are done; next is a `WorkSource` backend (none chosen yet), then crew subagents.
+v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log and the Bridge pane are done; next is a `WorkSource` backend (none chosen yet), then crew subagents.

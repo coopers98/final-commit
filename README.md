@@ -36,6 +36,7 @@ There is no release yet. To play from a clone, see
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
 | `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
+| `/bridge` | The bridge: the active system and mission, hull (this session's test pass rate), shields (the last lint or type-check), fuel (context window left) and the latest captain's log. |
 | `/captains-log` | Writes a short summary of the session (standup notes) and shows it in a pane. The last 20 are kept. |
 
 A failed test run, or a failed tool call other than a shell command, during a

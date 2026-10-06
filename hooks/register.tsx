@@ -2,13 +2,15 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import type { BandView, CalibrationView, ChartingEntry, EpicFormView, LatticeView, ReportView } from '../types'
 import { NO_ALERT, redAlert } from '../src/bridge/alert'
+import { NO_GAUGES } from '../src/bridge/bridge'
+import { wireBridge } from '../src/bridge/bridge-pane'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
-import { classifyBash, testRunFailed } from '../src/detect/git'
+import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
 import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
@@ -30,6 +32,7 @@ const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 const alert = atom({ plugin: 'final-commit', key: 'alert' } as const, NO_ALERT)
+const gauges = atom({ plugin: 'final-commit', key: 'gauges' } as const, NO_GAUGES)
 const lattice = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
 const calibration = atom({ plugin: 'final-commit', key: 'calibration' } as const, null as CalibrationView | null)
 
@@ -238,6 +241,20 @@ async function raiseAlert($: EngineInterface, tool: string, isError: boolean, te
   })
 }
 
+/**
+ * The Bridge's hull and shields (SPEC 9): this session's test runs, judged as
+ * a mission judges them, and the last lint or type-check verdict.
+ */
+async function updateGauges($: EngineInterface, signals: ReturnType<typeof classifyBash>, isError: boolean, output: string) {
+  const lint = lintVerdict(signals, isError)
+  if (!signals.isTestRun && lint === undefined) return
+  const passed = signals.isTestRun && (signals.isTestStatusReliable ? !isError : testVerdictFromOutput(output) === 'pass')
+  await update($, gauges, g => ({
+    tests: signals.isTestRun ? { runs: g.tests.runs + 1, passes: g.tests.passes + (passed ? 1 : 0) } : g.tests,
+    lint: lint ?? g.lint,
+  }))
+}
+
 /** Session state from the save: run at start, and again after a /clear starts the state over. */
 async function prepareSession($: EngineInterface) {
   const now = await $.clock.now()
@@ -266,6 +283,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
+  await $.command.register({ name: 'bridge', description: 'Open the bridge: system, mission, hull, shields, fuel' })
   await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
   if (settings.devMode) await $.command.register({ name: 'encounter', description: 'Force an encounter (developer mode)' })
   // Idle animation (SPEC 9.3): a short blink every few seconds.
@@ -300,6 +318,7 @@ async function observeBash($: EngineInterface, command: string, result: unknown,
   const output = [record.stdout, record.stderr].filter((x): x is string => typeof x === 'string').join('\n').slice(-GIT.outputTailChars)
   if (commits > 0 || signals.isTestRun) await recordBash({ ...d, signals, commits, isError, output })
   if (!interrupted) await raiseAlert($, 'Bash', isError, testRunFailed(signals, isError, output))
+  if (!interrupted) await updateGauges($, signals, isError, output)
   if (signals.mayChangeBranch && !isError) {
     const head = await $.process.run(['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], { timeoutMs: GIT.timeoutMs })
     if (head.exitCode === 0) {
@@ -317,6 +336,7 @@ export const register: Register = (on, options) => {
   wireLattice(on)
   wireCalibration(on)
   wireBay(on)
+  wireBridge(on)
 
   on('session.start', async ($, e, next) => {
     await startSession($)
