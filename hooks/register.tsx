@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, CalibrationView, ChartingEntry, ConfirmView, EpicFormView, LatticeView, QueuedMission, ReportView } from '../types'
+import type { BandView, CalibrationView, ChartFailures, ChartingEntry, ConfirmView, EpicFormView, LatticeView, QueuedMission, ReportView } from '../types'
 import { NO_ALERT, redAlert } from '../src/bridge/alert'
 import { NO_GAUGES } from '../src/bridge/bridge'
 import { wireBridge } from '../src/bridge/bridge-pane'
@@ -15,6 +15,7 @@ import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, SYNC, type GenerationM
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
+import { NO_CHART_FAILURES, chartFailed, chartSucceeded, isChartHeld } from '../src/detect/chart-retry'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
 import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, startEpic, startMission, type Outcome } from '../src/game'
@@ -40,6 +41,7 @@ const confirm = atom({ plugin: 'final-commit', key: 'confirm' } as const, null a
 const queued = atom({ plugin: 'final-commit', key: 'queuedMission' } as const, null as QueuedMission | null)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
+const chartFailures = atom({ plugin: 'final-commit', key: 'chartFailures' } as const, NO_CHART_FAILURES as ChartFailures)
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 const alert = atom({ plugin: 'final-commit', key: 'alert' } as const, NO_ALERT)
 const gauges = atom({ plugin: 'final-commit', key: 'gauges' } as const, NO_GAUGES)
@@ -117,12 +119,22 @@ async function chart($: EngineInterface, key: string, title: string, description
   try {
     const out = await startEpic({ ...(await deps($)), epic: { key, title, description }, activate, complete: completeVia($, settings.generationModel), privacy: settings.privacyMode })
     $.ui.toast(out.toast ?? out.text)
+    await update($, chartFailures, f => chartSucceeded(f, key))
     await startQueued($, key, true)
     await refresh($)
     // A chart a source started holds back that source's mission: sync now rather than at the next poll.
     if (!activate) syncGate?.request({ again: true })
   } catch (err) {
-    $.ui.toast(`Charting ${key} failed: ${err instanceof Error ? err.message : String(err)}`)
+    const reason = err instanceof Error ? err.message : String(err)
+    if (activate) {
+      $.ui.toast(`Charting ${key} failed: ${reason}`)
+    } else {
+      // A source's chart is tried again after a wait, not at every poll; only the first failure in a row is told.
+      const failed = chartFailed(await read($, chartFailures), key, await $.clock.now())
+      await update($, chartFailures, () => failed.failures)
+      if (failed.isFirst) $.ui.toast(`Charting ${key} failed: ${reason}. It is tried again later.`)
+      else $.ui.log(`final-commit: charting ${key} failed again (${failed.failures[key]?.count} in a row): ${reason}`, { to: 'debug' })
+    }
     await startQueued($, key, false)
   } finally {
     spinner.cancel()
@@ -188,9 +200,14 @@ function backendsOf(_$: EngineInterface): Record<string, Backend> {
 async function syncTracked($: EngineInterface) {
   try {
     if (sources.length === 0 || !(await read($, ready))) return
+    const d = await deps($)
+    const held = await read($, chartFailures)
     const r = await syncSources({
-      ...(await deps($)), sources, failing, charting: new Set(live),
-      chart: e => void chart($, e.key, e.title, e.description, false),
+      ...d, sources, failing, charting: new Set(live),
+      // An epic whose last chart failed waits out its retry; its issues stay deferred meanwhile.
+      chart: e => {
+        if (!isChartHeld(held, e.key, d.now)) void chart($, e.key, e.title, e.description, false)
+      },
     })
     failing = r.failing
     for (const t of r.toasts) $.ui.toast(t)

@@ -121,7 +121,7 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 2. **Keys:** a source maps its ids to game keys (`[A-Z][A-Z0-9]{1,9}-N`). Jira and Linear keys are used as they are; GitHub issue `#12` in a repo becomes the source's configured prefix plus the number (`NOVA-12`). The mapping is stable across reads, so idempotency (4.2) holds.
 3. **Plan documents** (D13): a markdown file in the configured folders (default `docs/plans/`) is an epic; its title is the first heading. Each `- [ ]` task is a mission, keyed by an explicit key in its text (`NOVA-12`) or else by the plan's prefix and the task's ordinal. `- [~]` marks a task in progress (as do a branch checkout of its key and `/mission`); `- [x]` is its Done; all tasks done is the epic's Done. The source keeps the last state it read and reports differences as transitions, timed when they were seen.
 4. **Privacy:** a source's titles and descriptions reach a prompt only through the privacy filter (5.3), like `/epic` text. Nothing a source returns is ever written to the repository; tests use invented `NOVA-` data and recorded fake responses, never a live tracker.
-5. A source that fails (offline, expired token, or a transition it reported that could not be applied) is reported once by toast for each outage and retried at the next poll; the others keep running. Its `lastSync` does not move, so the next poll reads the same changes again: what it had applied before failing is recognized and not applied twice, but that sync's announcements are not shown. A source that recovers and fails again is reported again.
+5. A source that fails (offline, expired token, or a transition it reported that could not be applied) is reported once by toast for each outage and retried at the next poll; the others keep running. Its `lastSync` does not move, so the next poll reads the same changes again: what it had applied before failing is recognized and not applied twice, but that sync's announcements are not shown. A source that recovers and fails again is reported again. A chart a source started that fails is not tried at every poll. Its epic waits 30 minutes, then double that after each failure in a row, up to 6 hours. Its issues stay waiting meanwhile. Only the first failure in a row is toasted, and a chart that succeeds ends the run. `/epic` charts are unaffected.
 
 ### 4.5 Manual overrides
 
@@ -573,6 +573,7 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
 | Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |
 | Tracker sync | Poll every 12 minutes; each query reaches back 60 s; 500 processed transitions kept |
+| Failed source chart | Retried after 30 minutes, doubling per failure in a row, at most 6 hours |
 | Red alert | Status flash 8 s; toast cooldown 5 minutes |
 | Captain's log | 20 entries kept; at most 12 lines each |
 | Bridge | Gauges 10 cells wide; 3 lines of the newest captain's log |

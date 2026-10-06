@@ -64,6 +64,9 @@ export type BayRow = { text: string; tier?: TierName }
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
 
+/** Charts a work source started that failed, by epic key: failures in a row, and when one may be tried again. */
+export type ChartFailures = Record<string, { count: number; retryAt: number }>
+
 export type EpicFormView = {
   key: string
   step: 'title' | 'description'
@@ -77,6 +80,8 @@ declare module 'claude-code' {
       ready: boolean
       /** In session state, so it outlives a hot reload that kills the charting itself. */
       charting: ChartingEntry[]
+      /** In session state, so a hot reload does not start the retries over. */
+      chartFailures: ChartFailures
       epicForm: EpicFormView | null
       report: ReportView | null
       confirm: ConfirmView | null

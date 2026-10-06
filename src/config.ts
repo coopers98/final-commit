@@ -164,6 +164,10 @@ export const GIT = { timeoutMs: 5_000, outputTailChars: 4_000 } as const
 // tracker clock a little behind ours loses nothing (idempotency drops repeats).
 export const SYNC = { pollMs: 720_000, overlapMs: 60_000, maxProcessed: 500 } as const
 
+// DEFAULT: a chart a work source started that failed waits `firstMs` before
+// it is tried again, doubling with each failure in a row up to `maxMs`.
+export const CHART_RETRY = { firstMs: 1_800_000, maxMs: 21_600_000 } as const
+
 // SPEC 4.3 rules 1 and 2: what a tracker-closed mission needs to roll an encounter.
 export const ANTI_FARMING = { minMissionMs: 1_200_000 } as const
 
