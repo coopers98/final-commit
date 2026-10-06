@@ -139,7 +139,7 @@ When an epic is charted, **one** `$.model.complete` call generates the full ecos
 
 **Engine-controlled (never left to the model):**
 
-- Rarity slots per system: 6 Common, 4 Uncommon, 3 Rare, 2 Exotic, 1 Legendary, 1 hidden Anomaly (fauna); 4 Common, 3 Uncommon, 2 Rare, 1 Legendary (flora).
+- Rarity slots per system: 3 Common, 2 Uncommon, 1 Rare, 1 Exotic, 1 Legendary, 1 hidden Anomaly (fauna); 2 Common, 1 Rare, 1 Legendary (flora, the tiers cell recipes use, 7.2). Sized to an epic of five to ten missions, so a system can come to feel known.
 - Stat ranges by tier, containment rates, flee rates, attachment rolls.
 - Grid size and anchor schema for art.
 
@@ -385,7 +385,7 @@ type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
 type PuzzleStat   = { category: string; attempts: number; correct: number; lastSeen: string }
 ```
 
-**Budget:** ~20 to 40 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
+**Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
 **Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value.
 

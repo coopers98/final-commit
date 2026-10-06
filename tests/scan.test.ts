@@ -30,7 +30,7 @@ test('unmet Common and Uncommon lifeforms are named; Rare and up are counted; An
     if (SCAN.namedTiers.includes(s.tier)) expect(all).toContain(`${s.name}  not yet encountered`)
     else expect(all).not.toContain(s.name)
   }
-  expect(all).toContain('signals, unidentified')
+  expect(all).toMatch(/signals?, unidentified/)
   expect(all).not.toContain('Anomaly')
   expect(all).toContain('No lifeforms met here yet.')
   // No completion ratio: an epic holds too few missions to meet a whole system.

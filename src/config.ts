@@ -105,8 +105,9 @@ export const GENERATION = {
   defaultModel: 'opus' as GenerationModel,
   maxTokens: 16_000,
   timeoutMs: 180_000,
-  faunaSlots: { common: 6, uncommon: 4, rare: 3, exotic: 2, legendary: 1, anomaly: 1 } as Record<Tier, number>,
-  floraSlots: { common: 4, uncommon: 3, rare: 2, exotic: 0, legendary: 1, anomaly: 0 } as Record<Tier, number>,
+  // Sized to an epic of five to ten missions (SPEC 5.1); flora tiers are the ones cell recipes use (7.2).
+  faunaSlots: { common: 3, uncommon: 2, rare: 1, exotic: 1, legendary: 1, anomaly: 1 } as Record<Tier, number>,
+  floraSlots: { common: 2, uncommon: 0, rare: 1, exotic: 0, legendary: 1, anomaly: 0 } as Record<Tier, number>,
   faunaStages: 3,
   floraStages: 1,
   maxNameLength: 24,

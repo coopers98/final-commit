@@ -100,9 +100,10 @@ test('the daily soft cap stops mission encounters for the day', async () => {
 
 test('a new day resets the cap', async () => {
   const { repo, deps } = await withEpic()
-  for (const day of ['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-07']) {
-    await startMission({ ...deps, issueKey: `NOVA-${Math.floor(Math.random() * 1e6) + 2}` })
-    await completeMission({ ...deps, now: 6 * DAY_MS, day })
+  // Six days apart in clock time, so every encounter is guaranteed and only the cap decides.
+  for (const [i, day] of ['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-07'].entries()) {
+    await startMission({ ...deps, issueKey: `NOVA-${i + 2}` })
+    await completeMission({ ...deps, now: (i + 1) * 6 * DAY_MS, day })
     await repo.clearPending()
   }
   expect((await repo.meta())!.encountersToday).toEqual({ day: '2026-10-07', count: 1 })
