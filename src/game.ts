@@ -1,7 +1,7 @@
 import type { ReportView } from '../types'
 import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
-import { testVerdictFromOutput, type BashSignals } from './detect/git'
+import { lintVerdict, testVerdictFromOutput, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
 import { rollAttachment } from './encounter/attachments'
 import { missionQuality } from './encounter/quality'
@@ -179,11 +179,25 @@ export async function startMission(deps: GameDeps & { issueKey: string; startedA
   const active = await repo.activeMission()
   if (active) return { text: `Mission ${active.issueKey} is already active. Finish it with /mission complete.` }
   const mission: Mission = {
-    issueKey: key, systemId: system.id, startedAt: Math.min(deps.startedAt ?? now, now), commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false,
+    issueKey: key, systemId: system.id, startedAt: Math.min(deps.startedAt ?? now, now), commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false,
   }
   await repo.saveActiveMission(mission)
   await repo.patchMeta(m => (m.firstTrackedAt === null ? { ...m, firstTrackedAt: mission.startedAt } : m))
   return { text: `Mission ${key} started.` }
+}
+
+/**
+ * What the active mission leaves undone: tests not run or not green, lint not
+ * run or failing. `/mission complete` asks before completing a mission with
+ * any (a tracker's Done does not ask).
+ */
+export function openItems(m: Mission): string[] {
+  const items: string[] = []
+  if (m.testRuns === 0) items.push('No test run yet')
+  else if (!m.testsGreen) items.push('Tests not green (the last run failed)')
+  if (m.lint === null) items.push('No lint or type check yet')
+  else if (m.lint === 'fail') items.push('Lint failing (the last run failed)')
+  return items
 }
 
 /**
@@ -253,7 +267,7 @@ export async function recordClosure(deps: GameDeps & { issueKey: string; systemI
   if ((await deps.repo.missionLog()).some(m => m.issueKey === deps.issueKey)) return
   await deps.repo.appendMission({
     issueKey: deps.issueKey, systemId: deps.systemId, startedAt: deps.now, completedAt: deps.now,
-    commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false,
+    commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false,
   })
 }
 
@@ -277,14 +291,16 @@ export async function onBranch(deps: GameDeps & { branch: string }): Promise<Out
  * error flag. A plain test run is judged by its exit status. One whose exit
  * status may not be the runner's (piped, `|| true`, backgrounded) is judged
  * by the runner's summary in `output`; with no summary visible it counts as
- * not passing, so it can turn testsGreen off but never on.
+ * not passing, so it can turn testsGreen off but never on. A lint or type
+ * check whose exit status is its own sets the mission's lint verdict.
  */
 export async function recordBash(
   deps: GameDeps & { signals: BashSignals; commits: number; isError: boolean; output?: string },
 ): Promise<void> {
   const mission = await deps.repo.activeMission()
   const { signals } = deps
-  if (!mission || (deps.commits === 0 && !signals.isTestRun)) return
+  const lint = lintVerdict(signals, deps.isError)
+  if (!mission || (deps.commits === 0 && !signals.isTestRun && lint === undefined)) return
   const passed =
     signals.isTestRun &&
     (signals.isTestStatusReliable ? !deps.isError : testVerdictFromOutput(deps.output ?? '') === 'pass')
@@ -293,6 +309,7 @@ export async function recordBash(
     commits: mission.commits + deps.commits,
     testRuns: mission.testRuns + (signals.isTestRun ? 1 : 0),
     testsGreen: signals.isTestRun ? passed : mission.testsGreen,
+    lint: lint ?? mission.lint,
     // A commit after a Tactical review is code nobody reviewed.
     tacticalClean: deps.commits > 0 ? false : mission.tacticalClean,
   })

@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { BandView, CalibrationView, ChartingEntry, EpicFormView, LatticeView, ReportView } from '../types'
+import type { BandView, CalibrationView, ChartingEntry, ConfirmView, EpicFormView, LatticeView, ReportView } from '../types'
 import { NO_ALERT, redAlert } from '../src/bridge/alert'
 import { NO_GAUGES } from '../src/bridge/bridge'
 import { wireBridge } from '../src/bridge/bridge-pane'
@@ -8,12 +8,13 @@ import { wireCrew } from '../src/crew/crew-wire'
 import { CREW_SPECS, ROLES } from '../src/crew/roster'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
+import { wrap } from '../src/bridge/text'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
-import { completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
+import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, recordBash, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
@@ -25,11 +26,14 @@ import type { Complete } from '../src/world/generate'
 // panes, the band and the status line.
 
 export const EPIC_PANE = 'fc-epic'
+/** `/mission complete` asks here before completing a mission with open items. */
+export const CONFIRM_PANE = 'fc-confirm'
 /** The report pane is drawn and dismissed in src/contain/lattice.tsx, which can open containment from it. */
 export const REPORT_PANE = 'fc-report'
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const form = atom({ plugin: 'final-commit', key: 'epicForm' } as const, null as EpicFormView | null)
 const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
+const confirm = atom({ plugin: 'final-commit', key: 'confirm' } as const, null as ConfirmView | null)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
@@ -163,11 +167,43 @@ async function epic($: EngineInterface, args: string): Promise<{ text: string }>
 async function mission($: EngineInterface, args: string): Promise<{ text: string }> {
   if (!(await read($, ready))) return NOT_READY
   const arg = args.trim()
-  const d = await deps($)
-  const out = arg.toLowerCase() === 'complete' ? await completeMission(d) : await startMission({ ...d, issueKey: arg })
+  const verb = arg.toLowerCase().split(/\s+/).join(' ')
+  if (verb !== 'complete' && verb !== 'complete anyway') {
+    const out = await startMission({ ...(await deps($)), issueKey: arg })
+    await refresh($)
+    await announce($, out)
+    return { text: out.text }
+  }
+  const active = await repoOf($).activeMission()
+  const items = active ? openItems(active) : []
+  if (!active || items.length === 0 || verb === 'complete anyway') return { text: await finishMission($) }
+  const open = `Mission ${active.issueKey} has open items: ${items.join('; ')}.`
+  await update($, confirm, () => ({ issueKey: active.issueKey, items }))
+  const placed = await $.ui.open({ id: CONFIRM_PANE, title: `Complete ${active.issueKey}?`, focus: true, closeOnEscape: true })
+  if (placed.isPlaced) return { text: `${open} Asked for confirmation in a pane; not completed yet.` }
+  await update($, confirm, () => null)
+  return { text: `${open} Not completed. /mission complete anyway completes it regardless.` }
+}
+
+async function finishMission($: EngineInterface): Promise<string> {
+  const out = await completeMission(await deps($))
   await refresh($)
   await announce($, out)
-  return { text: out.text }
+  return out.text
+}
+
+/** Enter on the confirmation: complete the mission it asked about, if that one is still active. */
+async function confirmComplete($: EngineInterface) {
+  const c = await read($, confirm)
+  // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
+  await update($, confirm, () => null)
+  await $.ui.close({ id: CONFIRM_PANE })
+  if (!c) return
+  if ((await repoOf($).activeMission())?.issueKey !== c.issueKey) {
+    $.ui.toast(`Mission ${c.issueKey} is no longer active.`)
+    return
+  }
+  await finishMission($)
 }
 
 async function encounter($: EngineInterface): Promise<{ text: string }> {
@@ -197,7 +233,7 @@ async function writeLog($: EngineInterface) {
     const repo = repoOf($)
     await repo.saveCaptainsLog(appendLog(await repo.captainsLog(), entry))
     // Finished in the background: never take over a pane in use (a report with an encounter, a timing game, the form).
-    const isBusy = (await read($, report)) !== null || (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, form)) !== null
+    const isBusy = (await read($, report)) !== null || (await read($, confirm)) !== null || (await read($, lattice)) !== null || (await read($, calibration)) !== null || (await read($, form)) !== null
     if (isBusy) {
       $.ui.toast(`Captain's log, stardate ${entry.stardate}, recorded.`)
       return
@@ -293,7 +329,7 @@ async function registerCrew($: EngineInterface) {
 async function startSession($: EngineInterface) {
   await prepareSession($)
   await $.command.register({ name: 'epic', description: 'Chart an epic as a star system, or survey it', argumentHint: '<KEY> | complete' })
-  await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete' })
+  await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete [anyway]' })
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
@@ -331,7 +367,7 @@ async function observeBash($: EngineInterface, command: string, result: unknown,
   const commits = isError ? 0 : Math.max(signals.commits, reported)
   // The end of the output is where runners print their summaries.
   const output = [record.stdout, record.stderr].filter((x): x is string => typeof x === 'string').join('\n').slice(-GIT.outputTailChars)
-  if (commits > 0 || signals.isTestRun) await recordBash({ ...d, signals, commits, isError, output })
+  if (commits > 0 || signals.isTestRun || signals.isLintRun) await recordBash({ ...d, signals, commits, isError, output })
   if (!interrupted) await raiseAlert($, 'Bash', isError, testRunFailed(signals, isError, output))
   if (!interrupted) await updateGauges($, signals, isError, output)
   if (signals.mayChangeBranch && !isError) {
@@ -374,6 +410,39 @@ export const register: Register = (on, options) => {
   on('ui.close', { id: EPIC_PANE }, async ($, e, next) => {
     await update($, form, () => null)
     return next(e)
+  })
+
+  on('ui.close', { id: CONFIRM_PANE }, async ($, e, next) => {
+    // Esc: the mission stays active.
+    await update($, confirm, () => null)
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: CONFIRM_PANE }, async ($, e) => {
+    const elements = $.ui.resolve(e)
+    const { Box, Text, Button } = elements
+    const Input = 'Input' in elements ? elements.Input : undefined
+    const c = await read($, confirm)
+    const width = e.props.bodyColumns
+    if (!c) return <Text dimColor>Nothing to confirm.</Text>
+    return (
+      <Box flexDirection="column">
+        {wrap(`Mission ${c.issueKey} has open items:`, width).map(line => (
+          <Text bold>{line}</Text>
+        ))}
+        {c.items.flatMap(item => wrap(`- ${item}`, width)).map(line => (
+          <Text>{line}</Text>
+        ))}
+        {wrap('Enter: complete anyway  Esc: keep working', width).map(line => (
+          <Text dimColor>{line}</Text>
+        ))}
+        {Input ? (
+          <Input key="confirm" autoFocus label="Enter" onInput={() => {}} onSubmit={() => void confirmComplete($)} />
+        ) : (
+          <Button key="confirm" label="Complete anyway" onPress={() => void confirmComplete($)} />
+        )}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: EPIC_PANE }, async ($, e) => {

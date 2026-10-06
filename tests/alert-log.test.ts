@@ -33,7 +33,7 @@ test('within the cooldown the status line flashes again but no toast is shown', 
 })
 
 test('the status line leads with the alert and stays within its width', async () => {
-  const mission = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false }
+  const mission = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false }
   const text = statusText({ mission, isAlert: true })!
   expect(text.startsWith('! RED ALERT')).toBe(true)
   expect([...text].length <= STATUS.maxColumns).toBe(true)

@@ -43,6 +43,9 @@ export type ReportView = {
   reinforced: number
 }
 
+/** `/mission complete` asking first: the mission's open items (tests, lint). */
+export type ConfirmView = { issueKey: string; items: string[] }
+
 /** An epic whose star system is being generated right now. */
 export type ChartingEntry = { key: string; startedAt: number }
 
@@ -61,6 +64,7 @@ declare module 'claude-code' {
       charting: ChartingEntry[]
       epicForm: EpicFormView | null
       report: ReportView | null
+      confirm: ConfirmView | null
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null

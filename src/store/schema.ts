@@ -44,6 +44,8 @@ export type Mission = {
   commits: number
   testRuns: number
   testsGreen: boolean
+  /** The last lint or type-check verdict during the mission; null before one runs. */
+  lint: 'pass' | 'fail' | null
   tacticalClean: boolean
 }
 

@@ -10,7 +10,8 @@ const SEED = '42'
 
 type World = { clock: ReturnType<typeof mock.clock>; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[] }
 
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string> } = {}): World {
+/** `refuse`: pane ids that cannot be placed. */
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[] } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
@@ -26,6 +27,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     return { value: { command: e.name } }
   })
   on('ui.open', (_$, e) => {
+    if (opts.refuse?.includes(e.id)) return { value: { isPlaced: false, reason: 'no room' } }
     w.opened.push(e.id)
     return { value: { isPlaced: true } }
   })
@@ -117,7 +119,7 @@ test('a full loop: epic, mission, encounter, contain opens', async ($, on) => {
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')
   expect((await run($, 'mission', 'NOVA-2')).text).toBe('Mission NOVA-2 started.')
-  expect((await run($, 'mission', 'complete')).text).toBe('Mission NOVA-2 complete. Encounter waiting.')
+  expect((await run($, 'mission', 'complete anyway')).text).toBe('Mission NOVA-2 complete. Encounter waiting.')
   expect((await run($, 'contain')).text).toBe('Opened containment.')
   expect(w.status.at(-1)).toContain('/contain')
 })
@@ -300,7 +302,7 @@ test('a test run on a branch with a key starts and feeds the mission', async ($,
   await chart($, w, 'NOVA-1', 'Billing export')
   await $.tool.call({ tool: 'Bash', command: 'git switch feature/NOVA-5-x' } as never)
   await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
-  const out = await run($, 'mission', 'complete')
+  const out = await run($, 'mission', 'complete anyway')
   expect(out.text).toContain('NOVA-5')
   expect(out.text).toContain('Reinforced Cells +1')
 })
@@ -316,7 +318,7 @@ test('a failed or backgrounded Bash call is not counted', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
   next = { result: {}, isError: true }
   await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
-  const out = await run($, 'mission', 'complete')
+  const out = await run($, 'mission', 'complete anyway')
   expect(out.text).not.toContain('Reinforced')
 })
 
@@ -381,7 +383,7 @@ test('the Bash observer reads a piped run\'s summary from the tool output', asyn
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
   await $.tool.call({ tool: 'Bash', command: 'npm test 2>&1 | tail -5' } as never)
-  expect((await run($, 'mission', 'complete')).text).toContain('Reinforced Cells +1')
+  expect((await run($, 'mission', 'complete anyway')).text).toContain('Reinforced Cells +1')
 })
 
 test('a finished mission shows a report that stays until dismissed, and Enter goes to containment', async ($, on) => {
@@ -390,7 +392,7 @@ test('a finished mission shows a report that stays until dismissed, and Enter go
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   expect(opened.at(-1)).toBe('fc-report')
   const ui = await $.ui.mount(PANE('fc-report'))
   await w.clock.advance(60_000)
@@ -409,7 +411,7 @@ test('leaving the report keeps the encounter waiting', async ($, on) => {
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   const ui = await $.ui.mount(PANE('fc-report'))
   await ui.unmount()
   expect((await run($, 'contain')).text).toBe('Opened containment.')
@@ -420,9 +422,9 @@ test('a mission with no encounter says why in its report', async ($, on) => {
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
-  await run($, 'mission', 'complete') // the first mission always has one
+  await run($, 'mission', 'complete anyway') // the first mission always has one
   await run($, 'mission', 'NOVA-3')
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   const ui = await $.ui.mount(PANE('fc-report'))
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
   expect(texts).toContain('An encounter is already waiting: /contain.')
@@ -437,7 +439,7 @@ test('typing r on the report contains with a Reinforced Cell', async ($, on) => 
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
   await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   const ui = await $.ui.mount(PANE('fc-report'))
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Reinforced Cell (1)')
   await ui.input({ key: 'report', text: 'r', kind: 'submit' })
@@ -529,7 +531,7 @@ test('a captain\'s log finished while a report is open does not replace it', asy
   await chart($, w, 'NOVA-1', 'Billing export')
   await run($, 'mission', 'NOVA-2')
   await run($, 'captains-log')
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   const opened = w.opened.length
   answer({ value: { isAnswered: true, text: '- Did things', usage: {} } })
   await w.clock.settle()
@@ -590,7 +592,7 @@ test('a clean Tactical review after a commit raises mission quality; one with no
   nextId = 'a2'
   await crewRun($, 'tactical', 'a2', 'Reviewed 1 commit.\n**VERDICT: CLEAN**')
   expect(w.toasts).toContain('Tactical: all clear. Mission quality up.')
-  await run($, 'mission', 'complete')
+  await run($, 'mission', 'complete anyway')
   const report = await $.ui.mount(PANE('fc-report'))
   expect((await report.findAll({ type: 'Text' })).map(t => t.text)).toContain('Tactical review: all clear')
   await report.unmount()
@@ -740,4 +742,46 @@ test('every crew report is kept, and 1 to 3 on the Bridge reopen it', async ($, 
   expect(texts).toContain('Tactical report')
   expect(texts).toContain('src/a.ts:3 shell injection in the export command.')
   await report.unmount()
+})
+
+test('/mission complete with open items asks in a pane first, and Enter completes it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  const asked = await run($, 'mission', 'complete')
+  expect(asked.text).toBe('Mission NOVA-2 has open items: No test run yet; No lint or type check yet. Asked for confirmation in a pane; not completed yet.')
+  expect(w.opened.at(-1)).toBe('fc-confirm')
+  expect((await run($, 'mission', 'NOVA-3')).text).toContain('Mission NOVA-2 is already active')
+  const ui = await $.ui.mount(PANE('fc-confirm', 40))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('- No test run yet')
+  expect(texts).toContain('- No lint or type check yet')
+  expect(texts.every(t => t.length <= 40)).toBe(true)
+  await ui.input({ key: 'confirm', text: '', kind: 'submit' })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['Nothing to confirm.'])
+  await ui.unmount()
+  expect(w.opened.at(-1)).toBe('fc-report')
+  expect((await run($, 'mission', 'complete')).text).toContain('No active mission')
+})
+
+test('a mission with green tests and lint completes without asking', async ($, on) => {
+  const w = world(on)
+  on('tool.call', () => ({ result: { stdout: 'ok' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm run lint' } as never)
+  expect((await run($, 'mission', 'complete')).text).toContain('Mission NOVA-2 complete.')
+  expect(w.opened).not.toContain('fc-confirm')
+})
+
+test('where the confirmation cannot open, /mission complete says how to complete anyway', async ($, on) => {
+  const w = world(on, { refuse: ['fc-confirm'] })
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  expect((await run($, 'mission', 'complete')).text).toContain('Not completed. /mission complete anyway completes it regardless.')
+  expect((await run($, 'mission', 'complete anyway')).text).toContain('Mission NOVA-2 complete.')
 })

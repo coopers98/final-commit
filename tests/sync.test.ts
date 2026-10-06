@@ -136,7 +136,7 @@ test('anti-farming: a tracker closure with no work attached rolls nothing and ke
 })
 
 test('hasAttachedWork: a commit counts at once; test runs alone need the minimum duration', async () => {
-  const base = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, testsGreen: true, tacticalClean: false }
+  const base = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, testsGreen: true, lint: null, tacticalClean: false }
   expect(hasAttachedWork({ ...base, commits: 1, testRuns: 0 }, 1)).toBe(true)
   expect(hasAttachedWork({ ...base, commits: 0, testRuns: 3 }, ANTI_FARMING.minMissionMs - 1)).toBe(false)
   expect(hasAttachedWork({ ...base, commits: 0, testRuns: 3 }, ANTI_FARMING.minMissionMs)).toBe(true)

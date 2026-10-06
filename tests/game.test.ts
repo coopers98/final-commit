@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
-  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, parseEpicKey, recordBash,
+  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, recordBash,
   setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
@@ -147,6 +147,26 @@ test('a failing last test run clears testsGreen', async () => {
   await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: true })
   expect((await repo.activeMission())!.testsGreen).toBe(false)
   expect((await repo.activeMission())!.testRuns).toBe(2)
+})
+
+test('a lint run sets the mission\'s lint verdict by exit status; a piped one is ignored', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  expect((await repo.activeMission())!.lint).toBe(null)
+  await recordBash({ ...deps, signals: classifyBash('npm run lint'), commits: 0, isError: true })
+  expect((await repo.activeMission())!.lint).toBe('fail')
+  await recordBash({ ...deps, signals: classifyBash('npx tsc -p . | tail -3'), commits: 0, isError: false })
+  expect((await repo.activeMission())!.lint).toBe('fail')
+  await recordBash({ ...deps, signals: classifyBash('npm run typecheck'), commits: 0, isError: false })
+  expect((await repo.activeMission())!.lint).toBe('pass')
+  expect((await repo.activeMission())!.testRuns).toBe(0)
+})
+
+test('openItems names tests not run or not green, and lint not run or failing', async () => {
+  const m = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, commits: 0, tacticalClean: false }
+  expect(openItems({ ...m, testRuns: 0, testsGreen: false, lint: null })).toEqual(['No test run yet', 'No lint or type check yet'])
+  expect(openItems({ ...m, testRuns: 2, testsGreen: false, lint: 'fail' })).toEqual(['Tests not green (the last run failed)', 'Lint failing (the last run failed)'])
+  expect(openItems({ ...m, testRuns: 1, testsGreen: true, lint: 'pass' })).toEqual([])
 })
 
 test('commits are counted on the active mission only', async () => {

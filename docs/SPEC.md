@@ -116,7 +116,7 @@ The adapter is an interface (`WorkSource`) so either backend, or a future GitHub
 
 ### 4.5 Manual overrides
 
-`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work not tracked in Jira. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost.
+`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work not tracked in Jira. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks.
 
 Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
@@ -342,7 +342,8 @@ type Specimen     = { id: string; speciesId: string; systemId: string; tier: Tie
                       containedAt: string; nickname?: string }
 type Mission      = { issueKey: string; systemId: string; startedAt: string;
                       completedAt?: string; commits: number; testRuns: number;
-                      testsGreen: boolean; tacticalClean: boolean; score?: number }
+                      testsGreen: boolean; lint: 'pass'|'fail'|null;
+                      tacticalClean: boolean; score?: number }
 type Inventory    = { reinforced: number; stasis: number; singularity: number;
                       flora: Record<string /* speciesId */, number> }
 type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
@@ -352,7 +353,7 @@ type PuzzleStat   = { category: string; attempts: number; correct: number; lastS
 
 **Budget:** ~20 to 40 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value.
 
 ---
 

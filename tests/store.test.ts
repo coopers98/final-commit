@@ -2,12 +2,13 @@ import { expect, test } from 'claude-code/testing'
 import { KEYS, createMemoryStore } from '../src/store/repo'
 import { createRepo } from '../src/store/repo'
 import { migrate } from '../src/store/migrate'
+import { STORE } from '../src/config'
 
 test('migrate creates meta on an empty store', async () => {
   const store = createMemoryStore()
   const meta = await migrate(store, 1_000)
   expect(meta.createdAt).toBe(1_000)
-  expect(await store.get(KEYS.meta)).toEqual({ ...meta, schemaVersion: 1 })
+  expect(await store.get(KEYS.meta)).toEqual({ ...meta, schemaVersion: STORE.schemaVersion })
 })
 
 test('migrate is idempotent', async () => {
@@ -23,7 +24,7 @@ test('a corrupt meta value is replaced and logged', async () => {
   const lines: string[] = []
   const meta = await migrate(store, 5, line => lines.push(line))
   expect(meta.createdAt).toBe(5)
-  expect((await store.get(KEYS.meta)) as { schemaVersion: number }).toMatchObject({ schemaVersion: 1 })
+  expect((await store.get(KEYS.meta)) as { schemaVersion: number }).toMatchObject({ schemaVersion: STORE.schemaVersion })
   expect(lines.length).toBe(1)
 })
 
@@ -56,9 +57,25 @@ test('reads of missing keys return defaults', async () => {
 
 test('a value of the wrong shape reads as the default and is logged', async () => {
   const store = createMemoryStore()
-  await store.set(KEYS.inventory, { schemaVersion: 1, reinforced: 'lots' })
+  await store.set(KEYS.inventory, { schemaVersion: STORE.schemaVersion, reinforced: 'lots' })
   const lines: string[] = []
   const repo = createRepo(store, line => lines.push(line))
   expect((await repo.inventory()).reinforced).toBe(0)
   expect(lines.length).toBe(1)
+})
+
+test('schema 1 to 2: every value is restamped and missions gain a null lint verdict', async () => {
+  const store = createMemoryStore()
+  const mission = { issueKey: 'NOVA-2', systemId: 's', startedAt: 0, commits: 1, testRuns: 1, testsGreen: true, tacticalClean: false }
+  await store.set(KEYS.meta, { schemaVersion: 1, createdAt: 1, firstTrackedAt: null, lastEncounterAt: null, completedMissions: 1, activeEpicKey: 'NOVA-1', companionId: null, encountersToday: { day: '', count: 0 } })
+  await store.set(KEYS.activeMission, { ...mission, schemaVersion: 1 })
+  await store.set(KEYS.missionLog, { items: [{ ...mission, issueKey: 'NOVA-3', completedAt: 5 }], schemaVersion: 1 })
+  await store.set(KEYS.inventory, { reinforced: 2, stasis: 0, singularity: 0, flora: {}, schemaVersion: 1 })
+  const meta = await migrate(store, 9)
+  expect(meta.completedMissions).toBe(1)
+  const repo = createRepo(store)
+  expect(await repo.activeMission()).toEqual({ ...mission, lint: null })
+  expect((await repo.missionLog()).map(m => m.lint)).toEqual([null])
+  expect((await repo.inventory()).reinforced).toBe(2)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(2)
 })

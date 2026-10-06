@@ -7,7 +7,7 @@ import { orphanedCharts } from '../src/runtime'
 import type { StarSystem } from '../src/store/schema'
 
 const system = { id: 'sys-1', epicKey: 'NOVA-1', name: 'Kessa Reach', species: [{ id: 'sys-1:f0', name: 'Glimmer' }] } as unknown as StarSystem
-const mission = { issueKey: 'NOVA-142', systemId: 'sys-1', startedAt: 0, commits: 0, testRuns: 0, testsGreen: false, tacticalClean: false }
+const mission = { issueKey: 'NOVA-142', systemId: 'sys-1', startedAt: 0, commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false }
 const pending = (tier: 'common' | 'legendary') => ({ id: 'e', systemId: 'sys-1', speciesId: 'sys-1:f0', tier, quality: 0, attempts: 0, createdAt: 0 })
 
 test('status line shows the mission and the system', async () => {
