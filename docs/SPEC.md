@@ -34,7 +34,7 @@ Not affiliated with or endorsed by Anthropic or Paramount. Claude Code is a prod
 | Host | Any machine running Claude Code. Reference setup: a remote dev host reached over SSH. Machine-specific details live in the gitignored `CLAUDE.local.md`, never in the repo. |
 | Access | Claude Code in a terminal, often over SSH and inside tmux. Clients may include desktops and phones. |
 | Save data | `$.store` on the host. One save regardless of client device. |
-| Required on the host | Claude Code, `git`, `php` CLI (puzzle answer verification), Jira access (MCP connector or API token). |
+| Required on the host | Claude Code and `git`. Optional: access to a work source (section 4.4), and the runtimes puzzle runners use (section 8.3; a missing one only narrows the puzzle types). |
 
 ### Remote terminal constraints (verified against the mod API, Claude Code 2.1.291)
 
@@ -74,7 +74,7 @@ Flora are harvested (no containment) during missions and used to craft cells.
 
 ## 4. Work detection
 
-Detection is automatic. Jira is the source of truth; git and session activity are the instant signals. Manual commands exist as overrides only.
+Detection is automatic. The configured work sources (section 4.4: a tracker, or plan documents when there is none) are the source of truth; git and session activity are the instant signals. Manual commands exist as overrides only. Jira terms below stand for any source.
 
 ### 4.1 Signal map
 
@@ -105,18 +105,27 @@ The sync engine runs against the `WorkSource` interface (`src/detect/work-source
 4. **v1:** a branch only starts a mission when its key belongs to the active epic's project and that mission was never completed, so checkouts cannot pay out twice.
 5. **v1:** a plain test run is judged by its exit status. One whose exit status may not be the runner's (piped `| tail`, guarded `|| true`, backgrounded `&`) is judged by the runner's own summary in the end of its output (bun/`claude plugin test`, jest, vitest, pest, pytest, phpunit, go, cargo formats); with no summary visible it counts as not passing. Wrappers that pass the exit status through (`timeout`, `time`, `nice`, `env`) are seen past, and redirections like `2>&1` change nothing. Failed commits are not counted.
 
-### 4.4 Access options
+### 4.4 Work sources
 
-| Option | Notes |
-|---|---|
-| Atlassian MCP connector | `$.mcp.call(server, tool, args)` uses Claude Code's existing connection and credentials. Simplest if configured on the host. |
-| Jira REST + API token | `$.http.fetch` with token from plugin `userConfig` (secret). No dependency on a connector. |
+Each source is an adapter behind the `WorkSource` interface (`src/detect/work-source.ts`); the sync (4.2) never knows which one it reads. Sources are chosen in plugin `userConfig`, and **several can run at once in one save** (D2): each is named, and its keys are namespaced by that name so two sources never share a key.
 
-The adapter is an interface (`WorkSource`) so either backend, or a future GitHub Issues backend, plugs in.
+| Source | Access | Epic | Mission | Timeline |
+|---|---|---|---|---|
+| Jira MCP | `$.mcp.call` through an attached Atlassian connector, using its credentials | Epic | Story or task | Issue changelog |
+| Jira REST | `$.http.fetch` with an API token from a secret `userConfig` field | Epic | Story or task | Issue changelog |
+| GitHub Issues | `gh` via `$.process` (its own auth) | Milestone, or a parent issue with sub-issues | Issue; assigned and open, or a linked branch, starts it | Issue timeline events |
+| Linear | GraphQL `$.http.fetch` with an API key from a secret field | Project | Issue | Issue history |
+| Plan documents | Files only, via `$.fs`; no tracker, no network | A plan file | A checklist task | Changes between reads |
+
+1. **Jira:** MCP is preferred when a connector is attached, REST otherwise (D3). Both are one adapter with two transports.
+2. **Keys:** a source maps its ids to game keys (`[A-Z][A-Z0-9]{1,9}-N`). Jira and Linear keys are used as they are; GitHub issue `#12` in a repo becomes the source's configured prefix plus the number (`NOVA-12`). The mapping is stable across reads, so idempotency (4.2) holds.
+3. **Plan documents** (D13): a markdown file in the configured folders (default `docs/plans/`) is an epic; its title is the first heading. Each `- [ ]` task is a mission, keyed by an explicit key in its text (`NOVA-12`) or else by the plan's prefix and the task's ordinal. `- [~]` marks a task in progress (as do a branch checkout of its key and `/mission`); `- [x]` is its Done; all tasks done is the epic's Done. The source keeps the last state it read and reports differences as transitions, timed when they were seen.
+4. **Privacy:** a source's titles and descriptions reach a prompt only through the privacy filter (5.3), like `/epic` text. Nothing a source returns is ever written to the repository; tests use invented `NOVA-` data and recorded fake responses, never a live tracker.
+5. A source that fails (offline, expired token) is reported once by toast and retried at the next poll; the others keep running.
 
 ### 4.5 Manual overrides
 
-`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work not tracked in Jira. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks.
+`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks.
 
 Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
@@ -255,20 +264,24 @@ A needle sweeps across a bar; press **Space** inside the green zone to seal a lo
 
 Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from the triggering mission's diff after the privacy filter.
 
-| Tier | Type | Source | Skill trained |
-|---|---|---|---|
-| Common | Pattern ID | Problem themed on epic domain | Algorithm pattern recognition |
-| Uncommon | Complexity Read | Function from the diff | Big-O analysis |
-| Rare | Code Trace | Method from the diff + generated inputs | Mental execution |
-| Exotic | Bug Hunt | Function from the diff with injected defect | Code review |
-| Legendary | Design Probe | Epic architecture extrapolated | System design |
-| Anomaly | Deep Expedition | Domain-themed algorithm problem, solved in a scratch file, tests run by the mod | Writing code under time pressure |
+Puzzle types are defined by the skill they train, not by a language; a content adapter (8.3) says which types it can make from its kind of content.
+
+| Tier | Type | Code | SQL | Plan documents | Skill trained |
+|---|---|---|---|---|---|
+| Common | Pattern ID | Algorithm pattern, themed on the epic | Query pattern | The approach a plan takes | Pattern recognition |
+| Uncommon | Complexity Read | Big-O of a function from the diff | Index use or full scan | | Cost analysis |
+| Rare | Trace | A function from the diff run on generated inputs | The rows a query returns | A decision followed through the document | Mental execution |
+| Exotic | Bug Hunt | Injected defect | Injected bad join or filter | Injected contradiction | Review |
+| Legendary | Design Probe | Architecture extrapolated from the epic | Schema design | Gaps in the plan | System design |
+| Anomaly | Deep Expedition | Domain-themed problem solved in a scratch file, tests run by the mod | | | Writing code under time pressure |
+
+A tier whose type the adapter cannot make falls back to the nearest type below it that it can, so every mission's content can yield a puzzle.
 
 **Bonus:** correct answer +10% (Common) scaling to +25% (Legendary); fast-correct adds up to +5%. Wrong answers cost nothing and show an explanation.
 
 ### 8.1 Answer-key integrity
 
-1. **Code Trace:** run the snippet with local `php` via `$.process`; displayed answer must match real output.
+1. **Trace:** run the snippet with the language's runner (8.3) via `$.process`; the displayed answer must match the real output. Where no runner can, the type falls back (above).
 2. **Bug Hunt:** the injected bug is a known diff; the answer key is mechanical.
 3. **Pattern ID / Design Probe:** second independent model call must agree; disagreement discards the puzzle.
 4. **Dispute key** logs bad puzzles to the store for review.
@@ -278,6 +291,13 @@ Optional, multiple choice (keys 1 to 4), target under 60 seconds. Generated from
 - Accuracy tracked per category (sliding window, heaps, two pointers, N+1, etc.).
 - Weak categories resurface more often (spaced repetition).
 - `/dossier` pane shows accuracy by category and trend.
+
+### 8.3 Adapters
+
+1. **Content adapters**, one per kind of content, claim files by extension or path. Each extracts the units worth a puzzle from the mission's diff (functions, methods, queries, document sections), gives the privacy filter its grammar (how its literals and comments are written), lists the types it supports, and says how each type's answer is checked: **run** (a runner executes it), **mechanical** (known by construction, such as an injected defect) or **agreement** (a second independent model call must agree, or the puzzle is discarded).
+2. **First adapters** (D14): PHP, TypeScript/JavaScript, Python, SQL and Markdown. Another language is one adapter plus a runner.
+3. **Runners**, one per runtime (`php`, `node`, `python3`, `sqlite3`), each with its command and timeout. Whether a runner's binary exists is checked once per session; without it, run-checked types fall back.
+4. **Sandbox** (D15): Trace runs only a unit the adapter can show is self-contained (no file, network, process or environment access, no imports beyond the language's core), in a fresh temporary directory, with a short timeout and its output capped. A unit that cannot be shown self-contained is never run; its tier falls back.
 
 **Open decisions:** D4 puzzle balance (weak spots vs strengths vs even); D5 Deep Expedition on demand via `/expedition` or Anomaly-only.
 
@@ -407,13 +427,14 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 - Bridge pane (basic)
 
 ### v2: Automatic detection
-- Jira `WorkSource` (MCP and REST)
+- Work sources (4.4): Jira (MCP and REST), GitHub Issues, Linear, plan documents; several at once
 - Session catch-up sync, polling, idempotency (sync engine done against the interface; wired with the first backend)
 - Anti-farming rules (done for tracker closures)
 - Crew subagents, red alert, captain's log (done)
 
 ### v3: Puzzles
-- Pattern ID, Complexity Read, Code Trace, Bug Hunt
+- Content adapters and runners (8.3): PHP, TypeScript/JavaScript, Python, SQL, Markdown
+- Pattern ID, Complexity Read, Trace, Bug Hunt
 - Answer verification, dispute key
 - Dossier pane, spaced repetition
 
@@ -430,8 +451,8 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 | ID | Question | Default until decided |
 |---|---|---|
 | D1 | Closed systems: revisitable or locked? | Revisitable at 25% rate |
-| D2 | Multiple Jira instances: one save or separate saves per instance? | Separate saves, keyed by instance URL hash |
-| D3 | Atlassian MCP connector or API token? | Support both; prefer MCP if present |
+| D2 | Several work sources: one save or separate saves? | Decided: one save; several sources at once, keys namespaced per source (4.4) |
+| D3 | Atlassian MCP connector or API token? | Decided: both; MCP when a connector is attached, REST otherwise |
 | D4 | Puzzle balance | Even split, weighted toward weakest categories by spaced repetition |
 | D5 | Deep Expedition: on demand or Anomaly-only? | Both: `/expedition` on demand, plus Anomaly trigger |
 | D6 | Epics contributed to but not owned: chart a system? | Yes, if you have at least one completed child issue |
@@ -440,6 +461,10 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 | D8 | Phone play expected? | Yes: calibration required in v1 |
 | D10 | Does the first completed mission guarantee an encounter? | Decided: yes (onboarding; otherwise about 8 missions at 12%) |
 | D11 | Privacy filter default | Decided: `strict` |
+| D12 | Which trackers? | Decided: Jira (MCP and REST), GitHub Issues, Linear, and plan documents for work with no tracker |
+| D13 | Plan document format | Decided: markdown checklists; `- [ ]` to do, `- [~]` in progress, `- [x]` done (4.4) |
+| D14 | First puzzle adapters | Decided: PHP, TypeScript/JavaScript, Python, SQL, Markdown |
+| D15 | How Trace runs code | Decided: self-contained units only, in a temporary directory with a timeout; no container |
 
 ---
 
@@ -487,7 +512,7 @@ This repository is public from the first commit. Git history is permanent: anyth
 Users' own work flows into model prompts. The README must state plainly:
 
 - What is sent to the model: epic titles and descriptions (for system theming) and filtered code excerpts (for puzzles).
-- Where it goes: only through the user's own Claude Code session and account. The mod makes no other network calls except to the user's configured Jira.
+- Where it goes: only through the user's own Claude Code session and account. The mod makes no other network calls except to the user's configured work sources.
 - No telemetry. No analytics. No data leaves the user's machine except as above.
 - The privacy filter is on by default, and how to configure stricter rules.
 - Users are responsible for whether their employer permits sending work content through Claude Code.

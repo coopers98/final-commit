@@ -24,8 +24,8 @@ In scope, among other things:
 
 - secrets, work content, or personal data committed to this repository
 - a way for work content to bypass the privacy filter and reach a model prompt
-- any network call the mod makes other than to the user's configured Jira and
-  the user's own Claude Code session
+- any network call the mod makes other than to the user's configured work
+  sources and the user's own Claude Code session
 
 This is a one-person project, so responses are best effort and there is no
 fixed response time.

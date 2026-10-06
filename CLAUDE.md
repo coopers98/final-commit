@@ -49,8 +49,8 @@ At runtime:
 3. Every `$.store` value carries `schemaVersion`; changes ship with a migration.
 4. Prompts never receive raw work data: run the privacy filter (strip literals, fixtures, PHI-like patterns) first. The filter is on by default.
 5. Every behavior gets a `*.test.ts`. Use the mocked clock for timing and rolls; seed all randomness.
-6. No network calls other than the user's configured Jira and the session's own model. No telemetry.
+6. No network calls other than the user's configured work sources (SPEC 4.4) and the session's own model. No telemetry.
 
 ## Current phase
 
-v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; what remains is a `WorkSource` backend (none chosen yet), which also wires the sync into the session.
+v1 "First Diffling" slice is playable (SPEC 12). v2 in progress: sync engine, anti-farming, red alert, captain's log, the Bridge pane and crew subagents are done; what remains is the work sources epic (SPEC 4.4: Jira MCP and REST, GitHub Issues, Linear, plan documents), which also wires the sync into the session. Next after it: v3 puzzles with content adapters and runners (SPEC 8.3).
