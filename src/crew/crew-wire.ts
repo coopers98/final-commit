@@ -60,6 +60,10 @@ async function finished($: EngineInterface, agentId: string, answer: string, isA
     return role ? { ...c, running, fromBridge: fromBridge.filter(id => id !== agentId) } : c
   })
   if (!role) return
+  // Every report is kept, whoever sent the officer, so the Bridge can show it again.
+  if (!isAborted && answer.trim() !== '') {
+    await repoOf($).saveCrewReport({ role, at: await $.clock.now(), lines: reportLines(answer) })
+  }
   // An Engineering lint run ends with LINT: PASS or FAIL: the Bridge's shields, even where an exit status was not seen.
   const lint = role === 'engineering' && !isAborted ? parseLint(answer) : undefined
   if (lint) await update($, gauges, g => ({ ...g, lint }))

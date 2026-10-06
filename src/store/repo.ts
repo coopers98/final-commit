@@ -1,6 +1,6 @@
 import { STORE, TIERS, type Tier } from '../config'
 import type {
-  CatalogEntry, Calibration, Inventory, LogEntry, Mission, PendingEncounter, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
+  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
 } from './schema'
 
 export type StoreLike = {
@@ -24,6 +24,7 @@ export const KEYS = {
   calibration: `${p}calibration`,
   sync: `${p}sync`,
   captainsLog: `${p}log`,
+  crewReports: `${p}crew-reports`,
 } as const
 
 export function createMemoryStore(): StoreLike & { dump(): Record<string, unknown> } {
@@ -134,5 +135,12 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
 
     captainsLog: () => readList<LogEntry>(KEYS.captainsLog, v => isObject(v) && typeof v.stardate === 'string' && Array.isArray(v.lines)),
     saveCaptainsLog: (entries: LogEntry[]) => writeList(KEYS.captainsLog, entries),
+
+    crewReports: async () =>
+      (await readRecord<{ reports: Partial<Record<CrewReport['role'], CrewReport>> }>(KEYS.crewReports, { reports: {} }, v => isObject(v.reports))).reports,
+    saveCrewReport: async (r: CrewReport) => {
+      const { reports } = await readRecord<{ reports: Partial<Record<CrewReport['role'], CrewReport>> }>(KEYS.crewReports, { reports: {} }, v => isObject(v.reports))
+      await store.set(KEYS.crewReports, stamp({ reports: { ...reports, [r.role]: r } }))
+    },
   }
 }

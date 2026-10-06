@@ -1,5 +1,5 @@
 import { BRIDGE } from '../config'
-import { crewLines, type CrewState } from '../crew/roster'
+import { crewLines, type CrewState, type Role } from '../crew/roster'
 import type { LogEntry } from '../store/schema'
 
 // SPEC 9 Bridge pane, as text rows. Pure: the pane gathers the values.
@@ -16,6 +16,8 @@ export type BridgeData = {
   fuel?: number
   log?: LogEntry
   crew?: CrewState
+  /** Officers with a saved report (the number keys reopen it). */
+  reportRoles?: Role[]
   isPending: boolean
   isAlert: boolean
 }
@@ -42,7 +44,7 @@ export function bridgeRows(d: BridgeData, width: number): string[] {
   rows.push(t.runs > 0 ? `Hull     ${gauge(t.passes / t.runs)} ${pct(t.passes / t.runs)}` : 'Hull     no test runs yet')
   rows.push(`Shields  ${d.gauges.lint === 'pass' ? 'up' : d.gauges.lint === 'fail' ? 'DOWN: lint failing' : 'no lint run yet'}`)
   rows.push(d.fuel === undefined ? 'Fuel     not measured yet' : `Fuel     ${gauge(d.fuel / 100)} ${Math.round(d.fuel)}%`)
-  if (d.crew) rows.push('Crew', ...crewLines(d.crew))
+  if (d.crew) rows.push('Crew', ...crewLines(d.crew, d.reportRoles ?? []))
   if (d.log) {
     rows.push('', `Captain's log ${d.log.stardate}`)
     for (const line of d.log.lines.slice(0, BRIDGE.logLines)) rows.push(`  ${line}`)

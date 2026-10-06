@@ -35,8 +35,9 @@ test('parseVerdict takes the last VERDICT line, bold or not', async () => {
 test('crewLines: busy wins over a last result; idle by default', async () => {
   expect(crewLines(NO_CREW).every(l => / idle$/.test(l))).toBe(true)
   const lines = crewLines({ running: { a: 'science' }, last: { science: { outcome: 'done', at: 0 }, tactical: { outcome: 'clean', at: 0 } }, fromBridge: [] })
-  expect(lines[1]).toMatch(/Science +busy$/)
-  expect(lines[2]).toMatch(/Tactical +all clear$/)
+  expect(lines[1]).toMatch(/2 Science +busy$/)
+  expect(lines[2]).toMatch(/3 Tactical +all clear$/)
+  expect(crewLines(NO_CREW, ['tactical'])[2]).toMatch(/3 Tactical +idle \(report\)$/)
   for (const l of lines) expect([...l].length).toBeLessThanOrEqual(40)
 })
 

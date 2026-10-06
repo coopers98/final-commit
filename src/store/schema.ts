@@ -103,3 +103,6 @@ export type SyncState = { lastSync: number | null; processed: string[] }
 
 /** SPEC 9.2: one `/captains-log` entry. */
 export type LogEntry = { at: number; stardate: string; lines: string[] }
+
+/** SPEC 9.1: an officer's last report, kept so the Bridge can show it again. Stays on this machine. */
+export type CrewReport = { role: 'engineering' | 'science' | 'tactical'; at: number; lines: string[] }

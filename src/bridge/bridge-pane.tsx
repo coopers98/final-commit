@@ -4,7 +4,8 @@ import type { BandView } from '../../types'
 import { COMPANION } from '../config'
 import { besideLines, blink, trimSprite } from './band'
 import { NO_ALERT } from './alert'
-import { BRIDGE_KEYS, crewTask, NO_CREW, ROLE_LABELS, TASK_ROLE, type CrewTask } from '../crew/roster'
+import type { ReportView } from '../../types'
+import { BRIDGE_KEYS, crewTask, NO_CREW, REPORT_KEYS, ROLE_LABELS, TASK_ROLE, type CrewTask, type Role } from '../crew/roster'
 import { bridgeRows, NO_GAUGES, type BridgeData } from './bridge'
 import { createRepo, type Repo } from '../store/repo'
 
@@ -14,6 +15,9 @@ const gauges = atom({ plugin: 'final-commit', key: 'gauges' } as const, NO_GAUGE
 const alert = atom({ plugin: 'final-commit', key: 'alert' } as const, NO_ALERT)
 const crew = atom({ plugin: 'final-commit', key: 'crew' } as const, NO_CREW)
 const input = atom({ plugin: 'final-commit', key: 'bridgeInput' } as const, { isAsking: false, generation: 0 })
+const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
+/** The report pane, drawn in src/contain/lattice.tsx. */
+const REPORT_PANE = 'fc-report'
 const isOpen = atom({ plugin: 'final-commit', key: 'bridgeOpen' } as const, false)
 const band = atom({ plugin: 'final-commit', key: 'band' } as const, null as BandView | null)
 
@@ -46,6 +50,7 @@ async function gather($: EngineInterface): Promise<BridgeData> {
   const mission = await repo.activeMission()
   const log = (await repo.captainsLog()).at(-1)
   const fuel = await fuelOf($)
+  const reports = await repo.crewReports()
   return {
     ...(system ? { system } : {}),
     ...(mission ? { mission: { key: mission.issueKey, commits: mission.commits, testRuns: mission.testRuns } } : {}),
@@ -53,6 +58,7 @@ async function gather($: EngineInterface): Promise<BridgeData> {
     ...(fuel !== undefined ? { fuel } : {}),
     ...(log ? { log } : {}),
     crew: await read($, crew),
+    reportRoles: (Object.keys(reports) as Role[]).filter(r => reports[r] !== undefined),
     isPending: (await repo.pending()) !== undefined,
     isAlert: (await $.clock.now()) < (await read($, alert)).until,
   }
@@ -82,9 +88,33 @@ async function launch($: EngineInterface, taskName: CrewTask, question = '') {
   }
 }
 
-/** A key typed into the Bridge's field: `e`, `l`, `s` or `t`. The field is cleared after each. */
+/** Opens an officer's last saved report in the report pane, unless that pane holds a waiting encounter. */
+async function reopen($: EngineInterface, role: Role) {
+  const saved = (await repoOf($).crewReports())[role]
+  if (!saved) {
+    $.ui.toast(`${ROLE_LABELS[role]} has no report yet.`)
+    return
+  }
+  if ((await read($, report))?.encounter) {
+    $.ui.toast('Close the encounter report first.')
+    return
+  }
+  const title = `${ROLE_LABELS[role]} report`
+  await update($, report, () => ({ title, lines: saved.lines, encounter: null, reinforced: 0 }))
+  const placed = await $.ui.open({ id: REPORT_PANE, title, focus: true, closeOnEscape: true })
+  if (!placed.isPlaced) await update($, report, () => null)
+}
+
+/** A key typed into the Bridge's field: `e`, `l`, `s`, `t`, or `1` to `3` for a report. The field is cleared after each. */
 async function onKey($: EngineInterface, value: string) {
-  const task = BRIDGE_KEYS[value.slice(-1).toLowerCase()]
+  const last = value.slice(-1).toLowerCase()
+  const saved = REPORT_KEYS[last]
+  if (saved) {
+    await update($, input, i => ({ isAsking: false, generation: i.generation + 1 }))
+    await reopen($, saved)
+    return
+  }
+  const task = BRIDGE_KEYS[last]
   await update($, input, i => ({ isAsking: task === 'question', generation: i.generation + 1 }))
   if (task && task !== 'question') await launch($, task)
 }
@@ -147,9 +177,9 @@ export function wireBridge(on: On): void {
     const width = e.props.bodyColumns
     const rows = bridgeRows(await gather($), width)
     const i = await read($, input)
-    const hints = ['e: run tests', 'l: lint', 's: ask Science', 't: security review', 'Esc: close']
+    const hints = ['e: run tests', 'l: lint', 's: ask Science', 't: security review', '1-3: last report', 'Esc: close']
     const joined = hints.join('  ')
-    const hintRows = [...joined].length <= width ? [joined] : [`${hints[0]}  ${hints[1]}  ${hints[2]}`, `${hints[3]}  ${hints[4]}`]
+    const hintRows = [...joined].length <= width ? [joined] : [`${hints[0]}  ${hints[1]}  ${hints[2]}`, `${hints[3]}  ${hints[4]}`, hints[5]!]
     return (
       <Box flexDirection="column">
         {rows.map((r, n) => (n === 0 ? <Text bold>{r}</Text> : <Text>{r === '' ? ' ' : r}</Text>))}

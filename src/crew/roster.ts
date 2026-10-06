@@ -117,9 +117,18 @@ export function reportLines(answer: string): string[] {
   return [...lines.slice(0, CREW.reportLines - 1), `(${lines.length - CREW.reportLines + 1} more lines not shown)`]
 }
 
-/** One line per officer for the Bridge: busy, idle, or its last result. */
-export function crewLines(s: CrewState): string[] {
+/** The Bridge's number keys: each reopens that officer's last report. */
+export const REPORT_KEYS: Record<string, Role> = { '1': 'engineering', '2': 'science', '3': 'tactical' }
+
+/**
+ * One line per officer for the Bridge, numbered by its report key: busy,
+ * idle, or its last result, and `(report)` when one is saved.
+ */
+export function crewLines(s: CrewState, withReport: readonly Role[] = []): string[] {
   const busy = new Set(Object.values(s.running))
   const word: Record<CrewOutcome, string> = { done: 'idle', clean: 'all clear', issues: 'ISSUES FOUND', stopped: 'idle (stopped)' }
-  return ROLES.map(r => `  ${ROLE_LABELS[r].padEnd(12)} ${busy.has(r) ? 'busy' : s.last[r] ? word[s.last[r]!.outcome] : 'idle'}`)
+  return ROLES.map((r, i) => {
+    const status = busy.has(r) ? 'busy' : s.last[r] ? word[s.last[r]!.outcome] : 'idle'
+    return `  ${i + 1} ${ROLE_LABELS[r].padEnd(12)}${status}${withReport.includes(r) ? ' (report)' : ''}`
+  })
 }
