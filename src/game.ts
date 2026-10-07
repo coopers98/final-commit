@@ -2,7 +2,7 @@ import type { ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
 import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
-import { lintVerdict, testVerdictFromOutput, type BashSignals } from './detect/git'
+import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
 import { rollAttachment } from './encounter/attachments'
 import { missionQuality } from './encounter/quality'
@@ -394,9 +394,7 @@ export async function recordBash(
   const { signals } = deps
   const lint = lintVerdict(signals, deps.isError)
   if (!mission || (deps.commits === 0 && !signals.isTestRun && lint === undefined)) return
-  const passed =
-    signals.isTestRun &&
-    (signals.isTestStatusReliable ? !deps.isError : testVerdictFromOutput(deps.output ?? '') === 'pass')
+  const passed = testRunPassed(signals, deps.isError, deps.output ?? '')
   await deps.repo.saveActiveMission({
     ...mission,
     commits: mission.commits + deps.commits,

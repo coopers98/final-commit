@@ -14,7 +14,7 @@ import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
-import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
+import { classifyBash, lintVerdict, testRunFailed, testRunPassed } from '../src/detect/git'
 import { NO_CHART_FAILURES, chartFailed, chartSucceeded, isChartHeld } from '../src/detect/chart-retry'
 import { createGithubSources, parseRepos } from '../src/detect/github'
 import { createJiraRest, createJiraSource, parseJiraSettings } from '../src/detect/jira'
@@ -432,7 +432,7 @@ async function raiseAlert($: EngineInterface, tool: string, isError: boolean, te
 async function updateGauges($: EngineInterface, signals: ReturnType<typeof classifyBash>, isError: boolean, output: string) {
   const lint = lintVerdict(signals, isError)
   if (!signals.isTestRun && lint === undefined) return
-  const passed = signals.isTestRun && (signals.isTestStatusReliable ? !isError : testVerdictFromOutput(output) === 'pass')
+  const passed = testRunPassed(signals, isError, output)
   await update($, gauges, g => ({
     tests: signals.isTestRun ? { runs: g.tests.runs + 1, passes: g.tests.passes + (passed ? 1 : 0) } : g.tests,
     lint: lint ?? g.lint,
