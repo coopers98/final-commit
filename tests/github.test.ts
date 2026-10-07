@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { GITHUB } from '../src/config'
-import { EPICS_QUERY, MINE_QUERY, VIEWER_QUERY, createGithubSources, epicsOf, missionsOf, parseRepos, type GithubRepo, type IssuesPage, type RunResult } from '../src/detect/github'
+import { EPICS_QUERY, MILESTONES_QUERY, MINE_QUERY, VIEWER_QUERY, backlogOf, createGithubSources, epicsOf, milestonesOf, missionsOf, parseRepos, type GithubRepo, type IssuesPage, type RunResult } from '../src/detect/github'
 import type { WorkTransition } from '../src/detect/work-source'
 
 // GitHub Issues as a work source (SPEC 4.4), against recorded-shape responses.
@@ -16,7 +16,7 @@ const closed = (id: string, minute: number) => ({ __typename: 'ClosedEvent', id,
 const reopened = (id: string, minute: number) => ({ __typename: 'ReopenedEvent', id, createdAt: T(minute) })
 
 const PARENT = { number: 1, title: 'Billing export', body: 'Export invoices as files.', repository: { nameWithOwner: 'example/nova' } }
-const mine = (number: number, events: unknown[], parent: object | null = PARENT) => ({ number, title: `Task ${number}`, body: 'Details.', parent, timelineItems: { nodes: events } })
+const mine = (number: number, events: unknown[], parent: object | null = PARENT, milestone: object | null = null) => ({ number, title: `Task ${number}`, body: 'Details.', parent, milestone, timelineItems: { nodes: events } })
 const page = (nodes: unknown[], next?: string): IssuesPage => ({
   data: { repository: { issues: { pageInfo: { hasNextPage: next !== undefined, endCursor: next ?? null }, nodes: nodes as never } } },
 })
@@ -41,12 +41,36 @@ test('your issue starts when assigned to you, its close is Done, a reopen is rep
   expect(skipped).toEqual([])
 })
 
-test('a parent in another listed repo keys the epic with that repo\'s prefix; an unlisted one is skipped and said', () => {
+test('an issue\'s epic is its parent, else its milestone, else the repo\'s backlog', () => {
+  const v2 = { number: 3, title: 'Version 2', description: 'The second release.' }
+  const r = missionsOf(REPO, [REPO], 'tester', page([
+    mine(12, [assigned('E1', 5)], PARENT, v2),
+    mine(15, [assigned('E2', 5)], null, v2),
+    mine(20, [assigned('E3', 5)], null, null),
+  ]), 0)
+  expect(r.found.map(t => [t.item.key, t.epic?.key])).toEqual([['NOVA-12', 'NOVA-1'], ['NOVA-15', 'NOVA-M3'], ['NOVA-20', 'NOVA-BACKLOG']])
+  expect(r.found[1]?.epic).toEqual({ key: 'NOVA-M3', kind: 'epic', title: 'Version 2', description: 'The second release.' })
+  // The backlog's title carries no work text into a prompt.
+  expect(r.found[2]?.epic).toEqual(backlogOf(REPO))
+  expect(backlogOf(REPO)).toEqual({ key: 'NOVA-BACKLOG', kind: 'epic', title: 'Backlog', description: '' })
+})
+
+test('a parent in another listed repo keys the epic with that repo\'s prefix; an unlisted one falls through, with a note', () => {
   const inAtlas = { ...PARENT, number: 3, repository: { nameWithOwner: 'Example/Atlas' } }
   const elsewhere = { ...PARENT, number: 4, repository: { nameWithOwner: 'example/unlisted' } }
-  const r = missionsOf(REPO, [REPO, ATLAS], 'tester', page([mine(12, [assigned('E1', 5)], inAtlas), mine(13, [assigned('E2', 5)], elsewhere), mine(14, [assigned('E3', 5)], null)]), 0)
-  expect(r.found.map(t => [t.item.key, t.epic?.key])).toEqual([['NOVA-12', 'AT-3']])
-  expect(r.skipped).toEqual(['NOVA-13: its parent is in example/unlisted, which is not listed'])
+  const r = missionsOf(REPO, [REPO, ATLAS], 'tester', page([mine(12, [assigned('E1', 5)], inAtlas), mine(13, [assigned('E2', 5)], elsewhere, { number: 2, title: 'v1' })]), 0)
+  expect(r.found.map(t => [t.item.key, t.epic?.key])).toEqual([['NOVA-12', 'AT-3'], ['NOVA-13', 'NOVA-M2']])
+  expect(r.skipped).toEqual(['NOVA-13: its parent is in example/unlisted, which is not listed; grouped by its milestone or the backlog'])
+})
+
+test('a milestone closed since is its epic\'s Done, keyed by the milestone and when it closed', () => {
+  const p = { data: { repository: { milestones: { nodes: [
+    { id: 'MS_a', number: 3, title: 'Version 2', closedAt: T(20) },
+    { id: 'MS_b', number: 2, title: 'Version 1', closedAt: T(1) },
+    { id: 'MS_c', number: 4, title: 'Open again', closedAt: null },
+    null,
+  ] } } } } as IssuesPage
+  expect(milestonesOf(REPO, p, at(10)).map(t => [t.id, t.at, t.item.key, t.item.kind, t.to])).toEqual([[`milestone-MS_a-${T(20)}`, at(20), 'NOVA-M3', 'epic', 'done']])
 })
 
 test('events before since, and malformed nodes or events, are left out without throwing', () => {
@@ -71,13 +95,13 @@ test('a closed issue with sub-issues is its epic\'s Done; one without is not an 
 })
 
 /** gh answered by query: the viewer, the viewer's issues, closed epics. Each list is used in order; past its end, an empty page. */
-function fakeGh(answers: { viewer?: (RunResult | Error)[]; mine?: (RunResult | Error)[]; epics?: (RunResult | Error)[] }) {
+function fakeGh(answers: { viewer?: (RunResult | Error)[]; mine?: (RunResult | Error)[]; epics?: (RunResult | Error)[]; milestones?: (RunResult | Error)[] }) {
   const calls: string[][] = []
   const run = async (argv: readonly string[]) => {
     calls.push([...argv])
     const q = argv.find(a => a.startsWith('query='))?.slice('query='.length)
-    const list = q === VIEWER_QUERY ? answers.viewer : q === MINE_QUERY ? answers.mine : q === EPICS_QUERY ? answers.epics : undefined
-    const next = list?.shift() ?? ok(page([]))
+    const list = q === VIEWER_QUERY ? answers.viewer : q === MINE_QUERY ? answers.mine : q === EPICS_QUERY ? answers.epics : q === MILESTONES_QUERY ? answers.milestones : undefined
+    const next = list?.shift() ?? (q === MILESTONES_QUERY ? ok({ data: { repository: { milestones: { nodes: [] } } } }) : ok(page([])))
     if (next instanceof Error) throw next
     return next
   }
@@ -93,10 +117,12 @@ test('each repo is its own source; together they ask who you are once, then page
     viewer: [VIEWER],
     mine: [ok(page([mine(12, [assigned('E1', 5)])], 'CUR1')), ok(page([mine(13, [closed('E2', 6)])]))],
     epics: [ok(page([{ number: 1, title: 'Billing export', subIssuesSummary: { total: 2 }, timelineItems: { nodes: [closed('C1', 7)] } }]))],
+    milestones: [ok({ data: { repository: { milestones: { nodes: [{ id: 'MS_a', number: 3, title: 'v2', closedAt: T(8) }] } } } })],
   })
   const [nova, atlas] = createGithubSources({ repos: [REPO, ATLAS], run: gh.run, log })
   expect([nova?.name, atlas?.name]).toEqual(['github:example/nova', 'github:example/atlas'])
-  expect((await nova!.changedSince(at(0))).map(t => [t.item.key, t.to])).toEqual([['NOVA-12', 'in_progress'], ['NOVA-13', 'done'], ['NOVA-1', 'done']])
+  expect((await nova!.changedSince(at(0))).map(t => [t.item.key, t.to])).toEqual([['NOVA-12', 'in_progress'], ['NOVA-13', 'done'], ['NOVA-1', 'done'], ['NOVA-M3', 'done']])
+  expect(gh.calls.find(c => c.includes(`query=${MILESTONES_QUERY}`))).toContain(`first=${GITHUB.milestonesPageSize}`)
   await atlas!.changedSince(at(0))
   const mineCalls = gh.calls.filter(c => c.includes(`query=${MINE_QUERY}`))
   expect(mineCalls[0]).toContain('owner=example')
@@ -168,4 +194,24 @@ test('at the page cap your own issues fail the read, so nothing is skipped; clos
   const found = await createGithubSources({ repos: [REPO], run: gh.run, log })[0]!.changedSince(0)
   expect(found.length).toBe(GITHUB.maxPages)
   expect(lines.length).toBe(1)
+})
+
+test('closed milestones are paged, last updated first, until one was last updated before since: a fresh close behind busy old ones is found', async () => {
+  const ms = (id: string, number: number, closedAt: string, updatedAt: string) => ({ id, number, title: `M${number}`, closedAt, updatedAt })
+  const pageOf = (nodes: object[], next?: string) => ok({ data: { repository: { milestones: { pageInfo: { hasNextPage: next !== undefined, endCursor: next ?? null }, nodes } } } })
+  const gh = fakeGh({
+    viewer: [VIEWER],
+    milestones: [
+      // Old closes whose issues keep changing: updated after since, closed before it.
+      pageOf([ms('MS_1', 1, T(0), T(40)), ms('MS_2', 2, T(1), T(39))], 'P2'),
+      // The fresh close, then one last updated before since: paging stops after this page.
+      pageOf([ms('MS_9', 9, T(30), T(31)), ms('MS_3', 3, T(2), T(5))], 'P3'),
+      pageOf([ms('MS_4', 4, T(25), T(26))]),
+    ],
+  })
+  const found = await createGithubSources({ repos: [REPO], run: gh.run, log })[0]!.changedSince(at(10))
+  expect(found.map(t => t.item.key)).toEqual(['NOVA-M9'])
+  const calls = gh.calls.filter(c => c.includes(`query=${MILESTONES_QUERY}`))
+  expect(calls.length).toBe(2)
+  expect(calls[1]).toContain('cursor=P2')
 })

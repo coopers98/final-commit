@@ -76,11 +76,12 @@ so a task that goes straight to `[x]` completes without rewards.
 Add `github` to `workSources`, and list each repository with the prefix its
 keys get in `githubRepos`: `example/nova=NOVA` makes issue #12 `NOVA-12`.
 The game reads through the `gh` CLI and its own login, so `gh auth login`
-first; the mod never handles a token. An issue with sub-issues is an epic,
-and each sub-issue assigned to you is a mission: being assigned starts it,
-closing it finishes it (closing one that is not your active mission only
-records it as closed, without rewards), and closing the parent surveys the
-epic. Issues outside any parent are ignored. Name a branch with the key (`feature/NOVA-12-export`) and
+first; the mod never handles a token. Every issue assigned to you is a
+mission: being assigned starts it, and closing it finishes it (closing one
+that is not your active mission only records it as closed, without
+rewards). Its star system is its parent issue if it has one, else its
+milestone (`NOVA-M3`), else the repo's backlog (`NOVA-BACKLOG`), so loose
+tickets count too. Closing a parent or a milestone surveys its system. Name a branch with the key (`feature/NOVA-12-export`) and
 checking it out starts the mission too.
 
 ## What data the mod sends, and where
@@ -89,8 +90,9 @@ The game is built from your own work, so some of it is sent to a model.
 
 **What is sent to the model:** the epic title and description you type into
 the `/epic` form (or a plan document's first heading and the prose before
-its first task, or a GitHub parent issue's title and body), after the
-privacy filter, in one request per epic (plus up
+its first task, or a GitHub parent issue's title and body, or a milestone's
+title and description; a repo's backlog sends only the word "Backlog"),
+after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.

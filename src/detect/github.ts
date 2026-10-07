@@ -1,10 +1,12 @@
 import { GITHUB } from '../config'
 import type { WorkItem, WorkSource, WorkStatus, WorkTransition } from './work-source'
 
-// SPEC 4.4: GitHub Issues as a work source, through `gh` (its own auth). An
-// issue with sub-issues is an epic; a sub-issue assigned to you is a mission.
-// Each repo is listed with its key prefix (`owner/repo=FC`), and issue #12 is
-// `FC-12`. Changes come from the issues' timeline events, so they are timed
+// SPEC 4.4 rule 6: GitHub Issues as a work source, through `gh` (its own
+// auth). Every issue assigned to you is a mission. Its epic is the structure
+// the repo uses, in order: its parent issue (`FC-1`), else its milestone
+// (`FC-M3`), else the repo's standing backlog (`FC-BACKLOG`), so loose tickets
+// count too. Each repo is listed with its key prefix (`owner/repo=FC`), and
+// issue #12 is `FC-12`. Changes come from the issues' timeline events, so they are timed
 // when they happened and keyed by the event's id: no state is kept between
 // reads. Pure apart from the command runner it is handed.
 
@@ -41,6 +43,7 @@ export const MINE_QUERY = `query($owner: String!, $name: String!, $since: DateTi
       nodes {
         number title body
         parent { number title body repository { nameWithOwner } }
+        milestone { number title description }
         timelineItems(first: 50, since: $since, itemTypes: [ASSIGNED_EVENT, CLOSED_EVENT, REOPENED_EVENT]) {
           nodes {
             __typename
@@ -50,6 +53,21 @@ export const MINE_QUERY = `query($owner: String!, $name: String!, $since: DateTi
           }
         }
       }
+    }
+  }
+}`
+
+/**
+ * Closed milestones, last updated first. A milestone's `updatedAt` moves with
+ * its issues long after it closed, so these are not the latest closed: pages
+ * are read until one was last updated before `since` (never earlier than its
+ * close), and those closed since count.
+ */
+export const MILESTONES_QUERY = `query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    milestones(first: $first, after: $cursor, states: [CLOSED], orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id number title closedAt updatedAt }
     }
   }
 }`
@@ -74,11 +92,17 @@ type Node = {
   title?: string
   body?: string | null
   parent?: { number?: number; title?: string; body?: string | null; repository?: { nameWithOwner?: string } } | null
+  milestone?: { number?: number; title?: string; description?: string | null } | null
   subIssuesSummary?: { total?: number }
   timelineItems?: { nodes?: (Event | null)[] }
 }
 export type IssuesPage = {
-  data?: { repository?: { issues?: { pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }; nodes?: (Node | null)[] } } | null }
+  data?: {
+    repository?: {
+      issues?: { pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }; nodes?: (Node | null)[] }
+      milestones?: { pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }; nodes?: ({ id?: string; number?: number; title?: string; closedAt?: string | null; updatedAt?: string } | null)[] }
+    } | null
+  }
   errors?: { message?: string; type?: string }[]
 }
 
@@ -97,27 +121,45 @@ function push(out: WorkTransition[], since: number, item: WorkItem, e: { id: str
   if (Number.isFinite(at) && at >= since) out.push({ id: e.id, at, item, to, ...(epic ? { epic } : {}) })
 }
 
+/** The milestone epic's key: `M` and its number, apart from issue numbers under the same prefix (and project). */
+const milestoneKey = (repo: GithubRepo, n: number) => `${repo.prefix}-M${n}`
+
+/** The repo's standing system for issues with no parent or milestone; never surveyed. Its title carries no work text. */
+export const backlogOf = (repo: GithubRepo): WorkItem => ({ key: `${repo.prefix}-BACKLOG`, kind: 'epic', title: 'Backlog', description: '' })
+
 /**
- * The viewer's issues as transitions (SPEC 4.1): assigned to the viewer
- * starts one, its close is its Done, a reopen is reported back to to do. Its
- * epic is its parent, mapped through the listed repos (a parent may live in
- * another repo); an issue outside any epic, or whose parent's repo is not
- * listed, is left out (`skipped` says which, for the debug log). An issue
- * that also has sub-issues is still a mission here.
+ * The epic an issue of yours belongs to: its parent issue (mapped through the
+ * listed repos, as a parent may live in another repo), else its milestone,
+ * else the repo's backlog. A parent in an unlisted repo falls through to the
+ * milestone or backlog, with a note.
+ */
+function epicOf(repo: GithubRepo, repos: readonly GithubRepo[], n: Node, notes: string[]): WorkItem {
+  if (n.parent && typeof n.parent.number === 'number') {
+    const home = n.parent.repository?.nameWithOwner?.toLowerCase() ?? fullName(repo)
+    const parentRepo = repos.find(r => fullName(r) === home)
+    if (parentRepo) return itemOf(parentRepo, 'epic', n.parent)
+    notes.push(`${repo.prefix}-${n.number}: its parent is in ${n.parent.repository?.nameWithOwner}, which is not listed; grouped by its milestone or the backlog`)
+  }
+  const m = n.milestone
+  if (m && typeof m.number === 'number') {
+    return { key: milestoneKey(repo, m.number), kind: 'epic', title: m.title ?? '', description: (m.description ?? '').slice(0, GITHUB.maxDescriptionChars) }
+  }
+  return backlogOf(repo)
+}
+
+/**
+ * Your issues as transitions (SPEC 4.1): assigned to you starts one, its
+ * close is its Done, a reopen is reported back to to do. Every issue of yours
+ * has an epic (`epicOf`). An issue with sub-issues of its own is still a
+ * mission here. `skipped` holds notes for the debug log.
  */
 export function missionsOf(repo: GithubRepo, repos: readonly GithubRepo[], viewer: string, page: IssuesPage, since: number): { found: WorkTransition[]; skipped: string[] } {
   const found: WorkTransition[] = []
   const skipped: string[] = []
   for (const n of page.data?.repository?.issues?.nodes ?? []) {
-    if (!n || typeof n.number !== 'number' || !n.parent || typeof n.parent.number !== 'number') continue
-    const home = n.parent.repository?.nameWithOwner?.toLowerCase() ?? fullName(repo)
-    const parentRepo = repos.find(r => fullName(r) === home)
-    if (!parentRepo) {
-      skipped.push(`${repo.prefix}-${n.number}: its parent is in ${n.parent.repository?.nameWithOwner}, which is not listed`)
-      continue
-    }
+    if (!n || typeof n.number !== 'number') continue
     const item = itemOf(repo, 'issue', n)
-    const epic = itemOf(parentRepo, 'epic', n.parent)
+    const epic = epicOf(repo, repos, n, skipped)
     for (const e of eventsOf(n)) {
       if (e.__typename === 'AssignedEvent' && e.assignee?.login === viewer) push(found, since, item, e, 'in_progress', epic)
       else if (e.__typename === 'ClosedEvent') push(found, since, item, e, 'done', epic)
@@ -125,6 +167,17 @@ export function missionsOf(repo: GithubRepo, repos: readonly GithubRepo[], viewe
     }
   }
   return { found, skipped }
+}
+
+/** Milestones closed since, as their epics' Dones (the system surveyed). Keyed by the milestone and when it closed, so a reopened one can close again. */
+export function milestonesOf(repo: GithubRepo, page: IssuesPage, since: number): WorkTransition[] {
+  const found: WorkTransition[] = []
+  for (const m of page.data?.repository?.milestones?.nodes ?? []) {
+    if (!m || typeof m.number !== 'number' || typeof m.id !== 'string' || !m.closedAt) continue
+    const item: WorkItem = { key: milestoneKey(repo, m.number), kind: 'epic', title: m.title ?? '', description: '' }
+    push(found, since, item, { id: `milestone-${m.id}-${m.closedAt}`, createdAt: m.closedAt }, 'done')
+  }
+  return found
 }
 
 /** Closed issues with sub-issues as epic Dones (SPEC 4.1: the epic surveyed). */
@@ -195,6 +248,23 @@ async function pages(io: GithubIo, repo: GithubRepo, q: string, vars: Record<str
   io.log(`final-commit: github: ${what}; epic closes after them are not read this time`)
 }
 
+/** Closed milestones' Dones since `since`: pages, last updated first, until one was last updated before it. */
+async function closedMilestones(io: GithubIo, repo: GithubRepo, since: number): Promise<WorkTransition[]> {
+  const found: WorkTransition[] = []
+  let cursor: string | undefined
+  for (let n = 0; n < GITHUB.maxPages; n++) {
+    const p = await query(io, MILESTONES_QUERY, { owner: repo.owner, name: repo.name, ...(cursor ? { cursor } : {}) }, { first: GITHUB.milestonesPageSize })
+    const ms = p.data?.repository?.milestones
+    if (!p.data?.repository) throw new Error(`gh: ${repo.owner}/${repo.name} was not found, or this gh login cannot see it`)
+    found.push(...milestonesOf(repo, p, since))
+    const isPastSince = (ms?.nodes ?? []).some(m => m?.updatedAt !== undefined && Date.parse(m.updatedAt) < since)
+    if (isPastSince || !ms?.pageInfo?.hasNextPage || !ms.pageInfo.endCursor) return found
+    cursor = ms.pageInfo.endCursor
+  }
+  io.log(`final-commit: github: more than ${GITHUB.maxPages * GITHUB.milestonesPageSize} closed milestones updated in ${repo.owner}/${repo.name} since the last read; later closes are not read this time`)
+  return found
+}
+
 /**
  * One source per listed repo, named `github:owner/repo`: each keeps its own
  * sync record and fails on its own (a typo, a rename, a login that cannot see
@@ -223,6 +293,7 @@ export function createGithubSources(io: GithubIo): WorkSource[] {
         for (const why of skipped) io.log(`final-commit: github: ${why}`)
       })
       await pages(io, repo, EPICS_QUERY, { since: iso }, GITHUB.epicsPageSize, false, p => all.push(...epicsOf(repo, p, since)))
+      all.push(...(await closedMilestones(io, repo, since)))
       return all
     },
   }))

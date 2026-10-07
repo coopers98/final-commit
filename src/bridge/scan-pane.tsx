@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 import type { ScanRow } from '../../types'
-import { parseEpicKey } from '../game'
+import { parseSystemKey } from '../game'
 import { createRepo, type Repo } from '../store/repo'
 import { scanRows } from './scan'
 import { tierColor } from './color'
@@ -22,7 +22,7 @@ function repoOf($: EngineInterface): Repo {
 async function scan($: EngineInterface, args: string): Promise<string> {
   if (!(await read($, ready))) return 'The Final Commit could not load its save; see the debug log (claude --debug).'
   const repo = repoOf($)
-  const key = args.trim() === '' ? (await repo.meta())?.activeEpicKey ?? undefined : parseEpicKey(args)
+  const key = args.trim() === '' ? (await repo.meta())?.activeEpicKey ?? undefined : parseSystemKey(args)
   if (!key) return args.trim() === '' ? 'No active epic. /scan <KEY> scans a charted one.' : 'Usage: /scan [KEY], for example /scan NOVA-1.'
   let system
   for (const id of await repo.systemIds()) {

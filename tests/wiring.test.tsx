@@ -195,14 +195,15 @@ function githubIssues() {
   const gh: Gh = argv => {
     const query = argv.find(a => a.startsWith('query='))!
     if (!query.includes('repository(')) return { exitCode: 0, stdout: JSON.stringify({ data: { viewer: { login: 'tester' } } }) }
+    if (query.includes('milestones(')) return { exitCode: 0, stdout: JSON.stringify({ data: { repository: { milestones: { nodes: [] } } } }) }
     const since = Date.parse(argv.find(a => a.startsWith('since='))!.slice('since='.length))
     const isEpics = query.includes('states: [CLOSED]')
     const nodes = issues
-      .filter(i => i.events.some(e => Date.parse(e.createdAt) >= since) && (isEpics ? i.events.some(e => e.__typename === 'ClosedEvent') : i.parent !== undefined))
+      .filter(i => i.events.some(e => Date.parse(e.createdAt) >= since) && (isEpics ? i.events.some(e => e.__typename === 'ClosedEvent') : i.subs === 0))
       .map(i => {
         const parent = issues.find(p => p.number === i.parent)
         return {
-          number: i.number, title: i.title, body: i.body,
+          number: i.number, title: i.title, body: i.body, milestone: null,
           parent: parent ? { number: parent.number, title: parent.title, body: parent.body, repository: { nameWithOwner: 'example/nova' } } : null,
           subIssuesSummary: { total: i.subs }, timelineItems: { nodes: i.events.filter(e => Date.parse(e.createdAt) >= since) },
         }
@@ -243,6 +244,22 @@ test('GitHub issues drive the game: a sub-issue assigned charts its parent and s
   const ui = await $.ui.mount(PANE('fc-report'))
   expect((await ui.findAll({ type: 'Text' })).some((t: { text: string }) => t.text.startsWith('System surveyed'))).toBe(true)
   await ui.unmount()
+})
+
+test('a loose GitHub ticket, with no parent or milestone, is a mission in the repo\'s backlog system', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] }, timeoutMs: 15_000 }, async ($, on) => {
+  const repo = githubIssues()
+  repo.issues.push({ number: 20, title: 'Fix the export date', body: '', subs: 0, events: [] })
+  const w = world(on, { gh: repo.gh })
+  await $.session.start(START)
+  await w.clock.settle()
+  repo.event(20, 'AssignedEvent', w.clock.now() + 60_000)
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.toasts.some(t => t.startsWith('New system charted'))).toBe(true)
+  expect(w.toasts).toContain('Mission NOVA-20 started.')
+  // The backlog's prompt carries no work text: only its generic title.
+  expect(w.prompts.join('\n')).not.toContain('export date')
+  expect((await run($, 'scan', 'NOVA-BACKLOG')).text).not.toContain('Usage')
 })
 
 test('a GitHub source with no valid repo is missing settings, and the bad entry is logged', { options: { workSources: ['github'], githubRepos: ['not a repo'] } }, async ($, on) => {

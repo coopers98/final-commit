@@ -74,6 +74,15 @@ export function parseEpicKey(args: string): string | undefined {
   return ISSUE_KEY.test(key) ? key : undefined
 }
 
+/** A charted system's key: an issue key, or a key a work source gives an epic that is not an issue (`NOVA-M3`, `NOVA-BACKLOG`, SPEC 4.4 rule 6). */
+const SYSTEM_KEY = /^[A-Z][A-Z0-9]{1,9}-(?:[1-9]\d*|M[1-9]\d*|BACKLOG)$/
+
+/** `/scan <KEY>`: any key a system can be charted under. */
+export function parseSystemKey(args: string): string | undefined {
+  const key = args.trim().toUpperCase()
+  return SYSTEM_KEY.test(key) ? key : undefined
+}
+
 /**
  * `activate: false` charts without making the epic active: a chart the tracker
  * started must not move play away from a running mission (its issue's start

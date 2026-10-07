@@ -175,11 +175,12 @@ export const CHART_RETRY = { firstMs: 1_800_000, maxMs: 21_600_000 } as const
 export const PLANS = { defaultFolders: ['docs/plans'] as readonly string[], maxFileBytes: 262_144, keepLog: 1_000, maxDescriptionChars: 2_000 } as const
 
 // DEFAULT: GitHub Issues (SPEC 4.4). Issues per GraphQL page: your own
-// (with bodies, so fewer) and closed epics (numbers only); the most pages one
+// (with bodies, so fewer) and closed epics (numbers only); the most recently
+// updated closed milestones per page; the most pages one
 // poll reads per repo and query; an epic's description is cut to
 // `maxDescriptionChars`; an error shown from gh to `maxErrorChars`; one gh
 // call may take `timeoutMs`.
-export const GITHUB = { minePageSize: 25, epicsPageSize: 100, maxPages: 20, maxDescriptionChars: 2_000, maxErrorChars: 120, timeoutMs: 30_000 } as const
+export const GITHUB = { minePageSize: 25, epicsPageSize: 100, milestonesPageSize: 50, maxPages: 20, maxDescriptionChars: 2_000, maxErrorChars: 120, timeoutMs: 30_000 } as const
 
 // SPEC 4.3 rules 1 and 2: what a tracker-closed mission needs to roll an encounter.
 export const ANTI_FARMING = { minMissionMs: 1_200_000 } as const
