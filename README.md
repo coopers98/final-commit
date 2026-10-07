@@ -18,8 +18,8 @@ current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Plan documents can
-drive it automatically. Tracker sync (Jira, GitHub Issues, Linear), puzzles
-and crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
+drive it, as can GitHub Issues. Jira and Linear sync, puzzles and crafting
+come later. The design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
@@ -71,13 +71,26 @@ Checking out a task's branch or typing `/mission` starts it too. Mark a task
 `[~]` when you begin it: only work done while its mission is active counts,
 so a task that goes straight to `[x]` completes without rewards.
 
+### GitHub Issues
+
+Add `github` to `workSources`, and list each repository with the prefix its
+keys get in `githubRepos`: `example/nova=NOVA` makes issue #12 `NOVA-12`.
+The game reads through the `gh` CLI and its own login, so `gh auth login`
+first; the mod never handles a token. An issue with sub-issues is an epic,
+and each sub-issue assigned to you is a mission: being assigned starts it,
+closing it finishes it (closing one that is not your active mission only
+records it as closed, without rewards), and closing the parent surveys the
+epic. Issues outside any parent are ignored. Name a branch with the key (`feature/NOVA-12-export`) and
+checking it out starts the mission too.
+
 ## What data the mod sends, and where
 
 The game is built from your own work, so some of it is sent to a model.
 
 **What is sent to the model:** the epic title and description you type into
 the `/epic` form (or a plan document's first heading and the prose before
-its first task), after the privacy filter, in one request per epic (plus up
+its first task, or a GitHub parent issue's title and body), after the
+privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
@@ -88,14 +101,17 @@ subagent does, through your session's model and only when dispatched; the mod
 supplies only their instructions.
 
 **Where it goes:** only through your own Claude Code session and account.
-The mod makes no other network calls.
+Apart from the work sources you turn on (GitHub, through `gh`), the mod
+makes no other network calls.
 
 **What stays local:** the mod watches the Bash commands Claude runs in your
 session (to notice branch switches, commits and test runs), runs `git` to read
 the current branch, and reads `TERM`, `TMUX` and `SSH_CONNECTION` to tell your
 devices apart for calibration (stored only as a salted hash). With the plans
 source on, it reads the markdown files in your plan folders and keeps each
-task's last status. Saved game data,
+task's last status. With the github source on, it runs `gh api graphql` to
+read the listed repositories' issues: that request goes to GitHub, through
+gh, as any gh command does. Saved game data,
 including your issue keys, stays in Claude Code's plugin store on this machine.
 
 **What the model sees in the transcript:** slash commands and their output

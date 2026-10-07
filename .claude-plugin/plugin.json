@@ -39,7 +39,7 @@
       "type": "string",
       "multiple": true,
       "title": "Work sources",
-      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans.",
+      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans, github.",
       "default": []
     },
     "plansFolders": {
@@ -50,6 +50,13 @@
       "default": [
         "docs/plans"
       ]
+    },
+    "githubRepos": {
+      "type": "string",
+      "multiple": true,
+      "title": "GitHub repositories",
+      "description": "Repositories the github work source reads, each with its key prefix: owner/repo=PREFIX (issue #12 becomes PREFIX-12). Read through the gh CLI and its own login.",
+      "default": []
     }
   }
 }

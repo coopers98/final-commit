@@ -11,11 +11,12 @@ import { wireBay } from '../src/bridge/bay-pane'
 import { wireScan } from '../src/bridge/scan-pane'
 import { wrap } from '../src/bridge/text'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
-import { CHARTING, COMPANION, GENERATION, GIT, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
+import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
 import { NO_CHART_FAILURES, chartFailed, chartSucceeded, isChartHeld } from '../src/detect/chart-retry'
+import { createGithubSources, parseRepos } from '../src/detect/github'
 import { createPlansSource, plansId } from '../src/detect/plans'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
@@ -208,6 +209,13 @@ function backendsOf($: EngineInterface): Record<string, Backend> {
       now: () => $.clock.now(),
       log: line => $.ui.log(line, { to: 'debug' }),
     }),
+    // SPEC 4.4 rule 6: one source per repo, through gh and its own login; no token passes through the mod. Incomplete without a valid repo entry.
+    github: () => {
+      const { repos, invalid } = parseRepos(settings.githubRepos)
+      for (const entry of invalid) $.ui.log(`final-commit: github: ignored "${entry}" (expected owner/repo=PREFIX, each repo and prefix once)`, { to: 'debug' })
+      if (repos.length === 0) return undefined
+      return createGithubSources({ repos, run: argv => $.process.run(argv, { timeoutMs: GITHUB.timeoutMs }), log: line => $.ui.log(line, { to: 'debug' }) })
+    },
   }
 }
 

@@ -7,8 +7,12 @@ import type { WorkSource } from './work-source'
 // its sync record, so two sources never share processed keys or a lastSync.
 // Pure: the wiring builds each backend (with its I/O) and hands them in.
 
-/** A backend: builds the source from what the wiring gives it; `undefined` when its settings are incomplete. */
-export type Backend = () => WorkSource | undefined
+/**
+ * A backend: builds its source from what the wiring gives it, or several
+ * (one per repository, each named apart so each fails and syncs on its own);
+ * `undefined` or none when its settings are incomplete.
+ */
+export type Backend = () => WorkSource | readonly WorkSource[] | undefined
 
 const NAME = /^[a-z][a-z0-9-]{0,31}$/
 
@@ -35,8 +39,9 @@ export function resolveSources(names: readonly string[], backends: Readonly<Reco
       out.unknown.push(name)
       continue
     }
-    const source = backend()
-    if (source) out.sources.push(source)
+    const built = backend()
+    const list = built === undefined ? [] : Array.isArray(built) ? built : [built as WorkSource]
+    if (list.length > 0) out.sources.push(...list)
     else out.incomplete.push(name)
   }
   return out
@@ -71,6 +76,8 @@ export async function syncSources(deps: SourcesDeps): Promise<SourcesResult> {
     charting.add(epic.key)
   }
   const result: SourcesResult = { outcomes: [], toasts: [], failing: new Set() }
+  /** Newly failing sources by their error: several failing alike (a backend's shared login) are told in one toast. */
+  const fresh = new Map<string, string[]>()
   for (const source of sources) {
     let error: string | undefined
     try {
@@ -82,7 +89,11 @@ export async function syncSources(deps: SourcesDeps): Promise<SourcesResult> {
     }
     if (error === undefined) continue
     result.failing.add(source.name)
-    if (!before.has(source.name)) result.toasts.push(`Work source ${source.name} failed (${error}); retrying at the next poll.`)
+    if (!before.has(source.name)) fresh.set(error, [...(fresh.get(error) ?? []), source.name])
+  }
+  for (const [error, names] of fresh) {
+    const who = names.length === 1 ? `Work source ${names[0]}` : `Work sources ${names.join(', ')}`
+    result.toasts.push(`${who} failed (${error}); retrying at the next poll.`)
   }
   return result
 }

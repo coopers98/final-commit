@@ -13,7 +13,10 @@ const SEED = '42'
 type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; release: () => void }
 
 /** `refuse`: pane ids that cannot be placed. `holdModel`: model calls wait for `w.release()`, so charting stays in flight. */
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean } = {}): World {
+/** `gh`: answers a `gh` command (the github work source); other commands answer as git on `branch`. */
+type Gh = (argv: readonly string[]) => { exitCode: number; stdout: string; stderr?: string }
+
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
@@ -47,9 +50,11 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     w.logs.push(e.text)
     return { value: undefined }
   })
-  on('process.run', () => ({
-    value: { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
-  }) as never)
+  on('process.run', (_$, e) => {
+    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : undefined
+    const out = gh ? { stderr: '', ...gh } : { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '' }
+    return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } } as never
+  })
   on('model.complete', (_$, e) => {
     w.prompts.push(`${e.system ?? ''}\n${e.prompt}`)
     const answer = { value: { isAnswered: false, reason: 'api-error', usage: {} } }
@@ -180,6 +185,81 @@ test('the plans source reads nothing new between polls, and a later session star
   await w.clock.settle()
   expect(w.toasts).toEqual([])
   expect(w.prompts).toEqual([])
+})
+
+/** A GitHub repo in memory: issues with timeline events, answered as `gh api graphql` pages filtered by `since`. */
+function githubIssues() {
+  const issues: { number: number; title: string; body: string; parent?: number; subs: number; events: { __typename: string; id: string; createdAt: string; assignee?: { login: string } }[] }[] = []
+  let ids = 0
+  // Answers the source's three queries: who you are, your issues (all assigned to you here), closed epics.
+  const gh: Gh = argv => {
+    const query = argv.find(a => a.startsWith('query='))!
+    if (!query.includes('repository(')) return { exitCode: 0, stdout: JSON.stringify({ data: { viewer: { login: 'tester' } } }) }
+    const since = Date.parse(argv.find(a => a.startsWith('since='))!.slice('since='.length))
+    const isEpics = query.includes('states: [CLOSED]')
+    const nodes = issues
+      .filter(i => i.events.some(e => Date.parse(e.createdAt) >= since) && (isEpics ? i.events.some(e => e.__typename === 'ClosedEvent') : i.parent !== undefined))
+      .map(i => {
+        const parent = issues.find(p => p.number === i.parent)
+        return {
+          number: i.number, title: i.title, body: i.body,
+          parent: parent ? { number: parent.number, title: parent.title, body: parent.body, repository: { nameWithOwner: 'example/nova' } } : null,
+          subIssuesSummary: { total: i.subs }, timelineItems: { nodes: i.events.filter(e => Date.parse(e.createdAt) >= since) },
+        }
+      })
+    return { exitCode: 0, stdout: JSON.stringify({ data: { repository: { issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } }) }
+  }
+  const event = (number: number, type: 'AssignedEvent' | 'ClosedEvent', now: number) => {
+    ids += 1
+    issues.find(i => i.number === number)!.events.push({ __typename: type, id: `EV${ids}`, createdAt: new Date(now).toISOString(), ...(type === 'AssignedEvent' ? { assignee: { login: 'tester' } } : {}) })
+  }
+  return { issues, gh, event }
+}
+
+test('GitHub issues drive the game: a sub-issue assigned charts its parent and starts the mission; its close completes it; the parent\'s close surveys it', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] }, timeoutMs: 15_000 }, async ($, on) => {
+  const repo = githubIssues()
+  repo.issues.push({ number: 1, title: 'Billing export', body: 'Export invoices as files.', subs: 2, events: [] })
+  repo.issues.push({ number: 12, title: 'Write the exporter', body: '', parent: 1, subs: 0, events: [] })
+  const w = world(on, { gh: repo.gh })
+  await $.session.start(START)
+  await w.clock.settle()
+  expect(w.toasts).toEqual([])
+  repo.event(12, 'AssignedEvent', w.clock.now() + 60_000)
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.toasts.some(t => t.startsWith('New system charted'))).toBe(true)
+  expect(w.toasts).toContain('Mission NOVA-12 started.')
+  repo.event(12, 'ClosedEvent', w.clock.now() + 60_000)
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.opened.at(-1)).toBe('fc-report')
+  expect((await run($, 'mission', 'complete')).text).toBe('No active mission. Start one with /mission <KEY>.')
+  // The parent closed: the epic is surveyed (its report takes the pane).
+  const reports = w.opened.filter(id => id === 'fc-report').length
+  repo.event(1, 'ClosedEvent', w.clock.now() + 60_000)
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.opened.filter(id => id === 'fc-report').length).toBe(reports + 1)
+  const ui = await $.ui.mount(PANE('fc-report'))
+  expect((await ui.findAll({ type: 'Text' })).some((t: { text: string }) => t.text.startsWith('System surveyed'))).toBe(true)
+  await ui.unmount()
+})
+
+test('a GitHub source with no valid repo is missing settings, and the bad entry is logged', { options: { workSources: ['github'], githubRepos: ['not a repo'] } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await w.clock.settle()
+  expect(w.toasts).toEqual(['Work source github is missing settings; it is ignored until they are set.'])
+  expect(w.logs).toContain('final-commit: github: ignored "not a repo" (expected owner/repo=PREFIX, each repo and prefix once)')
+})
+
+test('gh failing is told once per outage, with gh\'s own short message', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] } }, async ($, on) => {
+  const w = world(on, { gh: () => ({ exitCode: 1, stdout: '', stderr: 'HTTP 401: Bad credentials' }) })
+  await $.session.start(START)
+  await w.clock.settle()
+  await w.clock.advance(SYNC.pollMs * 3)
+  await w.clock.settle()
+  expect(w.toasts).toEqual(['Work source github:example/nova failed (gh: HTTP 401: Bad credentials); retrying at the next poll.'])
 })
 
 test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['jira', 'Jira'] } }, async ($, on) => {

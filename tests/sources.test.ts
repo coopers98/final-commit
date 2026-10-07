@@ -172,3 +172,17 @@ test('a sync that rejects frees the gate', async () => {
   gate.request()
   expect(calls).toBe(2)
 })
+
+test('sources failing alike in one sync are told in one toast; a different failure gets its own', async () => {
+  const h = await harness()
+  const a = broken('github:example/nova', 'gh: not logged in')
+  const b = broken('github:example/atlas', 'gh: not logged in')
+  const c = broken('plans', 'unreadable')
+  await syncSources(h.deps(0, [a, b, c]))
+  const r = await syncSources(h.deps(10 * MIN, [a, b, c]))
+  expect(r.toasts).toEqual([
+    'Work sources github:example/nova, github:example/atlas failed (gh: not logged in); retrying at the next poll.',
+    'Work source plans failed (unreadable); retrying at the next poll.',
+  ])
+  expect([...r.failing]).toEqual(['github:example/nova', 'github:example/atlas', 'plans'])
+})
