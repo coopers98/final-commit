@@ -37,26 +37,21 @@
     },
     "workSources": {
       "type": "string",
-      "multiple": true,
       "title": "Work sources",
-      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans, github, jira.",
-      "default": []
+      "description": "Trackers read for automatic detection, comma-separated: plans, github, jira (SPEC 4.4). /setup walks through them.",
+      "default": ""
     },
     "plansFolders": {
       "type": "string",
-      "multiple": true,
       "title": "Plan folders",
-      "description": "Folders of markdown plan documents read by the plans work source, relative to the project.",
-      "default": [
-        "docs/plans"
-      ]
+      "description": "Folders of markdown plan documents read by the plans source, comma-separated, inside the project.",
+      "default": "docs/plans"
     },
     "githubRepos": {
       "type": "string",
-      "multiple": true,
       "title": "GitHub repositories",
-      "description": "Repositories the github work source reads, each with its key prefix: owner/repo=PREFIX (issue #12 becomes PREFIX-12). Read through the gh CLI and its own login.",
-      "default": []
+      "description": "Repositories the github source reads, comma-separated, each with its key prefix: owner/repo=PREFIX (issue #12 becomes PREFIX-12). Read through the gh CLI and its own login.",
+      "default": ""
     },
     "jiraSite": {
       "type": "string",

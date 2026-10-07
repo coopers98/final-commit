@@ -67,6 +67,20 @@ export type ChartingEntry = { key: string; startedAt: number }
 /** Charts a work source started that failed, by epic key: failures in a row, and when one may be tried again. */
 export type ChartFailures = Record<string, { count: number; retryAt: number }>
 
+/** `/setup`'s answers (SPEC 4.6): the plugin's own settings as their `/config` text. */
+export type SetupValues = { workSources: string; plansFolders: string; githubRepos: string; jiraSite: string; jiraEmail: string }
+
+/** The `/setup` pane: the question being asked (or the review), the answers so far, the settings it started from. */
+export type SetupView = {
+  step: 'sources' | 'plans' | 'github' | 'jiraSite' | 'jiraEmail' | 'review' | 'saving' | 'done'
+  values: SetupValues
+  original: SetupValues
+  /** What is wrong with the last answer; the pane stays on its question. */
+  error: string | null
+  /** After saving: one line per setting, saved or refused with the reason. */
+  applied: string[]
+}
+
 export type EpicFormView = {
   key: string
   step: 'title' | 'description'
@@ -87,6 +101,7 @@ declare module 'claude-code' {
       confirm: ConfirmView | null
       queuedMission: QueuedMission | null
       scan: ScanRow[]
+      setup: SetupView | null
       mood: MoodState
       lattice: LatticeView | null
       band: BandView | null

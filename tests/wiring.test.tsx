@@ -135,7 +135,7 @@ function planFiles(on: On, files: Record<string, string>) {
   return files
 }
 
-test('plan documents drive the game: a task marked in progress charts its epic and starts the mission; done completes it; all done surveys the epic', { options: { workSources: ['plans'] }, timeoutMs: 15_000 }, async ($, on) => {
+test('plan documents drive the game: a task marked in progress charts its epic and starts the mission; done completes it; all done surveys the epic', { options: { workSources: 'plans' }, timeoutMs: 15_000 }, async ($, on) => {
   const w = world(on)
   const files = planFiles(on, { 'docs/plans/billing.md': '# NOVA-1 Billing export\n\nExport invoices as files.\n\n- [ ] NOVA-2 Write the exporter\n- [x] NOVA-3 Earlier work\n- [ ] NOVA-4 Document it\n' })
   await $.session.start(START)
@@ -176,7 +176,7 @@ test('plan documents drive the game: a task marked in progress charts its epic a
   expect(w.logs).toEqual([])
 })
 
-test('the plans source reads nothing new between polls, and a later session starts from its record', { options: { workSources: ['plans'] } }, async ($, on) => {
+test('the plans source reads nothing new between polls, and a later session starts from its record', { options: { workSources: 'plans' } }, async ($, on) => {
   const w = world(on)
   planFiles(on, { 'docs/plans/billing.md': '# NOVA-1 Billing export\n- [~] NOVA-2 Write the exporter\n' })
   await $.session.start(START)
@@ -217,7 +217,7 @@ function githubIssues() {
   return { issues, gh, event }
 }
 
-test('GitHub issues drive the game: a sub-issue assigned charts its parent and starts the mission; its close completes it; the parent\'s close surveys it', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] }, timeoutMs: 15_000 }, async ($, on) => {
+test('GitHub issues drive the game: a sub-issue assigned charts its parent and starts the mission; its close completes it; the parent\'s close surveys it', { options: { workSources: 'github', githubRepos: 'example/nova=NOVA' }, timeoutMs: 15_000 }, async ($, on) => {
   const repo = githubIssues()
   repo.issues.push({ number: 1, title: 'Billing export', body: 'Export invoices as files.', subs: 2, events: [] })
   repo.issues.push({ number: 12, title: 'Write the exporter', body: '', parent: 1, subs: 0, events: [] })
@@ -246,7 +246,7 @@ test('GitHub issues drive the game: a sub-issue assigned charts its parent and s
   await ui.unmount()
 })
 
-test('a loose GitHub ticket, with no parent or milestone, is a mission in the repo\'s backlog system', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] }, timeoutMs: 15_000 }, async ($, on) => {
+test('a loose GitHub ticket, with no parent or milestone, is a mission in the repo\'s backlog system', { options: { workSources: 'github', githubRepos: 'example/nova=NOVA' }, timeoutMs: 15_000 }, async ($, on) => {
   const repo = githubIssues()
   repo.issues.push({ number: 20, title: 'Fix the export date', body: '', subs: 0, events: [] })
   const w = world(on, { gh: repo.gh })
@@ -299,7 +299,7 @@ function jiraSite(on: On) {
   return { rows, requests, bind: (now: () => number) => void (clockNow = now) }
 }
 
-const JIRA_OPTIONS = { workSources: ['jira'], jiraSite: 'https://example.atlassian.net', jiraEmail: 'me@example.com', jiraToken: 'sekret-token-0000' }
+const JIRA_OPTIONS = { workSources: 'jira', jiraSite: 'https://example.atlassian.net', jiraEmail: 'me@example.com', jiraToken: 'sekret-token-0000' }
 
 test('Jira issues drive the game: In Progress charts the epic and starts the mission; Done completes it; the epic\'s Done surveys it', { options: JIRA_OPTIONS, timeoutMs: 15_000 }, async ($, on) => {
   const jira = jiraSite(on)
@@ -341,7 +341,7 @@ test('a Jira source with a site that is not Jira Cloud is missing settings and i
   expect(jira.requests).toEqual([])
 })
 
-test('a GitHub source with no valid repo is missing settings, and the bad entry is logged', { options: { workSources: ['github'], githubRepos: ['not a repo'] } }, async ($, on) => {
+test('a GitHub source with no valid repo is missing settings, and the bad entry is logged', { options: { workSources: 'github', githubRepos: 'not a repo' } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)
   await w.clock.settle()
@@ -349,7 +349,7 @@ test('a GitHub source with no valid repo is missing settings, and the bad entry 
   expect(w.logs).toContain('final-commit: github: ignored "not a repo" (expected owner/repo=PREFIX, each repo and prefix once)')
 })
 
-test('gh failing is told once per outage, with gh\'s own short message', { options: { workSources: ['github'], githubRepos: ['example/nova=NOVA'] } }, async ($, on) => {
+test('gh failing is told once per outage, with gh\'s own short message', { options: { workSources: 'github', githubRepos: 'example/nova=NOVA' } }, async ($, on) => {
   const w = world(on, { gh: () => ({ exitCode: 1, stdout: '', stderr: 'HTTP 401: Bad credentials' }) })
   await $.session.start(START)
   await w.clock.settle()
@@ -358,7 +358,7 @@ test('gh failing is told once per outage, with gh\'s own short message', { optio
   expect(w.toasts).toEqual(['Work source github:example/nova failed (gh: HTTP 401: Bad credentials); retrying at the next poll.'])
 })
 
-test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['linear', 'Linear'] } }, async ($, on) => {
+test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: 'linear, Linear' } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)
   await w.clock.settle()
@@ -405,6 +405,66 @@ test('/mission reopen takes a completed mission out of the log, so /mission can 
   await run($, 'mission', 'complete anyway')
   expect((await run($, 'mission', 'reopen NOVA-2')).text).toContain('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission.')
   expect((await run($, 'mission', 'reopen')).text).toBe('Usage: /mission reopen <KEY>, for example /mission reopen NOVA-12.')
+})
+
+test('/setup walks through the sources in a pane and saves the answers as settings, the source list last', { options: { jiraToken: 'sekret-token-0000' } }, async ($, on) => {
+  const saved: [string, unknown][] = []
+  on('config.set', (_$, e) => {
+    saved.push([e.key, e.value])
+    return { value: e.value }
+  })
+  const w = world(on, { gh: argv => (argv[1] === 'repo' ? { exitCode: 0, stdout: 'example/nova-tracker\n' } : { exitCode: 1, stdout: '' }) })
+  await $.session.start(START)
+  expect(w.commands).toContain('setup')
+  expect((await run($, 'setup')).text).toBe('Opened the setup pane.')
+  const ui = await $.ui.mount(PANE('fc-setup'))
+  const field = async (key: string) => (await ui.find({ key })) as { props?: { value?: string } } | undefined
+  expect((await field('setup-sources'))?.props?.value).toBe('plans')
+  await ui.input({ key: 'setup-sources', text: 'github, jira' })
+  // The repo suggested from gh, its prefix from its name.
+  expect((await field('setup-github'))?.props?.value).toBe('example/nova-tracker=NT')
+  await ui.input({ key: 'setup-github', text: 'example/nova-tracker=NOVA' })
+  await ui.input({ key: 'setup-jiraSite', text: 'jira.example.com' })
+  expect((await ui.findAll({ type: 'Text' })).some((t: { text: string }) => t.text.includes('Jira Cloud site'))).toBe(true)
+  await ui.input({ key: 'setup-jiraSite', text: 'https://example.atlassian.net' })
+  await ui.input({ key: 'setup-jiraEmail', text: 'me@example.com' })
+  const review = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join('\n')
+  expect(review).toContain('Jira API token: set')
+  expect(review).not.toContain('sekret-token-0000')
+  await ui.input({ key: 'setup-review', text: '' })
+  expect(saved).toEqual([
+    ['final-commit.githubRepos', 'example/nova-tracker=NOVA'],
+    ['final-commit.jiraSite', 'https://example.atlassian.net'],
+    ['final-commit.jiraEmail', 'me@example.com'],
+    ['final-commit.workSources', 'github, jira'],
+  ])
+  const done = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join('\n')
+  expect(done).toContain('workSources: saved')
+  await ui.input({ key: 'setup-done', text: '' })
+  await ui.unmount()
+  // Nothing typed into the pane reached the transcript the model reads.
+  expect([...w.prompts].join('\n')).not.toContain('example/nova-tracker')
+})
+
+test('/setup says where to set things when its pane cannot open', async ($, on) => {
+  world(on, { refuse: ['fc-setup'] })
+  await $.session.start(START)
+  expect((await run($, 'setup')).text).toBe('The setup pane could not open here. Set workSources and the source settings in /config instead.')
+})
+
+test('/setup shows a refused setting with the reason, and the ones saved', async ($, on) => {
+  on('config.set', (_$, e) => (e.key === 'final-commit.workSources' ? { deny: 'a managed setting owns it' } : { value: e.value }))
+  world(on)
+  await $.session.start(START)
+  await run($, 'setup')
+  const ui = await $.ui.mount(PANE('fc-setup'))
+  await ui.input({ key: 'setup-sources', text: 'plans' })
+  await ui.input({ key: 'setup-plans', text: 'docs/plans, plans' })
+  await ui.input({ key: 'setup-review', text: '' })
+  const done = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).join('\n')
+  expect(done).toContain('plansFolders: saved')
+  expect(done).toContain('workSources: not saved (a managed setting owns it)')
+  await ui.unmount()
 })
 
 test('usage errors', async ($, on) => {

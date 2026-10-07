@@ -25,8 +25,13 @@ export function readSettings(options: PluginOptions): Settings {
     workSources: sourceNames(options.workSources),
     plansFolders: folderList(options.plansFolders),
     jira: { site: options.jiraSite, email: options.jiraEmail, token: options.jiraToken },
-    githubRepos: (Array.isArray(options.githubRepos) ? options.githubRepos : []).filter((v): v is string => typeof v === 'string' && v.trim() !== ''),
+    githubRepos: textList(options.githubRepos),
   }
+}
+
+/** A comma-separated text setting as its entries, trimmed, blanks dropped. */
+export function textList(value: unknown): string[] {
+  return typeof value === 'string' ? value.split(',').map(v => v.trim()).filter(v => v !== '') : []
 }
 
 /**
@@ -37,7 +42,7 @@ export function readSettings(options: PluginOptions): Settings {
  */
 function folderList(value: unknown): string[] {
   const isInside = (p: string) => !/^([/\\~]|[A-Za-z]:)/.test(p) && !p.split(/[/\\]/).includes('..')
-  const list = (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === 'string').map(v => v.trim()).filter(v => v !== '' && isInside(v))
+  const list = textList(value).filter(isInside)
   return list.length > 0 ? [...new Set(list)] : [...PLANS.defaultFolders]
 }
 

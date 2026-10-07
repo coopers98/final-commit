@@ -234,8 +234,8 @@ test('missing folders hold no plans; large files and unkeyed plans are skipped a
 })
 
 test('plan folders stay inside the project: absolute, home and parent paths are dropped', () => {
-  expect(readSettings({ plansFolders: ['docs/plans', '/etc', '~/notes', '../other', 'a/../../b', 'C:\\plans', ' plans '] }).plansFolders).toEqual(['docs/plans', 'plans'])
-  expect(readSettings({ plansFolders: ['/etc'] }).plansFolders).toEqual([...PLANS.defaultFolders])
+  expect(readSettings({ plansFolders: 'docs/plans, /etc, ~/notes, ../other, a/../../b, C:\\plans,  plans , docs/plans' }).plansFolders).toEqual(['docs/plans', 'plans'])
+  expect(readSettings({ plansFolders: '/etc' }).plansFolders).toEqual([...PLANS.defaultFolders])
   expect(readSettings({}).plansFolders).toEqual([...PLANS.defaultFolders])
 })
 

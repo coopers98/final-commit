@@ -34,6 +34,7 @@ There is no release yet. To play from a clone, see
 | `/mission NOVA-12` | Starts a mission. Checking out a branch like `feature/NOVA-12-x` (in the epic's project) starts it too. |
 | `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. A plain `npm test` counts by its exit status; a piped, guarded or chained run (`npm test \| tail`, `npm test; echo done`) counts by the runner's summary line, so keep that line in the output. |
 | `/mission reopen NOVA-12` | Undoes a mission completed by mistake: its latest completion leaves the log (so `/mission` can start it again), and the completed count and Reinforced Cells it gave are taken back. |
+| `/setup` | Walks through the work sources the game reads (plan documents, GitHub, Jira) in a pane, and saves your answers as its settings. |
 | `/contain [reinforced]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. |
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
@@ -49,8 +50,8 @@ most once every five minutes.
 ### Plan documents
 
 Instead of typing `/epic` and `/mission`, you can keep a markdown plan in
-your project and let the game follow it. Add `plans` to `workSources` in
-`/config`. The game then reads every `.md` file in `docs/plans/` (the
+your project and let the game follow it. Run `/setup`, or add `plans` to
+`workSources` in `/config` (comma-separated, like every list setting). The game then reads every `.md` file in `docs/plans/` (the
 `plansFolders` setting) at session start and every 12 minutes:
 
 ```markdown
