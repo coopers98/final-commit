@@ -20,7 +20,7 @@ import { createGithubSources, parseRepos } from '../src/detect/github'
 import { createPlansSource, plansId } from '../src/detect/plans'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
-import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, startEpic, startMission, type Outcome } from '../src/game'
+import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, reopenMission, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
@@ -284,6 +284,11 @@ async function mission($: EngineInterface, args: string): Promise<{ text: string
   if (!(await read($, ready))) return NOT_READY
   const arg = args.trim()
   const verb = arg.toLowerCase().split(/\s+/).join(' ')
+  if (verb === 'reopen' || verb.startsWith('reopen ')) {
+    const out = await reopenMission({ ...(await deps($)), issueKey: arg.slice('reopen'.length) })
+    await refresh($)
+    return { text: out.text }
+  }
   if (verb !== 'complete' && verb !== 'complete anyway') {
     const key = parseEpicKey(arg)
     // An epic still being charted becomes active when it finishes: the mission waits for it.
@@ -461,7 +466,7 @@ async function registerCrew($: EngineInterface) {
 async function startSession($: EngineInterface) {
   await prepareSession($)
   await $.command.register({ name: 'epic', description: 'Chart an epic as a star system, or survey it', argumentHint: '<KEY> | complete' })
-  await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete [anyway]' })
+  await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete [anyway] | reopen <KEY>' })
   await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })

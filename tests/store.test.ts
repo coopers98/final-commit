@@ -91,5 +91,24 @@ test('schema 2 to 3: values are restamped and the unowned single sync record is 
   const repo = createRepo(store)
   expect((await repo.inventory()).reinforced).toBe(3)
   expect(await repo.sync('jira')).toEqual({ lastSync: null, processed: [] })
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(3)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
+})
+
+test('schema 3 to 4: logged missions record what they gave, by the rules that applied', async () => {
+  const store = createMemoryStore()
+  const base = { systemId: 's', lint: null, tacticalClean: false }
+  await store.set(KEYS.meta, { schemaVersion: 3, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: null, completedMissions: 3, activeEpicKey: 'NOVA-1', companionId: null, encountersToday: { day: '', count: 0 } })
+  await store.set(KEYS.missionLog, { schemaVersion: 3, items: [
+    { ...base, issueKey: 'NOVA-2', startedAt: 1, completedAt: 9, commits: 1, testRuns: 2, testsGreen: true },
+    { ...base, issueKey: 'NOVA-3', startedAt: 10, completedAt: 20, commits: 0, testRuns: 0, testsGreen: false },
+    { ...base, issueKey: 'NOVA-4', startedAt: 30, completedAt: 30, commits: 0, testRuns: 0, testsGreen: false },
+  ] })
+  await migrate(store, 99)
+  const log = await createRepo(store).missionLog()
+  expect(log.map(m => [m.issueKey, m.reward])).toEqual([
+    ['NOVA-2', { counted: true, reinforced: 1 }],
+    ['NOVA-3', { counted: true, reinforced: 0 }],
+    ['NOVA-4', { counted: false, reinforced: 0 }],
+  ])
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(4)
 })

@@ -33,6 +33,7 @@ There is no release yet. To play from a clone, see
 | `/epic NOVA-1` | Opens a form for the epic's title and description, then charts it as a star system in the background. |
 | `/mission NOVA-12` | Starts a mission. Checking out a branch like `feature/NOVA-12-x` (in the epic's project) starts it too. |
 | `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. A plain `npm test` counts by its exit status; a piped or guarded run (`npm test \| tail`) counts by the runner's summary line, so keep that line in the output. |
+| `/mission reopen NOVA-12` | Undoes a mission completed by mistake: its latest completion leaves the log (so `/mission` can start it again), and the completed count and Reinforced Cells it gave are taken back. |
 | `/contain [reinforced]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. |
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
 | `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |

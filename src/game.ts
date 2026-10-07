@@ -260,15 +260,16 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
   const mission = await repo.activeMission()
   if (!mission) return { text: 'No active mission. Start one with /mission <KEY>.' }
   const meta = await requireMeta(repo)
-  const done: Mission = { ...mission, completedAt: now }
+  const cells = mission.testsGreen && attachedWork ? REWARDS.reinforcedForGreenTests : 0
+  const done: Mission = { ...mission, completedAt: now, reward: { counted: attachedWork, reinforced: cells } }
   await repo.appendMission(done)
   await repo.clearActiveMission()
 
   const notes: string[] = []
-  if (done.testsGreen && attachedWork) {
+  if (cells > 0) {
     const inv = await repo.inventory()
-    await repo.saveInventory({ ...inv, reinforced: inv.reinforced + REWARDS.reinforcedForGreenTests })
-    notes.push(`Reinforced Cells +${REWARDS.reinforcedForGreenTests}`)
+    await repo.saveInventory({ ...inv, reinforced: inv.reinforced + cells })
+    notes.push(`Reinforced Cells +${cells}`)
   }
 
   const quality = missionQuality(done)
@@ -310,6 +311,47 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
 }
 
 /**
+ * `/mission reopen <KEY>` (SPEC 4.5): undoes the latest completion of KEY,
+ * for one completed by mistake. Its log entry goes, so it can be started
+ * again; what the completion recorded giving is taken back (the completed
+ * count, and Reinforced Cells as far as they are still held). The count never
+ * returns to zero once an encounter has happened, so the first mission's
+ * guaranteed encounter cannot be had twice. An encounter it led to and scan
+ * signals it resolved stay. It does not start the mission.
+ */
+export async function reopenMission(deps: GameDeps & { issueKey: string }): Promise<Outcome> {
+  const { repo } = deps
+  const key = deps.issueKey.trim().toUpperCase()
+  if (!ISSUE_KEY.test(key)) return { text: 'Usage: /mission reopen <KEY>, for example /mission reopen NOVA-12.' }
+  await requireMeta(repo)
+  if ((await repo.activeMission())?.issueKey === key) return { text: `Mission ${key} is active, not completed.` }
+  const log = await repo.missionLog()
+  const at = log.map(m => m.issueKey).lastIndexOf(key)
+  const entry = log[at]
+  if (!entry) return { text: `Mission ${key} is not in the log of completed missions.` }
+  await repo.saveMissionLog(log.filter((_, i) => i !== at))
+  const reward = entry.reward ?? { counted: true, reinforced: 0 }
+  // Never back to zero once an encounter has happened: zero completed missions guarantees one (SPEC 6.1), already spent.
+  let isUncounted = false
+  if (reward.counted) {
+    await repo.patchMeta(m => {
+      const count = Math.max(m.lastEncounterAt === null ? 0 : 1, m.completedMissions - 1)
+      isUncounted = count < m.completedMissions
+      return { ...m, completedMissions: count }
+    })
+  }
+  const inv = await repo.inventory()
+  const taken = Math.min(reward.reinforced, inv.reinforced)
+  if (taken > 0) await repo.saveInventory({ ...inv, reinforced: inv.reinforced - taken })
+  const parts = [
+    ...(isUncounted ? ['1 fewer completed mission'] : []),
+    ...(taken > 0 ? [`Reinforced Cells -${taken}`] : []),
+    ...(reward.reinforced > taken ? [`${reward.reinforced - taken} Reinforced Cell already spent, kept`] : []),
+  ]
+  return { text: `Mission ${key} reopened: removed from the log${parts.length > 0 ? `; ${parts.join(', ')}` : ''}. Encounters and scan signals it gave stay. Start it again with /mission ${key}.` }
+}
+
+/**
  * The tracker closed an issue that was never the active mission (SPEC 4.3:
  * an administrative closure). Logged so a later checkout of its branch
  * cannot start it; no rewards.
@@ -318,7 +360,7 @@ export async function recordClosure(deps: GameDeps & { issueKey: string; systemI
   if ((await deps.repo.missionLog()).some(m => m.issueKey === deps.issueKey)) return
   await deps.repo.appendMission({
     issueKey: deps.issueKey, systemId: deps.systemId, startedAt: deps.now, completedAt: deps.now,
-    commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false,
+    commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false, reward: { counted: false, reinforced: 0 },
   })
 }
 

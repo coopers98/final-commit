@@ -1,4 +1,4 @@
-import { STORE } from '../config'
+import { REWARDS, STORE } from '../config'
 import { KEYS, type StoreLike } from './repo'
 import type { SaveMeta, Versioned } from './schema'
 
@@ -33,6 +33,26 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
       if (isObject(value) && value.schemaVersion === 2) await store.set(key, { ...value, schemaVersion: 3 })
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 3 })
+  },
+  // 3 -> 4: completed missions record what they gave (`reward`), so /mission
+  // reopen can take it back. Older entries get it by the rules that applied:
+  // an administrative closure (no time, no work) gave nothing; any other
+  // completion counted, with a Reinforced Cell when its tests were green.
+  3: async store => {
+    const withReward = (m: unknown) => {
+      if (!isObject(m) || 'reward' in m) return m
+      const isClosure = m.startedAt === m.completedAt && m.commits === 0 && m.testRuns === 0
+      return { ...m, reward: isClosure ? { counted: false, reinforced: 0 } : { counted: true, reinforced: m.testsGreen === true ? REWARDS.reinforcedForGreenTests : 0 } }
+    }
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (!isObject(value) || value.schemaVersion !== 3) continue
+      let next: Record<string, unknown> = { ...value, schemaVersion: 4 }
+      if (key === KEYS.missionLog && Array.isArray(value.items)) next = { ...next, items: value.items.map(withReward) }
+      await store.set(key, next)
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 4 })
   },
 }
 

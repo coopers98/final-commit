@@ -143,7 +143,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 3 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 4 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const

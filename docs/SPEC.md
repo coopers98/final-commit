@@ -135,7 +135,9 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 
 ### 4.5 Manual overrides
 
-`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks. `/mission <KEY>` typed while an epic is being charted, with no mission active, is queued: it starts on that epic, which becomes the active one, (the latest one charting in the key's project, else the latest of all) when its charting finishes, timed from when it was typed. One mission waits at a time; a second `/mission` replaces it. A charting that fails or is cut off by a reload drops the queued mission, with a toast.
+`/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete`, `/mission reopen <KEY>` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks. `/mission <KEY>` typed while an epic is being charted, with no mission active, is queued: it starts on that epic, which becomes the active one, (the latest one charting in the key's project, else the latest of all) when its charting finishes, timed from when it was typed. One mission waits at a time; a second `/mission` replaces it. A charting that fails or is cut off by a reload drops the queued mission, with a toast.
+
+`/mission reopen <KEY>` undoes the latest completion of KEY, for a mission completed by mistake: its log entry goes, so `/mission` can start it again (and a branch or a tracker too, once no earlier completion of the same key is logged), and what the completion recorded giving (`Mission.reward`) is taken back: one from the completed count if it counted (never back to zero once an encounter has happened, so the first mission's guarantee cannot be had twice), and its Reinforced Cells as far as they are still held (a spent cell is kept, and said). An encounter it led to and scan signals it resolved stay. It does not start the mission, and refuses the active one.
 
 Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
@@ -390,7 +392,8 @@ type Specimen     = { id: string; speciesId: string; systemId: string; tier: Tie
 type Mission      = { issueKey: string; systemId: string; startedAt: string;
                       completedAt?: string; commits: number; testRuns: number;
                       testsGreen: boolean; lint: 'pass'|'fail'|null;
-                      tacticalClean: boolean; score?: number }
+                      tacticalClean: boolean; score?: number;
+                      reward?: { counted: boolean; reinforced: number } /* set when completed */ }
 type Inventory    = { reinforced: number; stasis: number; singularity: number;
                       flora: Record<string /* speciesId */, number> }
 type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
@@ -400,7 +403,7 @@ type PuzzleStat   = { category: string; attempts: number; correct: number; lastS
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one.
 
 ---
 

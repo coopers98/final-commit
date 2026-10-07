@@ -111,6 +111,7 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     clearActiveMission: () => store.delete(KEYS.activeMission),
     missionLog: () => readList<Mission>(KEYS.missionLog, v => isObject(v) && typeof v.issueKey === 'string'),
     appendMission: async (m: Mission) => writeList(KEYS.missionLog, [...(await readList<Mission>(KEYS.missionLog, isObject)), m]),
+    saveMissionLog: (items: Mission[]) => writeList(KEYS.missionLog, items),
 
     specimens: () => readList<Specimen>(KEYS.specimens, v => isObject(v) && typeof v.id === 'string' && isTier(v.tier)),
     addSpecimen: async (s: Specimen) => writeList(KEYS.specimens, [...(await readList<Specimen>(KEYS.specimens, v => isObject(v) && isTier(v.tier))), s]),

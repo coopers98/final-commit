@@ -316,6 +316,18 @@ test('a full loop: epic, mission, encounter, contain opens', async ($, on) => {
   expect(w.status.at(-1)).toContain('/contain')
 })
 
+test('/mission reopen takes a completed mission out of the log, so /mission can start it again', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await run($, 'mission', 'complete anyway')
+  expect((await run($, 'mission', 'NOVA-2')).text).toBe('Mission NOVA-2 started.')
+  await run($, 'mission', 'complete anyway')
+  expect((await run($, 'mission', 'reopen NOVA-2')).text).toContain('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission.')
+  expect((await run($, 'mission', 'reopen')).text).toBe('Usage: /mission reopen <KEY>, for example /mission reopen NOVA-12.')
+})
+
 test('usage errors', async ($, on) => {
   world(on)
   await $.session.start(START)

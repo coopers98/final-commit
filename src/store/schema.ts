@@ -48,6 +48,12 @@ export type Mission = {
   /** The last lint or type-check verdict during the mission; null before one runs. */
   lint: 'pass' | 'fail' | null
   tacticalClean: boolean
+  /**
+   * What completing it gave, so `/mission reopen` takes back exactly that:
+   * whether it counted as a completed mission, and the Reinforced Cells it
+   * earned. Set on completed missions in the log; absent on the active one.
+   */
+  reward?: { counted: boolean; reinforced: number }
 }
 
 export type Specimen = {

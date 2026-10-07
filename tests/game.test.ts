@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
   attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash,
-  setCompanion, startEpic, startMission,
+  recordClosure, reopenMission, setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
 import { DAY_MS } from '../src/encounter/roll'
@@ -363,4 +363,60 @@ test('a mission started with its epic makes that charted epic active; with a mis
   const fresh2 = await withEpic()
   await startMission({ ...fresh2.deps, issueKey: 'NOVA-31', epicKey: 'NOVA-30' })
   expect((await fresh2.repo.meta())!.activeEpicKey).toBe('NOVA-1')
+})
+
+test('/mission reopen undoes the latest completion: out of the log, the count and its cell taken back; it can start again', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false, output: '' })
+  await completeMission({ ...deps, rng: createRng(99) })
+  expect((await repo.missionLog()).at(-1)?.reward).toEqual({ counted: true, reinforced: 1 })
+  const cells = (await repo.inventory()).reinforced
+  const count = (await repo.meta())!.completedMissions
+  // A second mission, so the count has one to give back without reaching zero.
+  await startMission({ ...deps, issueKey: 'NOVA-3' })
+  await completeMission({ ...deps, rng: createRng(99) })
+  const out = await reopenMission({ ...deps, issueKey: 'nova-2' })
+  expect(out.text).toBe('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission, Reinforced Cells -1. Encounters and scan signals it gave stay. Start it again with /mission NOVA-2.')
+  expect((await repo.missionLog()).some(m => m.issueKey === 'NOVA-2')).toBe(false)
+  expect((await repo.inventory()).reinforced).toBe(cells - 1)
+  expect((await repo.meta())!.completedMissions).toBe(count)
+  expect((await startMission({ ...deps, issueKey: 'NOVA-2' })).text).toBe('Mission NOVA-2 started.')
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-2' })).text).toBe('Mission NOVA-2 is active, not completed.')
+})
+
+test('/mission reopen: a closure gave nothing to take; a spent cell is kept; a key not logged or malformed is refused', async () => {
+  const { repo, deps } = await withEpic()
+  const systemId = (await repo.systemIds())[0]!
+  await recordClosure({ ...deps, issueKey: 'NOVA-5', systemId })
+  const count = (await repo.meta())!.completedMissions
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-5' })).text).toBe('Mission NOVA-5 reopened: removed from the log. Encounters and scan signals it gave stay. Start it again with /mission NOVA-5.')
+  expect((await repo.meta())!.completedMissions).toBe(count)
+  await startMission({ ...deps, issueKey: 'NOVA-6' })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false, output: '' })
+  await completeMission({ ...deps, rng: createRng(99) })
+  await repo.saveInventory({ ...(await repo.inventory()), reinforced: 0 })
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-6' })).text).toContain('1 Reinforced Cell already spent, kept')
+  expect((await repo.inventory()).reinforced).toBe(0)
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-6' })).text).toBe('Mission NOVA-6 is not in the log of completed missions.')
+  expect((await reopenMission({ ...deps, issueKey: 'nope' })).text).toBe('Usage: /mission reopen <KEY>, for example /mission reopen NOVA-12.')
+})
+
+test('/mission reopen of a key completed twice removes only the latest', async () => {
+  const { repo, deps } = await withEpic()
+  for (const at of [1, 2]) {
+    await startMission({ ...deps, now: at, issueKey: 'NOVA-7' })
+    await completeMission({ ...deps, now: at, rng: createRng(99) })
+  }
+  await reopenMission({ ...deps, issueKey: 'NOVA-7' })
+  expect((await repo.missionLog()).filter(m => m.issueKey === 'NOVA-7').map(m => m.completedAt)).toEqual([1])
+})
+
+test('/mission reopen never returns the count to zero once an encounter has happened: the first mission\'s guarantee is not had twice', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission({ ...deps, rng: createRng(99) })
+  expect((await repo.meta())!.lastEncounterAt).not.toBe(null)
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-2' })).text).not.toContain('fewer completed')
+  expect((await repo.meta())!.completedMissions).toBe(1)
 })
