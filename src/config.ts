@@ -182,6 +182,11 @@ export const PLANS = { defaultFolders: ['docs/plans'] as readonly string[], maxF
 // call may take `timeoutMs`.
 export const GITHUB = { minePageSize: 25, epicsPageSize: 100, milestonesPageSize: 50, maxPages: 20, maxDescriptionChars: 2_000, maxErrorChars: 120, timeoutMs: 30_000 } as const
 
+// DEFAULT: Jira Cloud (SPEC 4.4 rule 7). Issues per search page and the most
+// pages one poll reads per query; an epic's description is cut to
+// `maxDescriptionChars`; Jira's own error text to `maxErrorChars`.
+export const JIRA = { pageSize: 100, maxPages: 20, maxDescriptionChars: 2_000, maxErrorChars: 120 } as const
+
 // SPEC 4.3 rules 1 and 2: what a tracker-closed mission needs to roll an encounter.
 export const ANTI_FARMING = { minMissionMs: 1_200_000 } as const
 

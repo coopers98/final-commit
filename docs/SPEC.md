@@ -112,12 +112,12 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 | Source | Access | Epic | Mission | Timeline |
 |---|---|---|---|---|
 | Jira MCP | `$.mcp.call` through an attached Atlassian connector, using its credentials | Epic | Story or task | Issue changelog |
-| Jira REST | `$.http.fetch` with an API token from a secret `userConfig` field | Epic | Story or task | Issue changelog |
+| Jira REST | `$.http.fetch` to a Jira Cloud site, with an API token from a secret `userConfig` field | The issue's epic, else its project's backlog | An issue assigned to you | Status-category change date |
 | GitHub Issues | `gh` via `$.process` (its own auth) | The issue's parent, else its milestone, else the repo's backlog | An issue assigned to you; being assigned starts it | Issue timeline events |
 | Linear | GraphQL `$.http.fetch` with an API key from a secret field | Project | Issue | Issue history |
 | Plan documents | Files only, via `$.fs`; no tracker, no network | A plan file, keyed by its first heading | A keyed checklist task | Changes between reads |
 
-1. **Jira:** MCP is preferred when a connector is attached, REST otherwise (D3). Both are one adapter with two transports.
+1. **Jira:** MCP is preferred when a connector is attached, REST otherwise (D3). Both are one adapter with two transports: the mapping in `src/detect/jira.ts` takes a `JiraTransport`, and REST is the first (rule 7).
 2. **Keys:** a source maps its ids to game keys (`[A-Z][A-Z0-9]{1,9}-N`). Jira and Linear keys are used as they are; GitHub issue `#12` in a repo becomes that repo's configured prefix plus the number (`NOVA-12`). The mapping is stable across reads, so idempotency (4.2) holds.
 3. **Plan documents** (D13, `src/detect/plans.ts`): each `.md` file directly in the `plansFolders` (default `docs/plans`) is an epic, keyed by the key in its first heading. The folders are relative to the project: an absolute path, a home path or a `..` segment in the setting is dropped. The rest of the heading is the epic's title, and the prose before the first task is its description. Each checklist task (`- [ ]`, `* [ ]`, `+ [ ]`) with a key is a mission, titled by the rest of its text.
    - **Keys** are explicit only. A key is the first one in brackets anywhere in the text (`SHA-256 migration (NOVA-7)`, `[NOVA-7](url) x`), else one leading it (`NOVA-7 x`, `**NOVA-7**: x`). A key-shaped term mid-text (`UTF-8`) is never one, and one leading the text loses to a bracketed key; write the key first or in brackets. A plan whose first heading has no key, or a task without one, is skipped with a debug-log line naming its line number, never its text, so inserting or rewording a task never moves a key. Each key is kept the first time it is read (folder order, then file name): a later plan of the same epic is skipped whole, and a repeated task key is dropped from the later plan.
@@ -132,6 +132,14 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
    - **Missions:** every issue assigned to you is a mission, including one with sub-issues of its own. Being assigned to you (by anyone) starts it. Its close (whatever the reason) is its Done: it completes the mission when that mission is the active one, and is otherwise an administrative closure (4.2 rule 6). A reopen is reported back to to do, which the game ignores.
    - **Reads:** each poll runs GraphQL queries through `gh api graphql`: who you are (once per session), your issues updated since the sync's `since` (filtered to you on GitHub's side, with their parent, milestone and assignment, close and reopen events since then), issues closed since (numbers and close events only), and closed milestones, last updated first, paged until one was last updated before `since` (a milestone's `updatedAt` moves with its issues long after it closed, and is never earlier than its close); those closed since count. Each transition is timed by its event and keyed by the event's id (an epic's close by `epic-` and the id, so an issue that is both your mission and an epic keeps both), so the source keeps no state between reads. A failure is reported by gh's own first error line, cut to 120 characters; the mod never sees a token.
    - **Known limits:** when more than 500 of your issues (20 pages of 25) changed since the last read, the source fails and says so instead of skipping some; as the window since the last read only grows, it then fails at every poll: that many changes are beyond what it handles. Closed epics are read up to 2,000 per poll; past that the rest are not read, with a debug-log line. More than 1,000 closed milestones updated in one poll, and the rest are not read, with a debug-log line. An issue you were unassigned from no longer counts as yours, so its later close is not read. At most 50 events per issue per read are taken. Sources apply their changes one after another, each in time order: with a parent in another repo listed first, an epic closed in the same poll as your sub-issue is surveyed first, and its encounter, waiting to be contained, takes the slot the mission's own roll needed (one sync applying every source's changes in one time order would fix it).
+7. **Jira Cloud** (`src/detect/jira.ts`): Cloud sites only (`https://<name>.atlassian.net`); Server and Data Center are not read. The `jiraSite`, `jiraEmail` and `jiraToken` settings (the token a secret field, kept by Claude Code in secure storage) authenticate with Basic auth over REST API v3. A site that is not an atlassian.net address over https is refused, so the token goes only to the atlassian.net site the person set (a mistyped name sends it to that site). Missing or invalid settings leave the source incomplete (a toast at start, and the reason in the debug log).
+   - **Epics:** an issue's epic is its parent when that parent is an epic (Jira Cloud's epic level); else its project's standing backlog (`NOVA-BACKLOG`, as GitHub's, never surveyed, its prompt carrying only the word "Backlog"). A sub-task, whose parent is not an epic, goes in the backlog. An epic's description is read once per session when one of your issues under it starts (its epic may be charted then), as plain text from its document format, cut to 2,000 characters, and reaches the prompt only through the filter. An epic whose description cannot be read is charted from its title alone, with a debug-log line, and never holds back the rest.
+   - **Missions:** an issue assigned to you, other than an epic. Its status category moving to In Progress starts it, and to Done is its Done (it completes the active mission, and is otherwise an administrative closure, 4.2 rule 6); back to To Do is reported and ignored.
+   - **Reads:** each poll runs two searches on the enhanced search endpoint (`/rest/api/3/search/jql`, paged by its token alone, as `isLast` may be absent): your issues whose status category changed in the window, and epic-level issues whose category moved to Done in it. Epic-level types are read once per session from the site's issue types (hierarchy level 1, by name, as a site may rename Epic); a site with none skips that search. The window is whole minutes back from Jira's own clock (`statusCategoryChangedDate >= -Nm`, one minute to spare), so neither a time zone nor the local clock can shift it, and nothing is filtered by the local clock afterwards: processed keys drop the repeats the overlap brings. Each change is timed by the issue's `statuscategorychangedate` and keyed by its category and that time, so no state is kept between reads. Jira's search index is eventually consistent: the sync's 60-second overlap is the margin for a change indexed late.
+   - **Departure from the changelog** (table above, SPEC 4.2): the changelog endpoints are not used. Jira gives each issue's latest category change only, so an issue started and finished between two polls is seen Done alone: an administrative closure unless it is the active mission, like any tracker's Done. No start is made up, which would chart its epic and switch the active epic for every stale ticket closed in bulk. Work counts only while a mission runs (4.3), so no reward is lost by it.
+   - **Failures** are short and never carry the request or its token: 401 names the settings to check, 403 and 429 say so, others give Jira's own first error message, cut to 120 characters.
+   - **Known limits:** more than 20 pages of your issues changing in one poll fails the read rather than skip any; more than 20 pages of closed epics, and the rest are not read, with a debug-log line (a page holds up to 100, fewer when Jira returns short pages). An issue reassigned away from you is no longer read. The window reaches a minute or two before the source's first sync, and nothing is filtered by the local clock, so an issue moved to In Progress in that minute or two may start a mission although the first sync awards nothing (4.2 rule 5); a filter by the local clock would bring back the clock skew the window avoids.
+
 
 ### 4.5 Manual overrides
 
@@ -181,7 +189,7 @@ v1 filters epic prose (`src/puzzle/privacy-filter.ts`); the code filter for puzz
 
 The epic key never enters a prompt. Known limit: a lowercase name in plain prose cannot be told from an ordinary word in any mode.
 
-With the plans and GitHub sources (4.4), a plan file's first heading and opening prose, or a GitHub parent issue's title and body or milestone's title and description, are epic text. They come from files in the project or from an issue anyone may have written on a public repository, so they reach the generation prompt as untrusted text (filtered, like typed text). That prompt only makes game content, and its output is validated (5.2).
+With the plans, GitHub and Jira sources (4.4), a plan file's first heading and opening prose, a GitHub parent issue's title and body or milestone's title and description, or a Jira epic's summary and description, are epic text. They come from files in the project or from an issue anyone may have written on a public repository, so they reach the generation prompt as untrusted text (filtered, like typed text). That prompt only makes game content, and its output is validated (5.2).
 
 ### 5.4 Closed systems
 
@@ -424,6 +432,7 @@ src/
   detect/sources.ts               configured sources: names -> backends, one sync per source (4.4)
   detect/plans.ts                 plan documents source: parse, diff reads (4.4 rule 3)
   detect/github.ts                GitHub Issues source: gh GraphQL, timeline events -> transitions (4.4)
+  detect/jira.ts                  Jira Cloud source: REST search, status-category changes -> transitions (4.4)
   crew/                           roster.ts (agent specs, verdicts; pure); crew-wire.ts (spawn -> finished turn)
   world/                          generate.ts, validate-art.ts, parts-library.ts
   encounter/                      roll.ts, rarity.ts, attachments.ts, quality.ts
@@ -460,7 +469,7 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 - Bridge pane (basic)
 
 ### v2: Automatic detection
-- Work sources (4.4): Jira (MCP and REST), GitHub Issues (done), Linear, plan documents (done); several at once
+- Work sources (4.4): Jira REST (done, Cloud), Jira MCP, GitHub Issues (done), Linear, plan documents (done); several at once
 - Session catch-up sync, polling, idempotency (done: per-source sync records, `workSources` setting, catch-up and poll wired; first backend: plan documents)
 - Anti-farming rules (done for tracker closures)
 - Crew subagents, red alert, captain's log (done)
@@ -591,6 +600,7 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
 | Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |
 | Tracker sync | Poll every 12 minutes; each query reaches back 60 s; 500 processed transitions kept |
+| Jira Cloud | Pages of up to 100, at most 20 pages per query per poll; epic description cut to 2,000 characters; Jira errors cut to 120 characters |
 | GitHub Issues | Pages of 25 (your issues), 100 (closed epics) and 50 (closed milestones), at most 20 pages per repo and query per poll; epic description cut to 2,000 characters; gh errors cut to 120 characters; 30 s per gh call |
 | Plan documents | Folder `docs/plans`; files up to 256 KiB; at most 1,000 changes kept for the sync; epic description cut to 2,000 characters |
 | Failed source chart | Retried after 30 minutes, doubling per failure in a row, at most 6 hours |

@@ -12,7 +12,7 @@ import type { StarSystem } from './store/schema'
 // reach only functions in the same file, so nothing here takes `$`: each
 // wiring file adapts `$.store` and `$.model` itself and hands the result in.
 
-export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[]; plansFolders: string[]; githubRepos: string[] }
+export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[]; plansFolders: string[]; githubRepos: string[]; jira: { site: unknown; email: unknown; token: unknown } }
 
 export function readSettings(options: PluginOptions): Settings {
   const model = options.generationModel
@@ -24,6 +24,7 @@ export function readSettings(options: PluginOptions): Settings {
     devMode: options.devMode === true,
     workSources: sourceNames(options.workSources),
     plansFolders: folderList(options.plansFolders),
+    jira: { site: options.jiraSite, email: options.jiraEmail, token: options.jiraToken },
     githubRepos: (Array.isArray(options.githubRepos) ? options.githubRepos : []).filter((v): v is string => typeof v === 'string' && v.trim() !== ''),
   }
 }

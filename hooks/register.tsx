@@ -17,6 +17,7 @@ import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testVerdictFromOutput } from '../src/detect/git'
 import { NO_CHART_FAILURES, chartFailed, chartSucceeded, isChartHeld } from '../src/detect/chart-retry'
 import { createGithubSources, parseRepos } from '../src/detect/github'
+import { createJiraRest, createJiraSource, parseJiraSettings } from '../src/detect/jira'
 import { createPlansSource, plansId } from '../src/detect/plans'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
@@ -215,6 +216,19 @@ function backendsOf($: EngineInterface): Record<string, Backend> {
       for (const entry of invalid) $.ui.log(`final-commit: github: ignored "${entry}" (expected owner/repo=PREFIX, each repo and prefix once)`, { to: 'debug' })
       if (repos.length === 0) return undefined
       return createGithubSources({ repos, run: argv => $.process.run(argv, { timeoutMs: GITHUB.timeoutMs }), log: line => $.ui.log(line, { to: 'debug' }) })
+    },
+    // SPEC 4.4 rule 7: Jira Cloud over REST with the user's API token (a secret setting). Incomplete until site, email and token are set.
+    jira: () => {
+      const { settings: jira, problem } = parseJiraSettings(settings.jira.site, settings.jira.email, settings.jira.token)
+      if (!jira) {
+        $.ui.log(`final-commit: jira: ${problem}`, { to: 'debug' })
+        return undefined
+      }
+      return createJiraSource({
+        transport: createJiraRest(jira, (url, init) => $.http.fetch(url, init)),
+        now: () => $.clock.now(),
+        log: line => $.ui.log(line, { to: 'debug' }),
+      })
     },
   }
 }

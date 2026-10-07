@@ -18,8 +18,8 @@ current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Plan documents can
-drive it, as can GitHub Issues. Jira and Linear sync, puzzles and crafting
-come later. The design is in [docs/SPEC.md](docs/SPEC.md).
+drive it, as can GitHub Issues and Jira Cloud. Linear sync, puzzles and
+crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
@@ -85,6 +85,19 @@ milestone (`NOVA-M3`), else the repo's backlog (`NOVA-BACKLOG`), so loose
 tickets count too. Closing a parent or a milestone surveys its system. Name a branch with the key (`feature/NOVA-12-export`) and
 checking it out starts the mission too.
 
+### Jira Cloud
+
+Add `jira` to `workSources`, and set `jiraSite` (your
+`https://<name>.atlassian.net`), `jiraEmail` and `jiraToken` (an API token
+from id.atlassian.com, under Security; Claude Code keeps it in secure
+storage, never in the repo or the game's save). Only an atlassian.net site
+is accepted, and the token goes only to the site you set, so check its
+name. Every issue assigned
+to you is a mission: moving it to In Progress starts it, and Done finishes
+it. Its star system is its epic, else its project's backlog
+(`NOVA-BACKLOG`). An epic moving to Done surveys its system. Check your
+employer's policy before pointing this at a work Jira.
+
 ## What data the mod sends, and where
 
 The game is built from your own work, so some of it is sent to a model.
@@ -92,7 +105,8 @@ The game is built from your own work, so some of it is sent to a model.
 **What is sent to the model:** the epic title and description you type into
 the `/epic` form (or a plan document's first heading and the prose before
 its first task, or a GitHub parent issue's title and body, or a milestone's
-title and description; a repo's backlog sends only the word "Backlog"),
+title and description, or a Jira epic's summary and description; a backlog
+sends only the word "Backlog"),
 after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
@@ -104,8 +118,8 @@ subagent does, through your session's model and only when dispatched; the mod
 supplies only their instructions.
 
 **Where it goes:** only through your own Claude Code session and account.
-Apart from the work sources you turn on (GitHub, through `gh`), the mod
-makes no other network calls.
+Apart from the work sources you turn on (GitHub, through `gh`; your Jira
+Cloud site, with your API token), the mod makes no other network calls.
 
 **What stays local:** the mod watches the Bash commands Claude runs in your
 session (to notice branch switches, commits and test runs), runs `git` to read

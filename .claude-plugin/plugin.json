@@ -39,7 +39,7 @@
       "type": "string",
       "multiple": true,
       "title": "Work sources",
-      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans, github.",
+      "description": "Trackers read for automatic detection, by name (SPEC 4.4). Available: plans, github, jira.",
       "default": []
     },
     "plansFolders": {
@@ -57,6 +57,25 @@
       "title": "GitHub repositories",
       "description": "Repositories the github work source reads, each with its key prefix: owner/repo=PREFIX (issue #12 becomes PREFIX-12). Read through the gh CLI and its own login.",
       "default": []
+    },
+    "jiraSite": {
+      "type": "string",
+      "title": "Jira site",
+      "description": "Your Jira Cloud site, like https://example.atlassian.net. Only an atlassian.net site is accepted, and the API token is sent only to this site.",
+      "default": ""
+    },
+    "jiraEmail": {
+      "type": "string",
+      "title": "Jira email",
+      "description": "The email of the Atlassian account the API token belongs to.",
+      "default": ""
+    },
+    "jiraToken": {
+      "type": "string",
+      "sensitive": true,
+      "title": "Jira API token",
+      "description": "An Atlassian API token (id.atlassian.com, Security, API tokens). Stored by Claude Code in secure storage, never in the repository or the game's save.",
+      "default": ""
     }
   }
 }

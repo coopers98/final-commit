@@ -262,6 +262,85 @@ test('a loose GitHub ticket, with no parent or milestone, is a mission in the re
   expect((await run($, 'scan', 'NOVA-BACKLOG')).text).not.toContain('Usage')
 })
 
+/**
+ * A Jira Cloud site in memory, answering `$.http.fetch` as the REST API v3:
+ * searches by the JQL they carry (yours, or closed epics) and epic lookups.
+ * Each issue's status category and when it last changed are set by the test.
+ */
+function jiraSite(on: On) {
+  type Row = { key: string; summary: string; type: 'Epic' | 'Story'; parent?: string; category: 'new' | 'indeterminate' | 'done'; changed: number; description?: string }
+  const rows: Row[] = []
+  const requests: { url: string; auth?: string }[] = []
+  const fields = (r: Row) => {
+    const parent = rows.find(p => p.key === r.parent)
+    return {
+      summary: r.summary, issuetype: { name: r.type, hierarchyLevel: r.type === 'Epic' ? 1 : 0 }, project: { key: 'NOVA' },
+      status: { statusCategory: { key: r.category } }, statuscategorychangedate: new Date(r.changed).toISOString(),
+      parent: parent ? { key: parent.key, fields: { summary: parent.summary, issuetype: { name: 'Epic', hierarchyLevel: 1 } } } : null,
+    }
+  }
+  on('http.fetch', (_$, e) => {
+    requests.push({ url: e.url, ...(e.init?.headers?.Authorization ? { auth: e.init.headers.Authorization } : {}) })
+    const ok = (body: object) => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } })
+    if (e.url.endsWith('/rest/api/3/issuetype')) return ok([{ name: 'Epic', hierarchyLevel: 1 }, { name: 'Story', hierarchyLevel: 0 }] as unknown as object) as never
+    const lookup = /\/rest\/api\/3\/issue\/([A-Z0-9-]+)/.exec(e.url)
+    if (lookup) {
+      const r = rows.find(x => x.key === lookup[1])
+      return ok({ fields: { summary: r?.summary, description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: r?.description ?? '' }] }] } } }) as never
+    }
+    const jql = (JSON.parse(e.init?.body ?? '{}') as { jql: string }).jql
+    const minutes = Number(/>= -(\d+)m/.exec(jql)![1])
+    const since = clockNow() - minutes * 60_000
+    const isEpics = jql.startsWith('issuetype in')
+    const issues = rows.filter(r => r.changed >= since && (isEpics ? r.type === 'Epic' && r.category === 'done' : r.type !== 'Epic')).map(r => ({ id: r.key, key: r.key, fields: fields(r) }))
+    return ok({ issues, isLast: true }) as never
+  })
+  let clockNow = () => 0
+  return { rows, requests, bind: (now: () => number) => void (clockNow = now) }
+}
+
+const JIRA_OPTIONS = { workSources: ['jira'], jiraSite: 'https://example.atlassian.net', jiraEmail: 'me@example.com', jiraToken: 'sekret-token-0000' }
+
+test('Jira issues drive the game: In Progress charts the epic and starts the mission; Done completes it; the epic\'s Done surveys it', { options: JIRA_OPTIONS, timeoutMs: 15_000 }, async ($, on) => {
+  const jira = jiraSite(on)
+  const w = world(on)
+  jira.bind(() => w.clock.now())
+  jira.rows.push({ key: 'NOVA-1', summary: 'Billing export', type: 'Epic', category: 'indeterminate', changed: 0, description: 'Export invoices as files.' })
+  jira.rows.push({ key: 'NOVA-12', summary: 'Write the exporter', type: 'Story', parent: 'NOVA-1', category: 'new', changed: 0 })
+  await $.session.start(START)
+  await w.clock.settle()
+  const move = (key: string, category: 'indeterminate' | 'done') => Object.assign(jira.rows.find(r => r.key === key)!, { category, changed: w.clock.now() + 60_000 })
+  move('NOVA-12', 'indeterminate')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.toasts.some(t => t.startsWith('New system charted'))).toBe(true)
+  expect(w.toasts).toContain('Mission NOVA-12 started.')
+  expect(w.prompts.join('\n')).toContain('invoices as files')
+  move('NOVA-12', 'done')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect((await run($, 'mission', 'complete')).text).toBe('No active mission. Start one with /mission <KEY>.')
+  const reports = w.opened.filter(id => id === 'fc-report').length
+  move('NOVA-1', 'done')
+  await w.clock.advance(SYNC.pollMs)
+  await w.clock.settle()
+  expect(w.opened.filter(id => id === 'fc-report').length).toBe(reports + 1)
+  // Every request went to the configured site, with the token only in its auth header; never in what the person or model sees.
+  expect(jira.requests.every(r => r.url.startsWith('https://example.atlassian.net/rest/api/3/') && r.auth?.startsWith('Basic '))).toBe(true)
+  expect([...w.toasts, ...w.logs, ...w.prompts].join('\n')).not.toContain('sekret-token-0000')
+})
+
+test('a Jira source with a site that is not Jira Cloud is missing settings and is never called', { options: { ...JIRA_OPTIONS, jiraSite: 'https://jira.example.com' } }, async ($, on) => {
+  const jira = jiraSite(on)
+  const w = world(on)
+  await $.session.start(START)
+  await w.clock.settle()
+  await w.clock.advance(SYNC.pollMs)
+  expect(w.toasts).toEqual(['Work source jira is missing settings; it is ignored until they are set.'])
+  expect(w.logs).toContain('final-commit: jira: jiraSite must be a Jira Cloud site, like https://example.atlassian.net')
+  expect(jira.requests).toEqual([])
+})
+
 test('a GitHub source with no valid repo is missing settings, and the bad entry is logged', { options: { workSources: ['github'], githubRepos: ['not a repo'] } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)
@@ -279,11 +358,11 @@ test('gh failing is told once per outage, with gh\'s own short message', { optio
   expect(w.toasts).toEqual(['Work source github:example/nova failed (gh: HTTP 401: Bad credentials); retrying at the next poll.'])
 })
 
-test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['jira', 'Jira'] } }, async ($, on) => {
+test('a work source this build has no backend for is said once at start, and nothing polls', { options: { workSources: ['linear', 'Linear'] } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)
   await w.clock.settle()
-  expect(w.toasts).toEqual(['Work source jira is not available in this build; it is ignored.'])
+  expect(w.toasts).toEqual(['Work source linear is not available in this build; it is ignored.'])
   await w.clock.advance(SYNC.pollMs * 2)
   expect(w.toasts.length).toBe(1)
 })
