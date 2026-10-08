@@ -481,7 +481,8 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 - Bridge pane (basic)
 
 ### v2: Automatic detection
-- Work sources (4.4): Jira REST (done, Cloud), Jira MCP, GitHub Issues (done), Linear, plan documents (done); several at once
+- Work sources (4.4): Jira REST (done, Cloud), GitHub Issues (done), plan documents (done); several at once
+- Deferred until there is a user for them: Jira MCP, Linear (4.4); they slot into `backendsOf` when picked up
 - Session catch-up sync, polling, idempotency (done: per-source sync records, `workSources` setting, catch-up and poll wired; first backend: plan documents)
 - `/setup` wizard for the sources (4.6, done)
 - Anti-farming rules (done for tracker closures)
