@@ -1,6 +1,6 @@
-import type { ReportView } from '../types'
+import type { CellCounts, ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
-import { CELLS, ENCOUNTER, REWARDS, TIER_SPECS, type Cell, type Tier } from './config'
+import { CELLS, CRAFT, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
@@ -11,7 +11,8 @@ import { shouldEncounter } from './encounter/roll'
 import type { PrivacyMode } from './puzzle/privacy-filter'
 import type { Rng } from './rng'
 import type { Repo } from './store/repo'
-import type { CatalogEntry, Mission, PendingEncounter, SaveMeta, Species, StarSystem } from './store/schema'
+import type { CatalogEntry, Inventory, Mission, MissionReward, PendingEncounter, SaveMeta, Species, StarSystem } from './store/schema'
+import { addFlora, CELL_FLORA_TIERS, floraTiers, harvest, harvestCount, heldOfTier, spendFlora } from './world/flora'
 import { type Complete, type EpicInput, generateSystem } from './world/generate'
 
 
@@ -51,6 +52,29 @@ async function activeSystem(repo: Repo, meta: SaveMeta): Promise<StarSystem | un
     if (s?.epicKey === meta.activeEpicKey) return s
   }
   return undefined
+}
+
+async function allSystems(repo: Repo): Promise<StarSystem[]> {
+  const systems: StarSystem[] = []
+  for (const id of await repo.systemIds()) {
+    const s = await repo.system(id)
+    if (s) systems.push(s)
+  }
+  return systems
+}
+
+/** Special cells usable now: a Singularity Cell only with a Legendary flora sample to activate it (SPEC 7.2). */
+export function usableCells(inv: Inventory, systems: readonly StarSystem[]): CellCounts {
+  const legendary = heldOfTier(inv.flora, floraTiers(systems), SINGULARITY_ACTIVATION.tier)
+  return {
+    reinforced: inv.reinforced,
+    stasis: inv.stasis,
+    singularity: Math.min(inv.singularity, Math.floor(legendary / SINGULARITY_ACTIVATION.samples)),
+  }
+}
+
+export async function cellsOf(repo: Repo): Promise<CellCounts> {
+  return usableCells(await repo.inventory(), await allSystems(repo))
 }
 
 async function findSystemByEpic(repo: Repo, epicKey: string): Promise<StarSystem | undefined> {
@@ -181,18 +205,23 @@ export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promi
   if (await repo.pending()) return { text: 'An encounter is already waiting. Resolve it with /contain, then complete the epic.' }
   await repo.saveSystem({ ...system, status: 'surveyed', surveyedAt: now })
   await repo.patchMeta(m => (m.activeEpicKey === system.epicKey ? { ...m, activeEpicKey: null } : m))
+  const inv = await repo.inventory()
+  await repo.saveInventory({ ...inv, singularity: inv.singularity + REWARDS.singularityForSurvey })
+  const cells = await cellsOf(repo)
+  // Usable counts only those with flora to activate them, so the held total says whether one waits for it.
+  const singularityLine = `Singularity Cell +${REWARDS.singularityForSurvey}${cells.singularity < inv.singularity + REWARDS.singularityForSurvey ? ' (activates with a Legendary flora sample)' : ''}`
   const pending = await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
   const species = system.species.find(s => s.id === pending.speciesId)
   // The survey resolves every hidden signal left, after the encounter so its creature is not among them.
   const picked = await resolveSignals(repo, system, Number.MAX_SAFE_INTEGER)
   return {
-    text: `Surveyed epic ${system.epicKey}. Encounter waiting.`,
+    text: `Surveyed epic ${system.epicKey}. Singularity Cell +${REWARDS.singularityForSurvey}. Encounter waiting.`,
     toast: `System surveyed: ${system.name}. Something rare stirs. /contain`,
     report: {
       title: `System surveyed: ${system.name}`,
-      lines: [`Epic ${system.epicKey} complete.`, ...(picked.length > 0 ? [signalLine(picked)] : []), 'Something rare stirs.'],
+      lines: [`Epic ${system.epicKey} complete.`, singularityLine, ...(picked.length > 0 ? [signalLine(picked)] : []), 'Something rare stirs.'],
       encounter: encounterHeading(species, pending),
-      reinforced: (await repo.inventory()).reinforced,
+      cells,
     },
   }
 }
@@ -260,20 +289,35 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
   const mission = await repo.activeMission()
   if (!mission) return { text: 'No active mission. Start one with /mission <KEY>.' }
   const meta = await requireMeta(repo)
-  const cells = mission.testsGreen && attachedWork ? REWARDS.reinforcedForGreenTests : 0
-  const done: Mission = { ...mission, completedAt: now, reward: { counted: attachedWork, reinforced: cells } }
+  const system = await repo.system(mission.systemId)
+  const quality = missionQuality(mission)
+  const reinforced = mission.testsGreen && attachedWork ? REWARDS.reinforcedForGreenTests : 0
+  const stasis = mission.tacticalClean && attachedWork ? REWARDS.stasisForCleanReview : 0
+  // SPEC 6.4: flora never flee, so a mission with work always harvests.
+  const flora = system && attachedWork ? harvest(system, harvestCount(quality), rng) : {}
+  const reward: MissionReward = { counted: attachedWork, reinforced, stasis, flora }
+  const done: Mission = { ...mission, completedAt: now, reward }
   await repo.appendMission(done)
   await repo.clearActiveMission()
 
   const notes: string[] = []
-  if (cells > 0) {
-    const inv = await repo.inventory()
-    await repo.saveInventory({ ...inv, reinforced: inv.reinforced + cells })
-    notes.push(`Reinforced Cells +${cells}`)
+  const inv = await repo.inventory()
+  await repo.saveInventory({ ...inv, reinforced: inv.reinforced + reinforced, stasis: inv.stasis + stasis, flora: addFlora(inv.flora, flora) })
+  if (reinforced > 0) notes.push(`Reinforced Cells +${reinforced}`)
+  if (stasis > 0) notes.push(`Stasis Cells +${stasis}`)
+  const samples = Object.values(flora).reduce((a, b) => a + b, 0)
+  // The command's text names no species (the model reads it); the report does.
+  const said = [...notes, ...(samples > 0 ? [`Flora samples +${samples}`] : [])]
+  // Harvested flora are met: /scan names them.
+  for (const id of Object.keys(flora)) {
+    const s = system?.species.find(sp => sp.id === id)
+    if (s) await markCatalog(repo, { speciesId: s.id, tier: s.tier, status: 'seen' })
   }
+  const harvested = Object.entries(flora).map(([id, n]) => {
+    const s = system?.species.find(sp => sp.id === id)
+    return `${n} ${s?.name ?? 'sample'}${s ? ` ${TIER_SPECS[s.tier].glyph}` : ''}`
+  })
 
-  const quality = missionQuality(done)
-  const system = await repo.system(done.systemId)
   const day = deps.day ?? ''
   const today = meta.encountersToday.day === day ? meta.encountersToday.count : 0
   const ctx = {
@@ -283,20 +327,21 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
 
   const hasPending = (await repo.pending()) !== undefined
   const underCap = today < ENCOUNTER.dailySoftCap
-  const reinforced = (await repo.inventory()).reinforced
+  const cells = await cellsOf(repo)
   const lines = [
     `Commits ${done.commits} · Test runs ${done.testRuns}${done.testRuns > 0 ? (done.testsGreen ? ' · green' : ' · not green') : ''}`,
     ...(done.tacticalClean ? ['Tactical review: all clear'] : []),
     ...notes,
+    ...(harvested.length > 0 ? [`Harvested: ${harvested.join(', ')}`] : []),
   ]
   if (system && attachedWork && !hasPending && underCap && shouldEncounter(ctx, rng)) {
     const pending = await createEncounter(deps, system, quality)
     await repo.patchMeta(m => ({ ...m, encountersToday: { day, count: today + 1 } }))
     const species = system.species.find(s => s.id === pending.speciesId)
     return {
-      text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''} Encounter waiting.`,
+      text: `Mission ${done.issueKey} complete.${said.length ? ` ${said.join(', ')}.` : ''} Encounter waiting.`,
       toast: `Encounter! ${species?.name ?? 'Something'} (${pending.tier}) detected. /contain`,
-      report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), reinforced },
+      report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), cells },
     }
   }
   // No encounter, but the mission still teaches something about the system.
@@ -305,8 +350,8 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
     ? 'No encounter: no work was tracked on it.'
     : hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
   return {
-    text: `Mission ${done.issueKey} complete.${notes.length ? ` ${notes.join(', ')}.` : ''}`,
-    report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why, ...(picked.length > 0 ? [signalLine(picked)] : [])], encounter: null, reinforced },
+    text: `Mission ${done.issueKey} complete.${said.length ? ` ${said.join(', ')}.` : ''}`,
+    report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why, ...(picked.length > 0 ? [signalLine(picked)] : [])], encounter: null },
   }
 }
 
@@ -330,7 +375,7 @@ export async function reopenMission(deps: GameDeps & { issueKey: string }): Prom
   const entry = log[at]
   if (!entry) return { text: `Mission ${key} is not in the log of completed missions.` }
   await repo.saveMissionLog(log.filter((_, i) => i !== at))
-  const reward = entry.reward ?? { counted: true, reinforced: 0 }
+  const reward = entry.reward ?? { counted: true, reinforced: 0, stasis: 0, flora: {} }
   // Never back to zero once an encounter has happened: zero completed missions guarantees one (SPEC 6.1), already spent.
   let isUncounted = false
   if (reward.counted) {
@@ -342,11 +387,21 @@ export async function reopenMission(deps: GameDeps & { issueKey: string }): Prom
   }
   const inv = await repo.inventory()
   const taken = Math.min(reward.reinforced, inv.reinforced)
-  if (taken > 0) await repo.saveInventory({ ...inv, reinforced: inv.reinforced - taken })
+  const takenStasis = Math.min(reward.stasis, inv.stasis)
+  const flora = addFlora(inv.flora, reward.flora, -1)
+  const count = (f: Record<string, number>) => Object.values(f).reduce((a, b) => a + b, 0)
+  const harvested = count(reward.flora)
+  const takenFlora = count(inv.flora) - count(flora)
+  await repo.saveInventory({ ...inv, reinforced: inv.reinforced - taken, stasis: inv.stasis - takenStasis, flora })
+  const kept = (gave: number, took: number, what: string) => (gave > took ? [`${gave - took} ${what} already spent, kept`] : [])
   const parts = [
     ...(isUncounted ? ['1 fewer completed mission'] : []),
     ...(taken > 0 ? [`Reinforced Cells -${taken}`] : []),
-    ...(reward.reinforced > taken ? [`${reward.reinforced - taken} Reinforced Cell already spent, kept`] : []),
+    ...kept(reward.reinforced, taken, 'Reinforced Cell'),
+    ...(takenStasis > 0 ? [`Stasis Cells -${takenStasis}`] : []),
+    ...kept(reward.stasis, takenStasis, 'Stasis Cell'),
+    ...(takenFlora > 0 ? [`Flora samples -${takenFlora}`] : []),
+    ...kept(harvested, takenFlora, 'flora sample'),
   ]
   return { text: `Mission ${key} reopened: removed from the log${parts.length > 0 ? `; ${parts.join(', ')}` : ''}. Encounters and scan signals it gave stay. Start it again with /mission ${key}.` }
 }
@@ -360,7 +415,7 @@ export async function recordClosure(deps: GameDeps & { issueKey: string; systemI
   if ((await deps.repo.missionLog()).some(m => m.issueKey === deps.issueKey)) return
   await deps.repo.appendMission({
     issueKey: deps.issueKey, systemId: deps.systemId, startedAt: deps.now, completedAt: deps.now,
-    commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false, reward: { counted: false, reinforced: 0 },
+    commits: 0, testRuns: 0, testsGreen: false, lint: null, tacticalClean: false, reward: { counted: false, reinforced: 0, stasis: 0, flora: {} },
   })
 }
 
@@ -446,8 +501,13 @@ export async function attemptContainment(deps: GameDeps & { cell: Cell; latticeB
   const pending = await repo.pending()
   if (!pending) return { text: 'Nothing to contain right now.' }
   const inv = await repo.inventory()
-  const cell: Cell = deps.cell !== 'standard' && inv[deps.cell] <= 0 ? 'standard' : deps.cell
-  if (cell !== 'standard') await repo.saveInventory({ ...inv, [cell]: inv[cell] - 1 })
+  const systems = await allSystems(repo)
+  const cell: Cell = deps.cell !== 'standard' && usableCells(inv, systems)[deps.cell] <= 0 ? 'standard' : deps.cell
+  if (cell === 'singularity') {
+    // usableCells guarantees the flora is held.
+    const flora = spendFlora(inv.flora, floraTiers(systems), SINGULARITY_ACTIVATION.tier, SINGULARITY_ACTIVATION.samples) ?? inv.flora
+    await repo.saveInventory({ ...inv, singularity: inv.singularity - 1, flora })
+  } else if (cell !== 'standard') await repo.saveInventory({ ...inv, [cell]: inv[cell] - 1 })
 
   const system = await repo.system(pending.systemId)
   const species = system?.species.find(s => s.id === pending.speciesId)
@@ -473,6 +533,43 @@ export async function attemptContainment(deps: GameDeps & { cell: Cell; latticeB
   }
   await repo.savePending({ ...pending, attempts: pending.attempts + 1 })
   return { outcome, text: 'It broke free. Try again with /contain.', toast: `${name} broke free! Try another cell.` }
+}
+
+/** The key that picks each special cell on the report pane, and as `/contain`'s argument. */
+export const CELL_KEYS: Record<keyof CellCounts, string> = { reinforced: 'r', stasis: 's', singularity: 'x' }
+
+/** `/contain` arguments: nothing for a Standard Cell, else a cell by name or its key; undefined when not a cell. */
+export function parseCell(args: string): Cell | undefined {
+  const a = args.trim().toLowerCase()
+  if (a === '' || a === 'standard') return 'standard'
+  return (Object.keys(CELL_KEYS) as (keyof CellCounts)[]).find(c => a === c || a === CELL_KEYS[c])
+}
+
+export type CraftableCell = keyof typeof CRAFT
+
+/** `/craft` arguments: a craftable cell by name or its first letter. */
+export function parseCraftCell(args: string): CraftableCell | undefined {
+  const a = args.trim().toLowerCase()
+  return (Object.keys(CRAFT) as CraftableCell[]).find(c => a === c || (a.length === 1 && c.startsWith(a)))
+}
+
+const recipeText = (c: CraftableCell) => `${CELLS[c].label}: ${CRAFT[c].samples} ${TIER_SPECS[CRAFT[c].tier].label}`
+
+/** SPEC 7.2: `/craft <cell>` spends flora on a cell; with no cell, says what each costs and what is held. */
+export async function craftCell(deps: GameDeps & { cell?: CraftableCell }): Promise<Outcome> {
+  const { repo } = deps
+  await requireMeta(repo)
+  const inv = await repo.inventory()
+  const tiers = floraTiers(await allSystems(repo))
+  const held = (t: Tier) => `${heldOfTier(inv.flora, tiers, t)} ${TIER_SPECS[t].label}`
+  const recipes = (Object.keys(CRAFT) as CraftableCell[]).map(recipeText).join(', ')
+  const holding = `Flora held: ${CELL_FLORA_TIERS.map(held).join(', ')}.`
+  if (!deps.cell) return { text: `Recipes (flora samples): ${recipes}. ${holding} Usage: /craft ${Object.keys(CRAFT).join('|')}.` }
+  const recipe = CRAFT[deps.cell]
+  const flora = spendFlora(inv.flora, tiers, recipe.tier, recipe.samples)
+  if (!flora) return { text: `A ${CELLS[deps.cell].label} Cell needs ${recipe.samples} ${TIER_SPECS[recipe.tier].label} flora samples. ${holding}` }
+  await repo.saveInventory({ ...inv, flora, [deps.cell]: inv[deps.cell] + 1 })
+  return { text: `Crafted a ${CELLS[deps.cell].label} Cell (${inv[deps.cell] + 1} held).` }
 }
 
 export async function setCompanion(deps: GameDeps & { specimenId: string }): Promise<Outcome> {

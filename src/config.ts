@@ -36,8 +36,21 @@ export const ENCOUNTER = {
   surveyQuality: 0.5,
 } as const
 
-// DEFAULT: rewards
-export const REWARDS = { reinforcedForGreenTests: 1 } as const
+// DEFAULT: rewards. A mission's cells (SPEC 7.2): Reinforced for green tests,
+// Stasis for a clean Tactical review; a survey's Singularity Cell.
+export const REWARDS = { reinforcedForGreenTests: 1, stasisForCleanReview: 1, singularityForSurvey: 1 } as const
+
+// SPEC 6.4 (range), DEFAULT (mapping): flora samples a completed mission
+// harvests, from `min` at quality 0 to `max` at quality 1 (rounded). Each
+// sample's species is drawn by its tier's encounter odds (TIER_SPECS).
+export const HARVEST = { minSamples: 1, maxSamples: 3 } as const
+
+// SPEC 7.2: cell recipes, and the flora a Singularity Cell spends to activate.
+export const CRAFT: Record<'reinforced' | 'stasis', { tier: Tier; samples: number }> = {
+  reinforced: { tier: 'common', samples: 3 },
+  stasis: { tier: 'rare', samples: 2 },
+}
+export const SINGULARITY_ACTIVATION = { tier: 'legendary' as Tier, samples: 1 } as const
 
 // DEFAULT (SPEC 6.2 and 7.1 give direction and the +10% maximum)
 export const QUALITY = {
@@ -143,7 +156,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 4 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 5 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const

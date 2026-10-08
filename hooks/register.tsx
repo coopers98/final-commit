@@ -22,7 +22,7 @@ import { createJiraRest, createJiraSource, parseJiraSettings } from '../src/dete
 import { createPlansSource, plansId } from '../src/detect/plans'
 import { createSyncGate, resolveSources, syncSources, type Backend } from '../src/detect/sources'
 import type { WorkSource } from '../src/detect/work-source'
-import { completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash, reopenMission, startEpic, startMission, type Outcome } from '../src/game'
+import { completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCraftCell, parseEpicKey, queueTarget, recordBash, reopenMission, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
 import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
@@ -362,6 +362,13 @@ async function encounter($: EngineInterface): Promise<{ text: string }> {
   return { text: out.text }
 }
 
+/** SPEC 7.2: `/craft <cell>`; an unknown cell lists the recipes. */
+async function craft($: EngineInterface, args: string): Promise<{ text: string }> {
+  if (!(await read($, ready))) return NOT_READY
+  const out = await craftCell({ ...(await deps($)), cell: parseCraftCell(args) })
+  return { text: out.text }
+}
+
 /**
  * The captain's log (SPEC 9.2): a summary of this session from a fork of its
  * own transcript, saved and shown in the report pane. Runs after the command
@@ -388,7 +395,7 @@ async function writeLog($: EngineInterface) {
     await announce($, {
       text: '',
       toast: `Captain's log, stardate ${entry.stardate}, recorded.`,
-      report: { title: `Captain's log, stardate ${entry.stardate}`, lines: entry.lines, encounter: null, reinforced: (await repo.inventory()).reinforced },
+      report: { title: `Captain's log, stardate ${entry.stardate}`, lines: entry.lines, encounter: null },
     })
   } catch (err) {
     $.ui.log(`final-commit: captain's log: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
@@ -482,7 +489,8 @@ async function startSession($: EngineInterface) {
   await prepareSession($)
   await $.command.register({ name: 'epic', description: 'Chart an epic as a star system, or survey it', argumentHint: '<KEY> | complete' })
   await $.command.register({ name: 'mission', description: 'Start or complete a mission', argumentHint: '<KEY> | complete [anyway] | reopen <KEY>' })
-  await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced]' })
+  await $.command.register({ name: 'contain', description: 'Open containment for a waiting encounter', argumentHint: '[reinforced | stasis | singularity]' })
+  await $.command.register({ name: 'craft', description: 'Craft a cell from flora samples', argumentHint: '[reinforced | stasis]' })
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
   await $.command.register({ name: 'scan', description: 'Scan a star system: the lifeforms known so far', argumentHint: '[KEY]' })
@@ -562,6 +570,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'epic' }, async ($, e) => epic($, e.args))
   on('command.run', { command: 'mission' }, async ($, e) => mission($, e.args))
   on('command.run', { command: 'encounter' }, async $ => encounter($))
+  on('command.run', { command: 'craft' }, async ($, e) => craft($, e.args))
   on('command.run', { command: 'captains-log' }, async $ => captainsLog($))
 
   on('ui.close', { id: EPIC_PANE }, async ($, e, next) => {

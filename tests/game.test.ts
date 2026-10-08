@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
-  attemptContainment, completeEpic, completeMission, forceEncounter, onBranch, openItems, parseEpicKey, queueTarget, recordBash,
-  recordClosure, reopenMission, setCompanion, startEpic, startMission,
+  attemptContainment, cellsOf, completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCell, parseCraftCell, parseEpicKey,
+  queueTarget, recordBash, recordClosure, recordTactical, reopenMission, setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
 import { DAY_MS } from '../src/encounter/roll'
@@ -370,14 +370,17 @@ test('/mission reopen undoes the latest completion: out of the log, the count an
   await startMission({ ...deps, issueKey: 'NOVA-2' })
   await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false, output: '' })
   await completeMission({ ...deps, rng: createRng(99) })
-  expect((await repo.missionLog()).at(-1)?.reward).toEqual({ counted: true, reinforced: 1 })
+  const reward = (await repo.missionLog()).at(-1)?.reward
+  expect({ ...reward, flora: undefined }).toEqual({ counted: true, reinforced: 1, stasis: 0, flora: undefined })
+  // Green tests are quality 0.5: two samples.
+  expect(Object.values(reward!.flora).reduce((a, b) => a + b, 0)).toBe(2)
   const cells = (await repo.inventory()).reinforced
   const count = (await repo.meta())!.completedMissions
   // A second mission, so the count has one to give back without reaching zero.
   await startMission({ ...deps, issueKey: 'NOVA-3' })
   await completeMission({ ...deps, rng: createRng(99) })
   const out = await reopenMission({ ...deps, issueKey: 'nova-2' })
-  expect(out.text).toBe('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission, Reinforced Cells -1. Encounters and scan signals it gave stay. Start it again with /mission NOVA-2.')
+  expect(out.text).toBe('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission, Reinforced Cells -1, Flora samples -2. Encounters and scan signals it gave stay. Start it again with /mission NOVA-2.')
   expect((await repo.missionLog()).some(m => m.issueKey === 'NOVA-2')).toBe(false)
   expect((await repo.inventory()).reinforced).toBe(cells - 1)
   expect((await repo.meta())!.completedMissions).toBe(count)
@@ -419,4 +422,106 @@ test('/mission reopen never returns the count to zero once an encounter has happ
   expect((await repo.meta())!.lastEncounterAt).not.toBe(null)
   expect((await reopenMission({ ...deps, issueKey: 'NOVA-2' })).text).not.toContain('fewer completed')
   expect((await repo.meta())!.completedMissions).toBe(1)
+})
+
+/** The system's flora ids by tier. */
+async function floraOf(repo: Awaited<ReturnType<typeof withEpic>>['repo']) {
+  const system = (await repo.system((await repo.systemIds())[0]!))!
+  const of = (t: string) => system.species.filter(s => s.kind === 'flora' && s.tier === t).map(s => s.id)
+  return { common: of('common'), rare: of('rare'), legendary: of('legendary') }
+}
+
+test('a completed mission harvests flora by quality; the samples are held and met in the catalog', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission({ ...deps, now: 1000 })
+  // No tests and no review: quality 0, one sample.
+  expect(out.text).toContain('Flora samples +1')
+  const held = (await repo.inventory()).flora
+  expect(Object.values(held)).toEqual([1])
+  expect((await repo.catalog()).some(e => e.speciesId === Object.keys(held)[0] && e.status === 'seen')).toBe(true)
+  expect(out.report!.lines.some(l => l.startsWith('Harvested: 1 '))).toBe(true)
+})
+
+test('a clean Tactical review earns a Stasis Cell; with green tests too, three samples', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false, output: '' })
+  await recordTactical({ repo, verdict: 'clean' })
+  const out = await completeMission({ ...deps, now: 1000 })
+  expect(out.text).toContain('Reinforced Cells +1, Stasis Cells +1, Flora samples +3')
+  const inv = await repo.inventory()
+  expect([inv.reinforced, inv.stasis]).toEqual([1, 1])
+  expect((await repo.missionLog()).at(-1)!.reward!.stasis).toBe(1)
+})
+
+test('a closure with no work attached gives no Stasis Cell and harvests nothing', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  await recordTactical({ repo, verdict: 'clean' })
+  await completeMission({ ...deps, now: 1000, attachedWork: false })
+  const inv = await repo.inventory()
+  expect([inv.stasis, inv.flora]).toEqual([0, {}])
+})
+
+test('/mission reopen takes back a Stasis Cell and the flora harvested, as far as still held', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  await recordTactical({ repo, verdict: 'clean' })
+  await completeMission({ ...deps, now: 1000 })
+  // Quality 0.5 harvested two samples; one is spent before the reopen.
+  const inv = await repo.inventory()
+  const [id] = Object.keys(inv.flora)
+  await repo.saveInventory({ ...inv, flora: { ...inv.flora, [id!]: inv.flora[id!]! - 1 } })
+  const out = await reopenMission({ ...deps, issueKey: 'NOVA-2' })
+  expect(out.text).toContain('Stasis Cells -1, Flora samples -1, 1 flora sample already spent, kept')
+  expect([(await repo.inventory()).stasis, (await repo.inventory()).flora]).toEqual([0, {}])
+})
+
+test('a survey grants a Singularity Cell, usable only with a Legendary flora sample to activate it', async () => {
+  const { repo, deps } = await withEpic()
+  const out = await completeEpic(deps)
+  expect(out.text).toContain('Singularity Cell +1')
+  expect(out.report!.lines).toContain('Singularity Cell +1 (activates with a Legendary flora sample)')
+  expect((await repo.inventory()).singularity).toBe(1)
+  expect((await cellsOf(repo)).singularity).toBe(0)
+  // Without the flora it throws a Standard Cell and keeps the Singularity Cell.
+  const tried = await attemptContainment({ ...deps, cell: 'singularity', latticeBonus: 0 })
+  expect(tried.text).not.toContain('Singularity')
+  expect((await repo.inventory()).singularity).toBe(1)
+})
+
+test('a Singularity Cell spends one Legendary flora sample when thrown', async () => {
+  const { repo, deps } = await withEpic()
+  const { legendary, common } = await floraOf(repo)
+  await repo.saveInventory({ reinforced: 0, stasis: 0, singularity: 1, flora: { [legendary[0]!]: 2, [common[0]!]: 1 } })
+  expect((await cellsOf(repo)).singularity).toBe(1)
+  await forceEncounter(deps)
+  const out = await attemptContainment({ ...deps, cell: 'singularity', latticeBonus: 0 })
+  expect(out.text).toMatch(/Singularity Cell|broke free|fled/)
+  const inv = await repo.inventory()
+  expect(inv.singularity).toBe(0)
+  expect(inv.flora).toEqual({ [legendary[0]!]: 1, [common[0]!]: 1 })
+})
+
+test('/craft makes a Reinforced Cell from 3 Common samples and a Stasis Cell from 2 Rare; too few changes nothing', async () => {
+  const { store, repo, deps } = await withEpic()
+  const { common, rare } = await floraOf(repo)
+  expect((await craftCell(deps)).text).toBe('Recipes (flora samples): Reinforced: 3 Common, Stasis: 2 Rare. Flora held: 0 Common, 0 Rare, 0 Legendary. Usage: /craft reinforced|stasis.')
+  await repo.saveInventory({ reinforced: 0, stasis: 0, singularity: 0, flora: { [common[0]!]: 2, [common[1]!]: 2, [rare[0]!]: 1 } })
+  const before = JSON.stringify(store.dump())
+  expect((await craftCell({ ...deps, cell: 'stasis' })).text).toBe('A Stasis Cell needs 2 Rare flora samples. Flora held: 4 Common, 1 Rare, 0 Legendary.')
+  expect(JSON.stringify(store.dump())).toBe(before)
+  expect((await craftCell({ ...deps, cell: 'reinforced' })).text).toBe('Crafted a Reinforced Cell (1 held).')
+  const inv = await repo.inventory()
+  expect(inv.reinforced).toBe(1)
+  expect(Object.values(inv.flora).reduce((a, b) => a + b, 0)).toBe(2)
+})
+
+test('cell arguments: a name or its key; craft takes only the craftable cells', async () => {
+  expect(['', 'standard', 'r', 'Stasis', ' x ', 'singularity', 'bogus'].map(parseCell)).toEqual(['standard', 'standard', 'reinforced', 'stasis', 'singularity', 'singularity', undefined])
+  expect(['r', 'reinforced', 's', 'STASIS', 'singularity', 'x', ''].map(parseCraftCell)).toEqual(['reinforced', 'reinforced', 'stasis', 'stasis', undefined, undefined, undefined])
 })

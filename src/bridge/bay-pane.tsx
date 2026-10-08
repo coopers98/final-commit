@@ -5,7 +5,7 @@ import { setCompanion } from '../game'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
 import type { StarSystem } from '../store/schema'
-import { bayRows } from './bay'
+import { bayRows, holdRows } from './bay'
 import { tierColor } from './color'
 
 export const BAY_PANE = 'fc-bay'
@@ -47,7 +47,8 @@ async function bay($: EngineInterface, args: string): Promise<string> {
   }
   const meta = await repo.meta()
   // Rows are cut to the pane's width when drawn.
-  await update($, rows, () => bayRows(specimens, systems, meta?.companionId ?? null, Number.MAX_SAFE_INTEGER))
+  const inv = await repo.inventory()
+  await update($, rows, () => [...holdRows(inv, systems), ...bayRows(specimens, systems, meta?.companionId ?? null, Number.MAX_SAFE_INTEGER)])
   await $.ui.open({ id: BAY_PANE, title: 'Specimen Bay', focus: true, closeOnEscape: true })
   return `Opened the specimen bay (${specimens.length} specimen${specimens.length === 1 ? '' : 's'}).`
 }
@@ -65,7 +66,7 @@ export function wireBay(on: On): void {
         {list.map(r => (
           <Text color={r.tier ? tierColor(r.tier, now) : undefined}>{[...r.text].slice(0, e.props.bodyColumns).join('')}</Text>
         ))}
-        <Text dimColor>/bay companion N sets your companion. Esc closes.</Text>
+        <Text dimColor>/bay companion N sets your companion. /craft makes cells. Esc closes.</Text>
       </Box>
     )
   })

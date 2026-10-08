@@ -103,7 +103,7 @@ async function reopen($: EngineInterface, role: Role) {
     return
   }
   const title = `${ROLE_LABELS[role]} report`
-  await update($, report, () => ({ title, lines: saved.lines, encounter: null, reinforced: 0 }))
+  await update($, report, () => ({ title, lines: saved.lines, encounter: null }))
   const placed = await $.ui.open({ id: REPORT_PANE, title, focus: true, closeOnEscape: true })
   if (!placed.isPlaced) await update($, report, () => null)
 }

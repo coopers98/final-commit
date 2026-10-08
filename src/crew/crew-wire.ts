@@ -40,7 +40,7 @@ async function showReport($: EngineInterface, role: Role, answer: string, isAbor
     $.ui.toast(isAborted ? `${ROLE_LABELS[role]} stopped before reporting.` : `${title} finished while a pane was open; it was not shown.`)
     return
   }
-  const r: ReportView = { title, lines: reportLines(answer), encounter: null, reinforced: 0 }
+  const r: ReportView = { title, lines: reportLines(answer), encounter: null }
   await update($, report, () => r)
   const placed = await $.ui.open({ id: REPORT_PANE, title, focus: true, closeOnEscape: true })
   if (!placed.isPlaced) {

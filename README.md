@@ -18,8 +18,7 @@ current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Plan documents can
-drive it, as can GitHub Issues and Jira Cloud. Linear sync, puzzles and
-crafting come later. The design is in [docs/SPEC.md](docs/SPEC.md).
+drive it, as can GitHub Issues and Jira Cloud. Puzzles come later. The design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
@@ -32,13 +31,14 @@ There is no release yet. To play from a clone, see
 |---|---|
 | `/epic NOVA-1` | Opens a form for the epic's title and description, then charts it as a star system in the background. |
 | `/mission NOVA-12` | Starts a mission. Checking out a branch like `feature/NOVA-12-x` (in the epic's project) starts it too. |
-| `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell; an encounter may follow. A plain `npm test` counts by its exit status; a piped, guarded or chained run (`npm test \| tail`, `npm test; echo done`) counts by the runner's summary line, so keep that line in the output. |
-| `/mission reopen NOVA-12` | Undoes a mission completed by mistake: its latest completion leaves the log (so `/mission` can start it again), and the completed count and Reinforced Cells it gave are taken back. |
+| `/mission complete` | Finishes the mission. Tests passing during it earn a Reinforced Cell, a clean Tactical review a Stasis Cell, and it harvests 1 to 3 flora samples; an encounter may follow. A plain `npm test` counts by its exit status; a piped, guarded or chained run (`npm test \| tail`, `npm test; echo done`) counts by the runner's summary line, so keep that line in the output. |
+| `/mission reopen NOVA-12` | Undoes a mission completed by mistake: its latest completion leaves the log (so `/mission` can start it again), and the completed count, cells and flora it gave are taken back. |
 | `/setup` | Walks through the work sources the game reads (plan documents, GitHub, Jira) in a pane, and saves your answers as its settings. |
-| `/contain [reinforced]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. |
+| `/contain [reinforced\|stasis\|singularity]` | Opens Seal the Lattice: press **Space** as the needle crosses the zone, **Enter** to throw the cell, **Esc** to pause. A Singularity Cell needs a Legendary flora sample, which it spends. |
+| `/craft [reinforced\|stasis]` | Crafts a cell from flora: 3 Common samples make a Reinforced Cell, 2 Rare a Stasis Cell. Alone, lists the recipes and what you hold. |
 | `/calibrate` | Measures your key latency on this device, so timing is fair over SSH or from a phone. |
-| `/bay`, `/bay companion N` | Lists your specimens and picks the companion shown above the prompt. |
-| `/epic complete` | Surveys the epic: a guaranteed encounter, never a Common. |
+| `/bay`, `/bay companion N` | Shows the cells and flora you hold, lists your specimens, and picks the companion shown above the prompt. |
+| `/epic complete` | Surveys the epic: a Singularity Cell and a guaranteed encounter, never a Common. |
 | `/bridge` | The bridge: the active system and mission, hull (this session's test pass rate), shields (the last lint or type-check), fuel (context window left), crew status and the latest captain's log, with your companion at the foot. Keys send the crew: **e** run tests, **l** lint, **s** ask a question, **t** security review; the report opens when the run finishes. **1**, **2**, **3** reopen Engineering's, Science's or Tactical's last report (saved locally, including runs Claude sent). |
 | Crew | Three read-only subagents Claude (or you) can dispatch: `final-commit:engineering` runs and explains tests, `final-commit:science` answers questions about the code, `final-commit:tactical` reviews your branch for security issues before a push. A clean Tactical review after your last commit raises the mission's quality (better odds of rarer Difflings). |
 | `/captains-log` | Writes a short summary of the session (standup notes) and shows it in a pane. The last 20 are kept. |

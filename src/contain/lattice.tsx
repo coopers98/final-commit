@@ -3,7 +3,7 @@ import type { EngineInterface, On, Timer } from 'claude-code'
 import type { BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
 import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell, type Tier } from '../config'
 import { tierColor } from '../bridge/color'
-import { attemptContainment } from '../game'
+import { attemptContainment, CELL_KEYS, cellsOf, parseCell } from '../game'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
@@ -162,8 +162,14 @@ async function open($: EngineInterface, args: string): Promise<string> {
   const repo = repoOf($)
   const pending = await repo.pending()
   if (!pending) return 'Nothing to contain right now.'
-  const inv = await repo.inventory()
-  const cell: Cell = args.trim().toLowerCase() === 'reinforced' && inv.reinforced > 0 ? 'reinforced' : 'standard'
+  const requested = parseCell(args) ?? 'standard'
+  const usable = await cellsOf(repo)
+  const cell: Cell = requested !== 'standard' && usable[requested] > 0 ? requested : 'standard'
+  const held = await repo.inventory()
+  const cellNote =
+    cell === requested ? ''
+    : requested === 'singularity' && held.singularity > 0 ? 'The Singularity Cell needs a Legendary flora sample to activate. Standard Cell loaded.'
+    : `No ${CELLS[requested].label} Cell held. Standard Cell loaded.`
   const system = await repo.system(pending.systemId)
   const species = system?.species.find(s => s.id === pending.speciesId)
   const spec = TIER_SPECS[pending.tier]
@@ -182,7 +188,7 @@ async function open($: EngineInterface, args: string): Promise<string> {
     heading: `${spec.glyph} ${species?.name ?? 'Unknown'} (${spec.label})${pending.attachment ? ` +${pending.attachment.item}` : ''}`,
     tier: pending.tier,
     sprite: species?.stages[0]?.rows ?? [],
-    message: measured ? '' : 'Tip: run /calibrate on this device.',
+    message: cellNote !== '' ? cellNote : measured ? '' : 'Tip: run /calibrate on this device.',
     timer: $.clock.every(LATTICE_SHARED.frameMs, () => {
       void tick($)
     }),
@@ -198,13 +204,13 @@ async function open($: EngineInterface, args: string): Promise<string> {
   return 'Opened containment.'
 }
 
-/** Enter on the report: close it, and go straight to containment when a creature is waiting. `r` picks a Reinforced Cell. */
+/** Enter on the report: close it, and go straight to containment when a creature is waiting. A cell's key (`r`, `s`, `x`) picks that cell. */
 async function dismissReport($: EngineInterface, typed: string) {
   const r = await read($, report)
   // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
   await update($, report, () => null)
   await $.ui.close({ id: REPORT_PANE })
-  if (r?.encounter) await open($, typed.trim().toLowerCase() === 'r' ? 'reinforced' : '')
+  if (r?.encounter) await open($, typed)
 }
 
 export function wireLattice(on: On): void {
@@ -222,8 +228,9 @@ export function wireLattice(on: On): void {
     const width = e.props.bodyColumns
     if (!r) return <Text dimColor>Nothing to report.</Text>
     const color = r.encounter ? tierColor(r.encounter.tier, await $.clock.now()) : undefined
+    const offered = r.encounter && r.cells ? (Object.keys(CELL_KEYS) as (keyof typeof CELL_KEYS)[]).filter(c => (r.cells?.[c] ?? 0) > 0) : []
     const hints = r.encounter
-      ? ['Enter: contain now', ...(r.reinforced > 0 ? [`r Enter: use a Reinforced Cell (${r.reinforced})`] : []), 'Esc: later']
+      ? ['Enter: contain now', ...offered.map(c => `${CELL_KEYS[c]} Enter: use a ${CELLS[c].label} Cell (${r.cells?.[c]})`), 'Esc: later']
       : ['Enter or Esc: close']
     // A short terminal clips from the top: the sprite first, the essentials last.
     return (
@@ -242,7 +249,12 @@ export function wireLattice(on: On): void {
         {Input ? (
           <Input key="report" autoFocus label="Enter" onInput={() => {}} onSubmit={(value: string) => void dismissReport($, value)} />
         ) : (
-          <Button key="report" label={r.encounter ? 'Contain now' : 'Close'} onPress={() => void dismissReport($, '')} />
+          <Box>
+            <Button key="report" label={r.encounter ? 'Contain now' : 'Close'} onPress={() => void dismissReport($, '')} />
+            {offered.map(c => (
+              <Button key={c} label={`${CELLS[c].label} (${r.cells?.[c]})`} onPress={() => void dismissReport($, CELL_KEYS[c])} />
+            ))}
+          </Box>
         )}
       </Box>
     )

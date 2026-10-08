@@ -93,7 +93,7 @@ async function containWith($: any, keys: (ui: any) => Promise<void>) {
 test('session start registers the commands', async ($, on) => {
   const w = world(on)
   await $.session.start(START)
-  for (const n of ['epic', 'mission', 'contain', 'calibrate', 'bay', 'scan']) expect(w.commands).toContain(n)
+  for (const n of ['epic', 'mission', 'contain', 'craft', 'calibrate', 'bay', 'scan']) expect(w.commands).toContain(n)
   expect(w.commands).not.toContain('encounter')
 })
 
@@ -390,7 +390,7 @@ test('a full loop: epic, mission, encounter, contain opens', async ($, on) => {
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')
   expect((await run($, 'mission', 'NOVA-2')).text).toBe('Mission NOVA-2 started.')
-  expect((await run($, 'mission', 'complete anyway')).text).toBe('Mission NOVA-2 complete. Encounter waiting.')
+  expect((await run($, 'mission', 'complete anyway')).text).toBe('Mission NOVA-2 complete. Flora samples +1. Encounter waiting.')
   expect((await run($, 'contain')).text).toBe('Opened containment.')
   expect(w.status.at(-1)).toContain('/contain')
 })
@@ -403,7 +403,7 @@ test('/mission reopen takes a completed mission out of the log, so /mission can 
   await run($, 'mission', 'complete anyway')
   expect((await run($, 'mission', 'NOVA-2')).text).toBe('Mission NOVA-2 started.')
   await run($, 'mission', 'complete anyway')
-  expect((await run($, 'mission', 'reopen NOVA-2')).text).toContain('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission.')
+  expect((await run($, 'mission', 'reopen NOVA-2')).text).toContain('Mission NOVA-2 reopened: removed from the log; 1 fewer completed mission, Flora samples -1.')
   expect((await run($, 'mission', 'reopen')).text).toBe('Usage: /mission reopen <KEY>, for example /mission reopen NOVA-12.')
 })
 
@@ -939,6 +939,39 @@ test('a clean Tactical review after a commit raises mission quality; one with no
   const report = await $.ui.mount(PANE('fc-report'))
   expect((await report.findAll({ type: 'Text' })).map(t => t.text)).toContain('Tactical review: all clear')
   await report.unmount()
+})
+
+test('a clean Tactical review earns a Stasis Cell that s on the report throws; a cell not held loads a Standard one', async ($, on) => {
+  const w = world(on, { branch: 'feature/NOVA-5-x' })
+  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }) as never)
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await $.tool.call({ tool: 'Bash', command: 'git switch feature/NOVA-5-x' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  await crewRun($, 'tactical', 'a1', 'Reviewed 1 commit.\nVERDICT: CLEAN')
+  expect((await run($, 'mission', 'complete anyway')).text).toContain('Stasis Cells +1')
+  const report = await $.ui.mount(PANE('fc-report'))
+  expect((await report.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('s Enter: use a Stasis Cell (1)')
+  await report.input({ key: 'report', text: 's', kind: 'submit' })
+  await report.unmount()
+  const lattice = await $.ui.mount(PANE('fc-lattice'))
+  expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('throw Stasis Cell')
+  await lattice.unmount()
+  await run($, 'contain', 'singularity')
+  const again = await $.ui.mount(PANE('fc-lattice'))
+  const texts = (await again.findAll({ type: 'Text' })).map(t => t.text).join(' ')
+  expect(texts).toContain('No Singularity Cell held. Standard Cell loaded.')
+  expect(texts).toContain('throw Standard Cell')
+  await again.unmount()
+})
+
+test('/craft lists the recipes and what is held', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  expect((await run($, 'craft')).text).toContain('Recipes (flora samples): Reinforced: 3 Common, Stasis: 2 Rare.')
+  expect((await run($, 'craft', 'stasis')).text).toContain('A Stasis Cell needs 2 Rare flora samples.')
 })
 
 test('a Tactical review with issues says so, and the bridge shows each officer', async ($, on) => {

@@ -45,9 +45,12 @@ export type ReportView = {
   lines: string[]
   /** The creature that turned up, if one did. */
   encounter: { heading: string; sprite: string[]; tier: TierName } | null
-  /** Reinforced Cells held after the mission, offered for containing from the report. */
-  reinforced: number
+  /** Cells usable after it (a Singularity Cell only with a Legendary flora sample to activate it), offered for containing from the report; absent with no encounter. */
+  cells?: CellCounts
 }
+
+/** Special cells by kind (Standard Cells are unlimited). */
+export type CellCounts = { reinforced: number; stasis: number; singularity: number }
 
 /** `/mission complete` asking first: the mission's open items (tests, lint). */
 export type ConfirmView = { issueKey: string; items: string[] }

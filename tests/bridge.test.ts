@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { STATUS } from '../src/config'
-import { bayRows } from '../src/bridge/bay'
+import { bayRows, holdRows } from '../src/bridge/bay'
 import { besideLines, trimSprite } from '../src/bridge/band'
 import { chartingText, statusText } from '../src/bridge/status'
 import { orphanedCharts } from '../src/runtime'
@@ -85,4 +85,13 @@ test('the band trims a sprite to its drawing', async () => {
   const rows = [blank, blank, '     ()()     ', '    (o.o)~    ', '     ^ ^      ', blank, blank]
   expect(trimSprite(rows)).toEqual([' ()() ', '(o.o)~', ' ^ ^  '])
   expect(trimSprite(Array(7).fill(blank))).toEqual([])
+})
+
+test('the bay\'s hold shows cells, flora by tier, and Singularity Cells waiting for Legendary flora', async () => {
+  const flora = { id: 'sys-2', species: [{ id: 'p1', kind: 'flora', tier: 'common' }, { id: 'p2', kind: 'flora', tier: 'legendary' }] } as unknown as StarSystem
+  const rows = holdRows({ reinforced: 2, stasis: 1, singularity: 2, flora: { p1: 4, p2: 1 } }, [flora]).map(r => r.text)
+  expect(rows[0]).toBe('Cells: Reinforced 2 · Stasis 1 · Singularity 2 (1 need ★ flora)')
+  expect(rows).toContain('Flora · Common: 4')
+  expect(rows).toContain('Flora ◆ Rare: 0')
+  expect(rows).toContain('Flora ★ Legendary: 1')
 })

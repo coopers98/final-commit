@@ -94,7 +94,7 @@ test('schema 2 to 3: values are restamped and the unowned single sync record is 
   for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })
 
-test('schema 3 to 4: logged missions record what they gave, by the rules that applied', async () => {
+test('schema 3 to 5: logged missions record what they gave, by the rules that applied', async () => {
   const store = createMemoryStore()
   const base = { systemId: 's', lint: null, tacticalClean: false }
   await store.set(KEYS.meta, { schemaVersion: 3, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: null, completedMissions: 3, activeEpicKey: 'NOVA-1', companionId: null, encountersToday: { day: '', count: 0 } })
@@ -106,9 +106,25 @@ test('schema 3 to 4: logged missions record what they gave, by the rules that ap
   await migrate(store, 99)
   const log = await createRepo(store).missionLog()
   expect(log.map(m => [m.issueKey, m.reward])).toEqual([
-    ['NOVA-2', { counted: true, reinforced: 1 }],
-    ['NOVA-3', { counted: true, reinforced: 0 }],
-    ['NOVA-4', { counted: false, reinforced: 0 }],
+    ['NOVA-2', { counted: true, reinforced: 1, stasis: 0, flora: {} }],
+    ['NOVA-3', { counted: true, reinforced: 0, stasis: 0, flora: {} }],
+    ['NOVA-4', { counted: false, reinforced: 0, stasis: 0, flora: {} }],
   ])
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(4)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(5)
+})
+
+test('schema 4 to 5: logged rewards gain no Stasis Cells and no flora; the active mission and inventory keep theirs', async () => {
+  const store = createMemoryStore()
+  const base = { systemId: 's', lint: null, tacticalClean: false, startedAt: 1, commits: 1, testRuns: 1, testsGreen: true }
+  await store.set(KEYS.meta, { schemaVersion: 4, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: null, completedMissions: 1, activeEpicKey: 'NOVA-1', companionId: null, encountersToday: { day: '', count: 0 } })
+  await store.set(KEYS.missionLog, { schemaVersion: 4, items: [{ ...base, issueKey: 'NOVA-2', completedAt: 9, reward: { counted: true, reinforced: 1 } }] })
+  await store.set(KEYS.activeMission, { schemaVersion: 4, ...base, issueKey: 'NOVA-3' })
+  await store.set(KEYS.inventory, { schemaVersion: 4, reinforced: 2, stasis: 0, singularity: 0, flora: {} })
+  await migrate(store, 99)
+  const repo = createRepo(store)
+  expect((await repo.missionLog())[0]?.reward).toEqual({ counted: true, reinforced: 1, stasis: 0, flora: {} })
+  expect((await repo.activeMission())?.issueKey).toBe('NOVA-3')
+  expect((await repo.activeMission())?.reward).toBe(undefined)
+  expect((await repo.inventory()).reinforced).toBe(2)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(5)
 })

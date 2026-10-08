@@ -1,6 +1,20 @@
-import { TIER_SPECS } from '../config'
+import { SINGULARITY_ACTIVATION, TIER_SPECS } from '../config'
 import type { BayRow } from '../../types'
-import type { Specimen, StarSystem } from '../store/schema'
+import { usableCells } from '../game'
+import type { Inventory, Specimen, StarSystem } from '../store/schema'
+import { CELL_FLORA_TIERS, floraTiers, heldOfTier } from '../world/flora'
+
+/** The hold: cells and flora samples held (SPEC 7.2), above the specimens. */
+export function holdRows(inv: Inventory, systems: StarSystem[]): BayRow[] {
+  const usable = usableCells(inv, systems)
+  const idle = inv.singularity - usable.singularity
+  const tiers = floraTiers(systems)
+  return [
+    { text: `Cells: Reinforced ${inv.reinforced} · Stasis ${inv.stasis} · Singularity ${inv.singularity}${idle > 0 ? ` (${idle} need ${TIER_SPECS[SINGULARITY_ACTIVATION.tier].glyph} flora)` : ''}` },
+    ...CELL_FLORA_TIERS.map(t => ({ text: `Flora ${TIER_SPECS[t].glyph} ${TIER_SPECS[t].label}: ${heldOfTier(inv.flora, tiers, t)}`, tier: t })),
+    { text: '' },
+  ]
+}
 
 /** Rows for the Specimen Bay pane: one line per specimen, at most `columns` wide, with its tier for coloring. */
 export function bayRows(specimens: Specimen[], systems: StarSystem[], companionId: string | null, columns: number): BayRow[] {

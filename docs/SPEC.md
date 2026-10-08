@@ -100,7 +100,7 @@ The sync engine runs against the `WorkSource` interface (`src/detect/work-source
 ### 4.3 Anti-farming
 
 1. A Done issue only rolls an encounter if it has **attached work**: commits on its branch or session activity tied to its key. Administrative closures count toward epic progress only. Applies to tracker closures; `/mission complete` is the manual override and is not checked.
-2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. Together with rule 1: a commit (a non-empty diff) qualifies at once; test runs alone need the 20 minutes. A closure that fails these completes without rewards (no encounter, no Reinforced Cell) and does not use up the first mission's guarantee (D10).
+2. Minimum mission duration of 20 minutes from start to done, or a non-empty diff. Together with rule 1: a commit (a non-empty diff) qualifies at once; test runs alone need the 20 minutes. A closure that fails these completes without rewards (no encounter, no cells, no flora) and does not use up the first mission's guarantee (D10).
 3. Soft cap of 2 encounters per calendar day (host local time, configurable). **Enforced in v1** for mission encounters; epic surveys and developer-mode encounters are exempt.
 4. **v1:** a branch only starts a mission when its key belongs to the active epic's project and that mission was never completed, so checkouts cannot pay out twice.
 5. **v1:** a test run is judged by its exit status where that status is the runner's: the runner ran last in the command and surely ran. After an `&&` (other than a `cd`, taken to succeed) it may never have run, and followed only by `&&` (and pipes after those) a failure may be a later command's: either way a success means it passed, and a failure is decided by the summary. Quoted text, escaped characters and heredoc bodies are never split into commands, a backslash line continuation joins its lines, an `&&` or `||` counts only within its own list (up to a `;`, new line or `&`), and a trailing `;` or new line follows nothing. Where the status may not be the runner's at all (piped `| tail`, guarded `|| true` or after an `||`, backgrounded `&`, or followed by `;` or a new line, as in `npm test; echo done`), it is judged by the runner's own summary in the end of its output (bun/`claude plugin test`, jest, vitest, pest, pytest, phpunit, go, cargo formats); with no summary visible it counts as not passing. A lint or type check is judged the same way, but linters print no common summary: after `&&` only a success counts (a pass), and otherwise an unknown status gives no verdict. Tests and lint in one command are judged apart, each by the last of its kind. Wrappers that pass the exit status through (`timeout`, `time`, `nice`, `env`) are seen past, and redirections like `2>&1` change nothing. Failed commits are not counted.
@@ -145,9 +145,9 @@ Each source is an adapter behind the `WorkSource` interface (`src/detect/work-so
 
 `/epic <KEY>`, `/epic complete`, `/mission <KEY>`, `/mission complete`, `/mission reopen <KEY>` exist for testing and for work no source tracks. `/epic <KEY>` takes the key only and opens a pane for the title and description (section 2, constraint 7). `/epic complete` is refused while an encounter is waiting, so its guaranteed encounter is never lost. `/mission complete` asks first, in a confirmation pane, when the mission has open items: no test run yet or the last one failed, no lint or type check yet or the last one failed (a mission keeps its last lint verdict as the Bridge's shields judge it). Enter completes it anyway; Esc keeps it active. Where the pane cannot open, the command says so and completes nothing; `/mission complete anyway` skips the question. A tracker's Done never asks. `/mission <KEY>` typed while an epic is being charted, with no mission active, is queued: it starts on that epic, which becomes the active one, (the latest one charting in the key's project, else the latest of all) when its charting finishes, timed from when it was typed. One mission waits at a time; a second `/mission` replaces it. A charting that fails or is cut off by a reload drops the queued mission, with a toast.
 
-`/mission reopen <KEY>` undoes the latest completion of KEY, for a mission completed by mistake: its log entry goes, so `/mission` can start it again (and a branch or a tracker too, once no earlier completion of the same key is logged), and what the completion recorded giving (`Mission.reward`) is taken back: one from the completed count if it counted (never back to zero once an encounter has happened, so the first mission's guarantee cannot be had twice), and its Reinforced Cells as far as they are still held (a spent cell is kept, and said). An encounter it led to and scan signals it resolved stay. It does not start the mission, and refuses the active one.
+`/mission reopen <KEY>` undoes the latest completion of KEY, for a mission completed by mistake: its log entry goes, so `/mission` can start it again (and a branch or a tracker too, once no earlier completion of the same key is logged), and what the completion recorded giving (`Mission.reward`) is taken back: one from the completed count if it counted (never back to zero once an encounter has happened, so the first mission's guarantee cannot be had twice), and its Reinforced and Stasis Cells and flora samples as far as they are still held (a spent cell or sample is kept, and said). An encounter it led to and scan signals it resolved stay. It does not start the mission, and refuses the active one.
 
-Other v1 commands: `/contain [reinforced]` (section 7), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
+Other v1 commands: `/contain [reinforced|stasis|singularity]` (section 7), `/craft [reinforced|stasis]` (7.2), `/calibrate` (7.3), `/bay` and `/bay companion N` (9), and `/encounter`, which forces an encounter and exists only when the `devMode` setting is on.
 
 ### 4.6 Setup
 
@@ -244,7 +244,7 @@ Catalog tracks every species x tier x attachment combination seen.
 
 ### 6.4 Flora
 
-Flora are harvested automatically on completed missions (1 to 3 samples by mission score). Flora never flee. Samples craft cells (section 7.2).
+Flora are harvested automatically on completed missions with attached work (4.3): 1 to 3 samples by mission quality `q` (16), `1 + 2q` rounded. Each sample picks a tier by its encounter odds (6.2) among the tiers the system's flora has, then a species of that tier: with 2 Common, 1 Rare and 1 Legendary flora, about 76% Common, 21% Rare and 3% Legendary. Flora never flee. A harvested species counts as met (`seen` in the catalog), so `/scan` names it. Samples are kept per species and spent on cells (section 7.2).
 
 ---
 
@@ -267,8 +267,10 @@ The attempt itself is always guaranteed: Standard Cells are unlimited.
 |---|---|---|
 | Standard | +0% | Unlimited |
 | Reinforced | +15% | Full test suite passing on mission complete; or craft from 3 Common flora |
-| Stasis | +30% | Tactical review with no findings; or craft from 2 Rare flora |
+| Stasis | +30% | Tactical review with no findings (the mission's clean verdict, 9.1, on completion); or craft from 2 Rare flora |
 | Singularity | +50% | Epic completion only (requires 1 Legendary flora to activate) |
+
+`/craft <cell>` spends the samples, from any system, largest piles first; `/craft` alone lists the recipes and the flora held. A Singularity Cell is usable only while a Legendary sample is held, and throwing it spends one; without one, `/contain singularity` loads a Standard Cell and says why. The cell is chosen by `/contain`'s argument (a name, or `r`, `s`, `x`) or by that key on the report pane. `/bay` shows the cells and flora held.
 
 ### 7.3 Seal the Lattice (mini-game)
 
@@ -344,8 +346,8 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 | **Band above prompt** | Active companion sprite (animated idle), mood, tiny mission indicator |
 | **Status line** | `★ /contain · NOVA-142 · Kepler~` style summary: a waiting encounter first, then a system being charted (`/ charting NOVA-1 42s`, a spinner and seconds), then the mission, then the system, within 22 columns (section 2, constraint 5). A charting interrupted by a hot reload is reported by a toast at the next start, never left spinning |
 | **Toasts** | Encounters, containment results, level ups. Rate limited. |
-| **Report pane** | Opens on `/mission complete` and `/epic complete` and stays until dismissed (a toast vanishes before a long name is read): commits, test runs, cells earned, and the creature that turned up with its sprite. Enter goes straight to containment (`r` then Enter uses a Reinforced Cell); Esc leaves the encounter waiting. |
-| **Specimen Bay pane** (`/bay`) | Collection grid, set companion, the catalog of everything met across systems (no per-system completion: an epic holds too few missions to meet a whole system). v1: a list, and `/bay companion N` |
+| **Report pane** | Opens on `/mission complete` and `/epic complete` and stays until dismissed (a toast vanishes before a long name is read): commits, test runs, cells earned, and the creature that turned up with its sprite. Enter goes straight to containment (`r`, `s` or `x` then Enter uses a Reinforced, Stasis or Singularity Cell, each offered while one is usable); Esc leaves the encounter waiting. |
+| **Specimen Bay pane** (`/bay`) | The cells and flora held, collection grid, set companion, the catalog of everything met across systems (no per-system completion: an epic holds too few missions to meet a whole system). v1: a list, and `/bay companion N` |
 | **Scan pane** (`/scan [KEY]`) | What the sensors know about a system (9.4) |
 | **Dossier pane** (`/dossier`) | Puzzle accuracy |
 
@@ -412,7 +414,8 @@ type Mission      = { issueKey: string; systemId: string; startedAt: string;
                       completedAt?: string; commits: number; testRuns: number;
                       testsGreen: boolean; lint: 'pass'|'fail'|null;
                       tacticalClean: boolean; score?: number;
-                      reward?: { counted: boolean; reinforced: number } /* set when completed */ }
+                      reward?: { counted: boolean; reinforced: number; stasis: number;
+                                 flora: Record<string /* speciesId */, number> } /* set when completed */ }
 type Inventory    = { reinforced: number; stasis: number; singularity: number;
                       flora: Record<string /* speciesId */, number> }
 type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
@@ -422,7 +425,7 @@ type PuzzleStat   = { category: string; attempts: number; correct: number; lastS
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before).
 
 ---
 
@@ -468,7 +471,7 @@ Public repository rules: see section 15.
 
 ### v1: Playable loop (target: first Diffling in week one)
 
-The "First Diffling" slice is implemented: every item below except flora harvesting and Stasis/Singularity Cells (only Standard and Reinforced exist). Every behavior is covered by `claude plugin test`; containment, calibration, the band and the epic form were also played live in tmux.
+The "First Diffling" slice is implemented, with flora harvesting, all four cells and flora crafting (pulled forward from v4 so harvested flora has a use). Every behavior is covered by `claude plugin test`; containment, calibration, the band and the epic form were also played live in tmux.
 
 - Public repo guardrails in place before the first code commit (section 15.6)
 - Store schema + migrations
@@ -496,7 +499,6 @@ The "First Diffling" slice is implemented: every item below except flora harvest
 
 ### v4: Depth
 - Evolution, companion perks
-- Flora crafting
 - Design Probe, Deep Expedition
 - Anomaly tier, closed-system behavior
 
@@ -601,11 +603,14 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 
 | Item | Default |
 |---|---|
-| Mission quality `q` (0 to 1) | `0.5` if tests ran and passed during the mission, plus `0.5` for a clean Tactical review (v2), so at most 0.5 in v1 |
+| Mission quality `q` (0 to 1) | `0.5` if tests ran and passed during the mission, plus `0.5` for a clean Tactical review (9.1) |
 | Quality shift on rarity | Non-Common encounter weights times `1 + 0.5 * q`, renormalized |
 | Quality bonus on containment | `+0.10 * q` |
 | Epic survey encounter | Quality 0.5, no Commons |
 | Reinforced Cells for a green mission | 1 |
+| Stasis Cells for a clean Tactical review | 1 |
+| Singularity Cells for a survey | 1 |
+| Flora harvest | `1 + 2q` samples, rounded (1 to 3) |
 | Lattice bonus | Up to `+20%` for all locks (`0.20 * sealed / locks`), `+2%` per center hit, `-3%` per miss, between 0 and `+25%` |
 | Lattice zones | Fraction of the 30-cell bar: wide 0.30, medium 0.18, narrow 0.10, very narrow 0.06; center = middle 30% of the zone |
 | Lattice speeds | One sweep: slow 2000 ms, medium 1400 ms, fast 900 ms, erratic 700 ms with +/-35% jitter; frame every 40 ms |

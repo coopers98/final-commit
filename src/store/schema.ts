@@ -50,11 +50,14 @@ export type Mission = {
   tacticalClean: boolean
   /**
    * What completing it gave, so `/mission reopen` takes back exactly that:
-   * whether it counted as a completed mission, and the Reinforced Cells it
-   * earned. Set on completed missions in the log; absent on the active one.
+   * whether it counted as a completed mission, the Reinforced and Stasis
+   * Cells it earned, and the flora samples it harvested (per species id). Set
+   * on completed missions in the log; absent on the active one.
    */
-  reward?: { counted: boolean; reinforced: number }
+  reward?: MissionReward
 }
+
+export type MissionReward = { counted: boolean; reinforced: number; stasis: number; flora: Record<string, number> }
 
 export type Specimen = {
   id: string

@@ -54,6 +54,21 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 4 })
   },
+  // 4 -> 5: a reward also records Stasis Cells and flora harvested. No
+  // mission gave either before, so older rewards get none.
+  4: async store => {
+    const withMore = (m: unknown) =>
+      isObject(m) && isObject(m.reward) && !('stasis' in m.reward) ? { ...m, reward: { ...m.reward, stasis: 0, flora: {} } } : m
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (!isObject(value) || value.schemaVersion !== 4) continue
+      let next: Record<string, unknown> = { ...value, schemaVersion: 5 }
+      if (key === KEYS.missionLog && Array.isArray(value.items)) next = { ...next, items: value.items.map(withMore) }
+      await store.set(key, next)
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 5 })
+  },
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

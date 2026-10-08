@@ -191,7 +191,7 @@ test('an epic closed in the tracker is surveyed, and waits while an encounter ho
   await h.repo.clearPending()
   await h.repo.patchMeta(m => ({ ...m, activeEpicKey: 'NOVA-50' }))
   const r = await syncWork(h.deps(3 * MIN, source))
-  expect(r.outcomes[0]?.text).toBe('Surveyed epic NOVA-1. Encounter waiting.')
+  expect(r.outcomes[0]?.text).toBe('Surveyed epic NOVA-1. Singularity Cell +1. Encounter waiting.')
   // A different active epic is left alone when another one closes.
   expect((await h.repo.meta())!.activeEpicKey).toBe('NOVA-50')
 })
