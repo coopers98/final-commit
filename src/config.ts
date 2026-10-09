@@ -81,6 +81,41 @@ export const CELLS: Record<Cell, { bonus: number; label: string }> = {
 // SPEC 7.1
 export const CONTAINMENT_CAP = 0.98
 
+// SPEC 8 (types, bonus ends), DEFAULT (the rest). Analyze Specimen.
+export type PuzzleType = 'pattern-id' | 'bug-hunt'
+export const PUZZLE = {
+  /** The type each tier asks for; a type not built yet falls back down this order (SPEC 8). */
+  typeByTier: {
+    common: 'pattern-id', uncommon: 'complexity-read', rare: 'trace', exotic: 'bug-hunt', legendary: 'design-probe', anomaly: 'deep-expedition',
+  } as Record<Tier, string>,
+  /** Types in tier order, lowest first: a tier falls back to the nearest built one at or below it. */
+  typeOrder: ['pattern-id', 'complexity-read', 'trace', 'bug-hunt', 'design-probe', 'deep-expedition'] as readonly string[],
+  /** Bonus for a right answer, +10% at Common to +25% at Legendary (SPEC 8). */
+  bonusByTier: { common: 0.1, uncommon: 0.14, rare: 0.17, exotic: 0.21, legendary: 0.25, anomaly: 0.25 } as Record<Tier, number>,
+  /** Up to this much more for a fast right answer: all of it at once, none at `fastWithinMs`. */
+  fastBonusMax: 0.05,
+  fastWithinMs: 60_000,
+  /** Units kept from one mission's changes, and their size in lines. */
+  maxUnits: 6,
+  unitMinLines: 4,
+  unitMaxLines: 40,
+  /** Changed files read for units, and the largest read. */
+  maxFiles: 20,
+  maxFileBytes: 262_144,
+  /** git calls while preparing. */
+  gitTimeoutMs: 10_000,
+  /** Model calls: Sonnet by default (setting), small answers. */
+  defaultModel: 'sonnet' as GenerationModel,
+  maxTokens: 1_500,
+  timeoutMs: 90_000,
+  /** What a generated puzzle may be, in characters. */
+  maxQuestionChars: 160,
+  maxChoiceChars: 60,
+  maxExplanationChars: 320,
+  /** Bug Hunt: choices offered (lines), and the fewest candidate lines a unit needs. */
+  choices: 4,
+} as const
+
 // SPEC 5.2. A first-stage hatchling is often drawn in 5 to 7 cells: the minimum admits it.
 export const SPRITE = { cols: 14, rows: 7, maxArtRetries: 2, minSilhouetteCells: 5 } as const
 
@@ -156,7 +191,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 6 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 7 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const

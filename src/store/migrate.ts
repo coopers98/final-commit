@@ -81,6 +81,17 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 6 })
   },
+  // 6 -> 7: a waiting encounter may carry its puzzle (`missionKey`, `puzzle`,
+  // `analysis`, all optional), and puzzle accuracy gets its own record. An
+  // encounter waiting from before has no mission key, so it gets no puzzle.
+  6: async store => {
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (isObject(value) && value.schemaVersion === 6) await store.set(key, { ...value, schemaVersion: 7 })
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 7 })
+  },
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

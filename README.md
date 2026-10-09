@@ -18,7 +18,8 @@ current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Plan documents can
-drive it, as can GitHub Issues and Jira Cloud. Puzzles come later. How it
+drive it, as can GitHub Issues and Jira Cloud. Puzzles are starting: a
+question on your own changed code before containment. How it
 plays is in the [Player's Guide](docs/GUIDE.md); the design is in
 [docs/SPEC.md](docs/SPEC.md).
 
@@ -118,6 +119,15 @@ after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
+**Puzzles send code.** When a mission rolls an encounter, the functions it
+changed are read for a puzzle. With `puzzles` set to `on` (the default),
+one of them is sent to the puzzle model (Sonnet by default, the
+`puzzleModel` setting) in two requests: one writes a question about it, one
+checks the answer. The code is filtered first: every string literal is
+blanked, every comment removed, and the value shapes below (emails, keys,
+IDs, names after a title, and so on) replaced. Set `puzzles` to `local` to
+keep code off the model entirely (only puzzles the mod builds itself), or
+`off` for none.
 `/captains-log` asks your session's own model to summarize the session it
 already holds; the mod adds only a fixed instruction, and the summary is
 stored locally. The crew subagents read your code the way any Claude Code
@@ -147,7 +157,7 @@ visible to the model.
 **No telemetry. No analytics.** No data leaves your machine except as
 described above.
 
-**Privacy filter, on by default.** Before epic text reaches a prompt, the
+**Privacy filter, on by default.** Before epic text or code reaches a prompt, the
 filter replaces quoted text, issue keys, URLs, emails, IPs and hostnames,
 phone numbers, SSN-, date- and ID-shaped values, ages, ZIP codes, and names
 after a title (`Dr.`) or a role word (`patient`). The setting is `privacyMode`

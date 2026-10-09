@@ -12,7 +12,9 @@ import { wireScan } from '../src/bridge/scan-pane'
 import { wireSetup } from '../src/setup/setup-pane'
 import { wrap } from '../src/bridge/text'
 import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
-import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
+import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, PUZZLE, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
+import { missionUnits } from '../src/puzzle/material'
+import { buildPuzzle } from '../src/puzzle/puzzle'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testRunPassed } from '../src/detect/git'
@@ -87,10 +89,10 @@ async function rngOf($: EngineInterface): Promise<Rng> {
 }
 
 /** The model call, never rejecting: a refused request becomes a failed result, so generation falls back. */
-function completeVia($: EngineInterface, model: GenerationModel): Complete {
+function completeVia($: EngineInterface, model: GenerationModel, limits: { maxTokens: number; timeoutMs: number } = GENERATION): Complete {
   return async ({ system, prompt }) => {
     try {
-      const r = await $.model.complete({ model, system, prompt, maxTokens: GENERATION.maxTokens, timeoutMs: GENERATION.timeoutMs })
+      const r = await $.model.complete({ model, system, prompt, maxTokens: limits.maxTokens, timeoutMs: limits.timeoutMs })
       return r.isAnswered ? { ok: true, text: r.text } : { ok: false, reason: r.reason }
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : 'refused' }
@@ -262,6 +264,7 @@ async function syncTracked($: EngineInterface) {
         $.ui.toast(out.toast ?? out.text)
       }
     }
+    void preparePuzzle($)
   } catch (err) {
     $.ui.log(`final-commit: work sync: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
   }
@@ -338,7 +341,49 @@ async function finishMission($: EngineInterface): Promise<string> {
   const out = await completeMission(await deps($))
   await refresh($)
   await announce($, out)
+  void preparePuzzle($)
   return out.text
+}
+
+/** The encounter a puzzle is being prepared for: one at a time, and once. */
+let preparing: string | undefined
+
+/**
+ * SPEC 8: prepares the waiting encounter's puzzle in the background, from the
+ * code its mission changed, so /contain need not wait. Once per encounter;
+ * none for a survey's. With puzzles `local`, nothing is sent to a model.
+ */
+async function preparePuzzle($: EngineInterface) {
+  try {
+    if (settings.puzzles === 'off' || !(await read($, ready))) return
+    const repo = repoOf($)
+    const pending = await repo.pending()
+    if (!pending?.missionKey || pending.puzzle !== undefined || preparing === pending.id) return
+    preparing = pending.id
+    const mission = (await repo.missionLog()).findLast(m => m.issueKey === pending.missionKey)
+    const io = {
+      git: (args: readonly string[]) => $.process.run(['git', ...args], { timeoutMs: PUZZLE.gitTimeoutMs }),
+      read: async (path: string) => {
+        try {
+          return await $.fs.read(path)
+        } catch {
+          return undefined
+        }
+      },
+    }
+    const units = mission ? await missionUnits(io, mission.startedAt, settings.privacyMode) : []
+    const puzzle = await buildPuzzle({
+      units, tier: pending.tier, rng: await rngOf($),
+      ...(settings.puzzles === 'on' ? { complete: completeVia($, settings.puzzleModel, PUZZLE) } : {}),
+    })
+    // Kept only if the same creature is still waiting.
+    const now = await repo.pending()
+    if (now?.id === pending.id) await repo.savePending({ ...now, puzzle: puzzle ?? null })
+  } catch (err) {
+    $.ui.log(`final-commit: puzzle: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+  } finally {
+    preparing = undefined
+  }
 }
 
 /** Enter on the confirmation: complete the mission it asked about, if that one is still active. */
@@ -472,7 +517,11 @@ async function prepareSession($: EngineInterface) {
     await update($, ready, () => false)
     $.ui.log(`final-commit: ${err instanceof Error ? err.message : String(err)}`)
   }
-  if (await read($, ready)) await refresh($)
+  if (await read($, ready)) {
+    await refresh($)
+    // A reload cut off a puzzle in the making: start it again.
+    void preparePuzzle($)
+  }
 }
 
 /** SPEC 9.1: the crew as agent types the Agent tool can dispatch (`final-commit:<role>`). */

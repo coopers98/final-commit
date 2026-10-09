@@ -16,7 +16,7 @@ type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: s
 /** `gh`: answers a `gh` command (the github work source); other commands answer as git on `branch`. */
 type Gh = (argv: readonly string[]) => { exitCode: number; stdout: string; stderr?: string }
 
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh } = {}): World {
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh; git?: Gh } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
@@ -51,7 +51,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     return { value: undefined }
   })
   on('process.run', (_$, e) => {
-    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : undefined
+    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : e.argv[0] === 'git' && opts.git ? opts.git(e.argv) : undefined
     const out = gh ? { stderr: '', ...gh } : { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '' }
     return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } } as never
   })
@@ -1260,4 +1260,90 @@ test('the encounter report draws its creature in its tier color, and the Bridge 
   const bridge = await $.ui.mount(PANE('fc-bridge', 60))
   expect((await bridge.findAll({ type: 'Text' })).find(t => t.text.startsWith('Shields'))!.props.color).toBe(COLORS.good)
   await bridge.unmount()
+})
+
+// SPEC 8: a mission's changed code becomes the puzzle asked before containment.
+const TOTAL_TS = [
+  'export function totalOf(items: number[], limit: number): number {',
+  '  let total = 0',
+  '  for (const n of items) {',
+  '    if (n > 0 && total < limit) total = total + 1',
+  '  }',
+  '  return total',
+  '}',
+].join('\n')
+
+/** git as a mission that changed src/total.ts: the diff touches line 4. */
+const missionGit: Gh = argv => {
+  if (argv[1] === 'rev-list') return { exitCode: 0, stdout: 'abc123\n' }
+  if (argv[1] === 'diff') return { exitCode: 0, stdout: '+++ b/src/total.ts\n@@ -4 +4 @@\n' }
+  return { exitCode: 0, stdout: 'main\n' }
+}
+
+async function missionWithCode($: any, on: On, w: World) {
+  on('fs.read', (_$, e) => (e.path.endsWith('src/total.ts') ? { value: TOTAL_TS } : Promise.reject(new Error('ENOENT'))) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  await run($, 'mission', 'complete anyway')
+  await w.clock.settle()
+}
+
+test('with puzzles local, a mission\'s changed code becomes a Bug Hunt before containment; a right answer goes on to the lattice', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  // Local: nothing was sent to a model.
+  expect(w.prompts.filter(p => p.includes('function'))).toEqual([])
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('Analyze Specimen · Bug Hunt · TypeScript')
+  // The changed line is the one that differs from the file; its choice is the answer.
+  const original = TOTAL_TS.split('\n')
+  const shown = texts.filter(t => /^ ?\d\| /.test(t)).map(t => t.slice(4))
+  const line = shown.findIndex((l, i) => l !== original[i]) + 1
+  const choice = texts.filter(t => /^\d {2}Line /.test(t)).findIndex(t => t.endsWith(`Line ${line}`)) + 1
+  expect(choice > 0).toBe(true)
+  await pane.input({ key: 'analyze', text: String(choice), kind: 'change' })
+  const after = (await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')
+  expect(after).toContain('Right. Containment +')
+  await pane.input({ key: 'analyzed', text: '', kind: 'submit' })
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
+  await pane.unmount()
+  // Answered once: the next /contain goes straight to the lattice.
+  expect((await run($, 'contain')).text).toBe('Opened containment.')
+})
+
+test('s skips the puzzle straight to the lattice', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  await pane.input({ key: 'analyze', text: 's', kind: 'change' })
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
+  await pane.unmount()
+})
+
+test('with puzzles off, containment opens with no puzzle and git is never asked for the diff', { options: { puzzles: 'off' } }, async ($, on) => {
+  const asked: string[] = []
+  const w = world(on, { git: argv => (asked.push(argv[1]!), missionGit(argv)) })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  expect(asked).not.toContain('diff')
+  expect((await run($, 'contain')).text).toBe('Opened containment.')
+})
+
+test('with puzzles on, Pattern ID sends only filtered code to the puzzle model, and falls back to Bug Hunt when the model fails', { options: { puzzles: 'on' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  const sent = w.prompts.filter(p => p.includes('totalOf'))
+  expect(sent.length).toBe(1)
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+  const pane = await $.ui.mount(PANE('fc-lattice'))
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
+  await pane.unmount()
 })

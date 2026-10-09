@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
-import type { BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
+import type { AnalyzeView, BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
 import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell, type Tier } from '../config'
 import { tierColor } from '../bridge/color'
-import { attemptContainment, CELL_KEYS, cellsOf, parseCell } from '../game'
+import { answerPuzzle, attemptContainment, CELL_KEYS, cellsOf, parseCell } from '../game'
+import { analyzeKey, analyzeView, resultLines } from '../puzzle/analyze'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
@@ -21,6 +22,7 @@ export const LATTICE_PANE = 'fc-lattice'
 export const REPORT_PANE = 'fc-report'
 const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
 const view = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
+const analyze = atom({ plugin: 'final-commit', key: 'analyze' } as const, null as AnalyzeView | null)
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 const mood = atom({ plugin: 'final-commit', key: 'mood' } as const, NO_MOOD)
 const charting = atom({ plugin: 'final-commit', key: 'charting' } as const, [] as ChartingEntry[])
@@ -42,6 +44,8 @@ type Run = {
 
 /** The run in progress; module state, so a hot reload ends it (the encounter stays pending). */
 let run: Run | undefined
+/** SPEC 8: the puzzle being asked before the run: the cell asked for, when it was shown, keys seen. */
+let asking: { args: string; shownAt: number; typed: number } | undefined
 let actions = 0
 
 // The engine lets `$` reach only top-level functions of the same file, so
@@ -162,6 +166,37 @@ async function open($: EngineInterface, args: string): Promise<string> {
   const repo = repoOf($)
   const pending = await repo.pending()
   if (!pending) return 'Nothing to contain right now.'
+  stop()
+  // SPEC 8: a prepared puzzle not yet answered comes first. One still being prepared is not waited for.
+  const puzzle = pending.puzzle && !pending.analysis ? pending.puzzle : undefined
+  if (puzzle) {
+    const species = (await repo.system(pending.systemId))?.species.find(s => s.id === pending.speciesId)
+    asking = { args, shownAt: await $.clock.now(), typed: 0 }
+    await update($, analyze, () => analyzeView(puzzle, headingOf(pending, species?.name), pending.tier))
+  } else {
+    await begin($, args)
+  }
+  const placed = await $.ui.open({ id: LATTICE_PANE, title: 'Containment', focus: true, closeOnEscape: true, holdToasts: true })
+  if (!placed.isPlaced) {
+    stop()
+    asking = undefined
+    await update($, view, () => null)
+    await update($, analyze, () => null)
+    return 'Containment could not open here; the encounter is still waiting.'
+  }
+  return puzzle ? 'Opened containment, with a puzzle first.' : 'Opened containment.'
+}
+
+const headingOf = (p: { tier: Tier; attachment?: { item: string } }, name: string | undefined) => {
+  const spec = TIER_SPECS[p.tier]
+  return `${spec.glyph} ${name ?? 'Unknown'} (${spec.label})${p.attachment ? ` +${p.attachment.item}` : ''}`
+}
+
+/** Starts Seal the Lattice in the containment pane, with the cell `args` asks for. */
+async function begin($: EngineInterface, args: string) {
+  const repo = repoOf($)
+  const pending = await repo.pending()
+  if (!pending) return
   const requested = parseCell(args) ?? 'standard'
   const usable = await cellsOf(repo)
   const cell: Cell = requested !== 'standard' && usable[requested] > 0 ? requested : 'standard'
@@ -170,9 +205,7 @@ async function open($: EngineInterface, args: string): Promise<string> {
     cell === requested ? ''
     : requested === 'singularity' && held.singularity > 0 ? 'The Singularity Cell needs a Legendary flora sample to activate. Standard Cell loaded.'
     : `No ${CELLS[requested].label} Cell held. Standard Cell loaded.`
-  const system = await repo.system(pending.systemId)
-  const species = system?.species.find(s => s.id === pending.speciesId)
-  const spec = TIER_SPECS[pending.tier]
+  const species = (await repo.system(pending.systemId))?.species.find(s => s.id === pending.speciesId)
   const calibration = await repo.calibration()
   const measured = calibration.salt !== '' ? calibration.clients[await clientKeyOf($, calibration.salt)] : undefined
 
@@ -185,7 +218,7 @@ async function open($: EngineInterface, args: string): Promise<string> {
     offsetMs: measured?.offsetMs ?? 0,
     typed: 0,
     cell,
-    heading: `${spec.glyph} ${species?.name ?? 'Unknown'} (${spec.label})${pending.attachment ? ` +${pending.attachment.item}` : ''}`,
+    heading: headingOf(pending, species?.name),
     tier: pending.tier,
     sprite: species?.stages[0]?.rows ?? [],
     message: cellNote !== '' ? cellNote : measured ? '' : 'Tip: run /calibrate on this device.',
@@ -195,13 +228,41 @@ async function open($: EngineInterface, args: string): Promise<string> {
   }
   run = r
   await update($, view, () => show(r))
-  const placed = await $.ui.open({ id: LATTICE_PANE, title: 'Containment', focus: true, closeOnEscape: true, holdToasts: true })
-  if (!placed.isPlaced) {
-    stop()
-    await update($, view, () => null)
-    return 'Containment could not open here; the encounter is still waiting.'
+}
+
+/** SPEC 8: keys typed in the puzzle step. A choice answers; `s` skips, straight on to the lattice. */
+async function onAnalyzeKeys($: EngineInterface, value: string) {
+  const a = asking
+  const v = await read($, analyze)
+  if (!a || !v || v.result) return
+  const added = value.length > a.typed ? value.slice(a.typed) : ''
+  a.typed = value.length
+  for (const c of added) {
+    const key = analyzeKey(c, v.choices.length)
+    if (key === undefined) continue
+    await answer($, key === 'skip' ? undefined : key)
+    return
   }
-  return 'Opened containment.'
+}
+
+async function answer($: EngineInterface, choice: number | undefined) {
+  const a = asking
+  if (!a) return
+  const repo = repoOf($)
+  const now = await $.clock.now()
+  const puzzle = (await repo.pending())?.puzzle
+  const analysis = await answerPuzzle({ repo, now, rng: await rngOf($), choice, elapsedMs: now - a.shownAt })
+  if (!puzzle || !analysis) return
+  if (analysis.isSkipped) return proceed($)
+  await update($, analyze, v => (v ? { ...v, result: { lines: resultLines(puzzle, analysis) } } : v))
+}
+
+/** From the answered puzzle on to the lattice, in the same pane. */
+async function proceed($: EngineInterface) {
+  const args = asking?.args ?? ''
+  asking = undefined
+  await update($, analyze, () => null)
+  await begin($, args)
 }
 
 /** Enter on the report: close it, and go straight to containment when a creature is waiting. A cell's key (`r`, `s`, `x`) picks that cell. */
@@ -263,10 +324,12 @@ export function wireLattice(on: On): void {
   on('command.run', { command: 'contain' }, async ($, e) => ({ text: await open($, e.args) }))
 
   on('ui.close', { id: LATTICE_PANE }, async ($, e, next) => {
-    if (run) {
+    if (run || asking) {
       stop()
       $.ui.toast('Containment paused. The specimen is still here: /contain')
     }
+    asking = undefined
+    await update($, analyze, () => null)
     await update($, view, () => null)
     return next(e)
   })
@@ -276,8 +339,47 @@ export function wireLattice(on: On): void {
     const { Box, Text, Button } = elements
     // Mobile has no Input; it falls back to buttons.
     const Input = 'Input' in elements ? elements.Input : undefined
-    const v = await read($, view)
     const width = e.props.bodyColumns
+    const q = await read($, analyze)
+    if (q) {
+      const qColor = tierColor(q.tier, await $.clock.now())
+      const hints = q.result ? ['Enter: on to containment'] : [`1-${q.choices.length}: answer`, 's: skip', 'Esc: later']
+      // The essentials last: a short terminal clips a pane from the top.
+      return (
+        <Box flexDirection="column">
+          <Text bold color={qColor}>{fit(q.heading, width)}</Text>
+          <Text dimColor>{fit(q.label, width)}</Text>
+          {q.code.map(line => (
+            <Text>{fit(line, width)}</Text>
+          ))}
+          {wrap(q.question, width).map(line => (
+            <Text bold>{line}</Text>
+          ))}
+          {q.choices.flatMap(c => wrap(c, width)).map(line => (
+            <Text>{line}</Text>
+          ))}
+          {q.result?.lines.flatMap(l => wrap(l, width)).map(line => (
+            <Text>{line}</Text>
+          ))}
+          {hintLines(hints, width).map(line => (
+            <Text dimColor>{line}</Text>
+          ))}
+          {Input ? (
+            <Input key={q.result ? 'analyzed' : 'analyze'} autoFocus label={q.result ? 'Enter' : 'Answer'} onInput={(value: string) => void onAnalyzeKeys($, value)} onSubmit={() => void (q.result ? proceed($) : undefined)} />
+          ) : q.result ? (
+            <Button key="on" label="Contain" onPress={() => void proceed($)} />
+          ) : (
+            <Box>
+              {q.choices.map((_, i) => (
+                <Button key={`c${i}`} label={String(i + 1)} onPress={() => void answer($, i)} />
+              ))}
+              <Button key="skip" label="Skip" onPress={() => void answer($, undefined)} />
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    const v = await read($, view)
     if (!v) return <Text dimColor>Nothing to contain.</Text>
     const color = tierColor(v.tier, await $.clock.now())
     // A short terminal clips a pane from the top, so the sprite comes first and the essentials last.

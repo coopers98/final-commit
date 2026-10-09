@@ -15,6 +15,18 @@ export type LatticeView = {
   isOver: boolean
 }
 
+/** SPEC 8: the Analyze Specimen step before Seal the Lattice. `result` is set once answered. */
+export type AnalyzeView = {
+  heading: string
+  tier: TierName
+  /** The puzzle's language and type, as shown. */
+  label: string
+  question: string
+  code: string[]
+  choices: string[]
+  result: { lines: string[] } | null
+}
+
 export type BandView = {
   name: string
   /** The tier's glyph and label, as shown. */
@@ -107,6 +119,7 @@ declare module 'claude-code' {
       setup: SetupView | null
       mood: MoodState
       lattice: LatticeView | null
+      analyze: AnalyzeView | null
       band: BandView | null
       /** SPEC 9.2 red alert: the status line flashes before `until`; toasts keep a cooldown from `lastToastAt`. */
       alert: { until: number; lastToastAt: number | null }

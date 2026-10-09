@@ -190,7 +190,7 @@ When an epic is charted, **one** `$.model.complete` call generates the full ecos
 
 Before any epic text or code reaches a prompt: strip string literals, fixture data, and anything matching PHI-like patterns (names, DOBs, MRNs, SSN shapes). Required for regulated codebases (healthcare, finance). On by default; opt-out only. Prompts receive structure, not data.
 
-v1 filters epic prose (`src/puzzle/privacy-filter.ts`); the code filter for puzzles (literals in code, fixtures) comes with v3. The `privacyMode` setting:
+Epic prose goes through `src/puzzle/privacy-filter.ts`. Code goes through `src/puzzle/code-filter.ts` (8.3): every string and template literal is blanked to `…`, every comment removed, and the value shapes of `standard` below run over the rest, line by line so line numbers hold; strict mode's capitalized-word rule is not applied to code, where capitalized words are type names. With `off`, code is sent as written. The filtered code is also what the puzzle pane shows and what the save keeps: unfiltered code is never stored. The `privacyMode` setting:
 
 | Mode | Replaces |
 |---|---|
@@ -334,6 +334,16 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 3. **Runners**, one per runtime (`php`, `node`, `python3`, `sqlite3`), each with its command and timeout. Whether a runner's binary exists is checked once per session; without it, run-checked types fall back.
 4. **Sandbox** (D15): Trace runs only a unit the adapter can show is self-contained (no file, network, process or environment access, no imports beyond the language's core), in a fresh temporary directory, with a short timeout and its output capped. A unit that cannot be shown self-contained is never run; its tier falls back.
 
+### 8.4 Built (FC-15)
+
+- **Material:** when a mission rolls an encounter, the code it changed (`git diff` against the last commit before the mission started, so uncommitted work counts) is read for units: functions the diff touched, 4 to 40 lines, at most 6, from at most 20 files of 256 KiB each. Each file is filtered (5.3) before a unit is taken, and only the filtered unit is used. A survey's encounter, or a forced one, has no mission and gets no puzzle.
+- **Adapters:** TypeScript and JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` and the like, not `.d.ts`), by a brace-matching reader over the filtered source.
+- **Types:** Pattern ID (agreement, 8.1 rule 3: one call writes the question, four choices and the explanation; a second answers it blind; the choices are shuffled by the game; only an agreed answer is kept) and Bug Hunt (mechanical: one spaced operator changed in one body line, `===`/`!==`, `<`/`<=`, `>`/`>=`, `&&`/`||`, `+ 1`/`- 1`; the player picks which of four lines). Uncommon and Rare fall back to Pattern ID, Legendary and Anomaly to Bug Hunt. A type that cannot be made, or whose check disagrees, gives way to the other; none possible, no puzzle.
+- **When:** prepared in the background as the encounter is rolled (and again at session start if a reload cut it off); `/contain` never waits for it. A prepared puzzle not yet answered comes first in the containment pane: `1` to `4` answer, `s` skips, Esc leaves both for later. The answer is kept with the encounter, so its bonus counts for every attempt on that creature; it is asked once.
+- **Settings:** `puzzles` is `on` (default), `local` (Bug Hunt only: nothing is sent to a model) or `off`; `puzzleModel` is the model for Pattern ID, Sonnet by default, two calls per puzzle.
+- **Accuracy:** each answer (not a skip) counts in `fc:puzzle-stats` by category and type, for `/dossier` later.
+- **Not yet:** Complexity Read, Trace and the runners (FC-16), the other adapters, theming on the epic, the dispute key, `/dossier`.
+
 **Open decisions:** D4 puzzle balance (weak spots vs strengths vs even); D5 Deep Expedition on demand via `/expedition` or Anomaly-only.
 
 ---
@@ -421,12 +431,17 @@ type Inventory    = { reinforced: number; stasis: number; singularity: number;
                       flora: Record<string /* speciesId */, number> }
 type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
                       status: 'seen'|'contained'|'escaped' }
-type PuzzleStat   = { category: string; attempts: number; correct: number; lastSeen: string }
+type PendingEncounter = { id: string; systemId: string; speciesId: string; tier: Tier; attachment?: Attachment;
+                      quality: number; attempts: number; createdAt: number;
+                      missionKey?: string /* the mission that rolled it */;
+                      puzzle?: Puzzle | null /* 8; null when none could be made */;
+                      analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number } }
+type PuzzleStat   = { category: string; type: string; attempts: number; correct: number; lastSeen: number }  // fc:puzzle-stats
 ```
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle.
 
 ---
 
@@ -609,6 +624,8 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Quality shift on rarity | Non-Common encounter weights times `1 + 0.5 * q`, renormalized |
 | Quality bonus on containment | `+0.10 * q` |
 | Epic survey encounter | Quality 0.5, no Commons |
+| Puzzle bonus (right answer) | Common +10%, Uncommon +14%, Rare +17%, Exotic +21%, Legendary and Anomaly +25%; plus up to +5% for speed, falling to none at 60 s |
+| Puzzle material | Units of 4 to 40 lines, at most 6; at most 20 files of 256 KiB; git calls 10 s; puzzle model calls 1,500 tokens, 90 s |
 | Reinforced Cells for a green mission | 1 |
 | Stasis Cells for a clean Tactical review | 1 |
 | Singularity Cells for a survey | 1 |

@@ -72,3 +72,23 @@ export function filterProse(text: string, mode: PrivacyMode): { text: string; re
   }
   return { text: out, redactions }
 }
+
+/**
+ * The value shapes of `filterProse` (URLs, emails, IPs, hosts, keys, IDs,
+ * dates, phones, names after a title or role word, long numbers), for code
+ * whose literals and comments are already gone (SPEC 8.3 rule 1). Quoted
+ * text and strict mode's capitalized words are left to the code's own
+ * grammar: in code those are literals and type names.
+ */
+export function filterValues(text: string): { text: string; redactions: number } {
+  let redactions = 0
+  let out = text
+  for (const { pattern, token } of STANDARD) {
+    if (token === '[quoted]') continue
+    out = out.replace(pattern, () => {
+      redactions += 1
+      return token
+    })
+  }
+  return { text: out, redactions }
+}

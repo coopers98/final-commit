@@ -1,6 +1,6 @@
 import { STORE, TIERS, type Tier } from '../config'
 import type {
-  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, PlansState, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
+  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, PlansState, PuzzleStat, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
 } from './schema'
 
 export type StoreLike = {
@@ -30,6 +30,7 @@ export const KEYS = {
   captainsLog: `${p}log`,
   crewReports: `${p}crew-reports`,
   resolved: `${p}resolved`,
+  puzzleStats: `${p}puzzle-stats`,
 } as const
 
 export function createMemoryStore(): StoreLike & { dump(): Record<string, unknown> } {
@@ -129,6 +130,10 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     /** SPEC 9.4: species ids the sensors resolved into silhouettes. */
     resolved: () => readList<string>(KEYS.resolved, v => typeof v === 'string'),
     saveResolved: (ids: string[]) => writeList(KEYS.resolved, ids),
+
+    /** SPEC 8.2: puzzle accuracy per category. */
+    puzzleStats: () => readList<PuzzleStat>(KEYS.puzzleStats, v => isObject(v) && typeof v.category === 'string' && typeof v.attempts === 'number'),
+    savePuzzleStats: (stats: PuzzleStat[]) => writeList(KEYS.puzzleStats, stats),
 
     pending: () => readOptional<PendingEncounter>(KEYS.pending, v => typeof v.id === 'string' && typeof v.speciesId === 'string' && isTier(v.tier)),
     savePending: (e: PendingEncounter) => store.set(KEYS.pending, stamp(e)),

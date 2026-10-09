@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
-  attemptContainment, cellsOf, completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCell, parseCraftCell, parseEpicKey,
+  answerPuzzle, attemptContainment, cellsOf, completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCell, parseCraftCell, parseEpicKey,
   queueTarget, recordBash, recordClosure, recordTactical, reopenMission, setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
@@ -524,4 +524,60 @@ test('/craft makes a Reinforced Cell from 3 Common samples and a Stasis Cell fro
 test('cell arguments: a name or its key; craft takes only the craftable cells', async () => {
   expect(['', 'standard', 'r', 'Stasis', ' x ', 'singularity', 'bogus'].map(parseCell)).toEqual(['standard', 'standard', 'reinforced', 'stasis', 'singularity', 'singularity', undefined])
   expect(['r', 'reinforced', 's', 'STASIS', 'singularity', 'x', ''].map(parseCraftCell)).toEqual(['reinforced', 'reinforced', 'stasis', 'stasis', undefined, undefined, undefined])
+})
+
+const PUZZLE_FIXTURE = {
+  type: 'bug-hunt' as const, category: 'off by one', question: 'Which line?', lang: 'TypeScript',
+  code: ['function f() {', '  a()', '}'], choices: ['Line 1', 'Line 2', 'Line 3', 'Line 4'], answer: 2, explanation: 'Line 3 changed.',
+}
+
+test('a puzzle answer is kept with the encounter once, counts in the accuracy record, and its bonus reaches every attempt', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  await repo.savePending({ ...(await repo.pending())!, puzzle: PUZZLE_FIXTURE })
+  const first = await answerPuzzle({ ...deps, choice: 2, elapsedMs: 0 })
+  expect(first!.isCorrect).toBe(true)
+  expect(first!.bonus > 0).toBe(true)
+  // A second answer changes nothing.
+  expect(await answerPuzzle({ ...deps, choice: 0, elapsedMs: 0 })).toEqual(first)
+  expect(await repo.puzzleStats()).toEqual([{ category: 'off by one', type: 'bug-hunt', attempts: 1, correct: 1, lastSeen: 0 }])
+})
+
+test('a right answer\'s bonus raises the odds of every containment attempt on that creature', async () => {
+  const contained = async (bonus: number | undefined) => {
+    let n = 0
+    for (let seed = 0; seed < 200; seed += 1) {
+      const { repo, deps } = await withEpic()
+      await forceEncounter(deps)
+      const p = (await repo.pending())!
+      await repo.savePending({ ...p, tier: 'legendary', ...(bonus === undefined ? {} : { analysis: { isSkipped: false, isCorrect: true, bonus } }) })
+      const out = await attemptContainment({ ...deps, rng: createRng(seed), cell: 'standard', latticeBonus: 0 })
+      if ('outcome' in out && out.outcome === 'contained') n += 1
+    }
+    return n
+  }
+  // Legendary: 10% base; a +25% answer makes it 35%.
+  const without = await contained(undefined)
+  const withBonus = await contained(0.25)
+  expect(without < 40).toBe(true)
+  expect(withBonus > 50).toBe(true)
+})
+
+test('skipping a puzzle earns nothing and is not counted; with no puzzle there is nothing to answer', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  expect(await answerPuzzle({ ...deps, choice: 1, elapsedMs: 0 })).toBe(undefined)
+  await repo.savePending({ ...(await repo.pending())!, puzzle: PUZZLE_FIXTURE })
+  expect(await answerPuzzle({ ...deps, choice: undefined, elapsedMs: 0 })).toEqual({ isSkipped: true, isCorrect: false, bonus: 0 })
+  expect(await repo.puzzleStats()).toEqual([])
+})
+
+test('an encounter a mission rolled carries its key, for its puzzle; a forced one does not', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission({ ...deps, now: 1000 })
+  expect((await repo.pending())!.missionKey).toBe('NOVA-2')
+  await repo.clearPending()
+  await forceEncounter(deps)
+  expect((await repo.pending())!.missionKey).toBe(undefined)
 })

@@ -1,5 +1,6 @@
 import type { AttachmentClass, Cell, Tier } from '../config'
 import type { WorkStatus, WorkTransition } from '../detect/work-source'
+import type { Puzzle } from '../puzzle/puzzle'
 
 // SPEC 10, extended for the slice. Times are epoch milliseconds from $.clock.
 
@@ -81,7 +82,16 @@ export type PendingEncounter = {
   quality: number
   attempts: number
   createdAt: number
+  /** The mission that rolled it; absent for a survey's or developer mode's. */
+  missionKey?: string
+  /** SPEC 8: its Analyze Specimen puzzle once prepared; null when none could be made. */
+  puzzle?: Puzzle | null
+  /** The puzzle's outcome, kept for every attempt on this creature. */
+  analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number }
 }
+
+/** SPEC 8.2: accuracy per puzzle category. `lastSeen` is epoch milliseconds. */
+export type PuzzleStat = { category: string; type: string; attempts: number; correct: number; lastSeen: number }
 
 export type Inventory = Record<Exclude<Cell, 'standard'>, number> & { flora: Record<string, number> }
 

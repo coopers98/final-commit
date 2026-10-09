@@ -2,6 +2,7 @@ import type { CellCounts, ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
 import { CELLS, CRAFT, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
+import { puzzleBonus } from './puzzle/puzzle'
 import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
 import { issueKeyFromBranch } from './detect/git'
 import { rollAttachment } from './encounter/attachments'
@@ -147,7 +148,7 @@ async function createEncounter(
   deps: GameDeps,
   system: StarSystem,
   quality: number,
-  opts: { excludeCommon?: boolean } = {},
+  opts: { excludeCommon?: boolean; missionKey?: string } = {},
 ): Promise<PendingEncounter> {
   const { repo, now, rng } = deps
   const tier = rollTier(rng, quality, opts)
@@ -162,6 +163,7 @@ async function createEncounter(
     quality,
     attempts: 0,
     createdAt: now,
+    ...(opts.missionKey ? { missionKey: opts.missionKey } : {}),
   }
   await repo.savePending(pending)
   await markCatalog(repo, { speciesId: species.id, tier: species.tier, ...(attachment ? { attachment: attachment.item } : {}), status: 'seen' })
@@ -335,7 +337,7 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
     ...(harvested.length > 0 ? [`Harvested: ${harvested.join(', ')}`] : []),
   ]
   if (system && attachedWork && !hasPending && underCap && shouldEncounter(ctx, rng)) {
-    const pending = await createEncounter(deps, system, quality)
+    const pending = await createEncounter(deps, system, quality, { missionKey: done.issueKey })
     await repo.patchMeta(m => ({ ...m, encountersToday: { day, count: today + 1 } }))
     const species = system.species.find(s => s.id === pending.speciesId)
     return {
@@ -512,7 +514,7 @@ export async function attemptContainment(deps: GameDeps & { cell: Cell; latticeB
   const system = await repo.system(pending.systemId)
   const species = system?.species.find(s => s.id === pending.speciesId)
   const name = species?.name ?? 'The specimen'
-  const outcome = resolveAttempt({ tier: pending.tier, cell, latticeBonus: deps.latticeBonus, quality: pending.quality }, rng)
+  const outcome = resolveAttempt({ tier: pending.tier, cell, latticeBonus: deps.latticeBonus, quality: pending.quality, puzzleBonus: pending.analysis?.bonus ?? 0 }, rng)
 
   if (outcome === 'contained') {
     const id = `spec-${now}-${rng.int(1_000_000)}`
@@ -570,6 +572,30 @@ export async function craftCell(deps: GameDeps & { cell?: CraftableCell }): Prom
   if (!flora) return { text: `A ${CELLS[deps.cell].label} Cell needs ${recipe.samples} ${TIER_SPECS[recipe.tier].label} flora samples. ${holding}` }
   await repo.saveInventory({ ...inv, flora, [deps.cell]: inv[deps.cell] + 1 })
   return { text: `Crafted a ${CELLS[deps.cell].label} Cell (${inv[deps.cell] + 1} held).` }
+}
+
+/**
+ * SPEC 8: the answer to the waiting encounter's puzzle (`choice` an index,
+ * or undefined to skip it). Kept with the encounter, so its bonus counts for
+ * every attempt; an answer is recorded once, in the accuracy record too.
+ */
+export async function answerPuzzle(deps: GameDeps & { choice: number | undefined; elapsedMs: number }): Promise<PendingEncounter['analysis']> {
+  const { repo, now } = deps
+  const pending = await repo.pending()
+  const puzzle = pending?.puzzle
+  if (!pending || !puzzle) return undefined
+  if (pending.analysis) return pending.analysis
+  const isSkipped = deps.choice === undefined
+  const isCorrect = deps.choice === puzzle.answer
+  const analysis = { isSkipped, isCorrect, bonus: puzzleBonus(pending.tier, isCorrect, deps.elapsedMs) }
+  await repo.savePending({ ...pending, analysis })
+  if (!isSkipped) {
+    const stats = await repo.puzzleStats()
+    const was = stats.find(s => s.category === puzzle.category && s.type === puzzle.type)
+    const next = { category: puzzle.category, type: puzzle.type, attempts: (was?.attempts ?? 0) + 1, correct: (was?.correct ?? 0) + (isCorrect ? 1 : 0), lastSeen: now }
+    await repo.savePuzzleStats([...stats.filter(s => s !== was), next])
+  }
+  return analysis
 }
 
 export async function setCompanion(deps: GameDeps & { specimenId: string }): Promise<Outcome> {

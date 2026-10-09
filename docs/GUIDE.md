@@ -134,7 +134,35 @@ tracks every species, tier and attachment you have seen.
 
 ## Containment
 
-`/contain` opens **Seal the Lattice**. You can also press Enter on the
+### Analyze Specimen (a puzzle first)
+
+When a mission brings a creature, the game reads the functions you changed
+in that mission and builds a quick multiple-choice question from one of
+them. `/contain` asks it first:
+
+- **Bug Hunt** (Exotic and up): one line of your function was changed to
+  bring in a bug (a flipped comparison, an off-by-one, `&&` for `||`).
+  Which line?
+- **Pattern ID** (Common to Rare): which pattern or technique does this
+  function use? The question is written by a model and checked by a second,
+  independent call, so a question whose answer the two disagree on is
+  thrown away.
+
+Press **1** to **4** to answer, **s** to skip, **Esc** to come back later.
+A right answer adds +10% (Common) up to +25% (Legendary), plus up to +5% for
+answering fast (none after a minute). A wrong answer costs nothing and
+explains why. The bonus counts for every attempt on that creature, and the
+question is asked once.
+
+The code is shown filtered, as the model sees it: string literals read
+`"…"` and comments are gone. A survey's creature has no puzzle (a survey
+has no code of its own), and neither does a mission that changed no
+TypeScript or JavaScript yet. The `puzzles` setting in `/config` is `on`,
+`local` (Bug Hunt only, so no code is sent anywhere) or `off`.
+
+### Seal the Lattice
+
+`/contain` then opens **Seal the Lattice**. You can also press Enter on the
 mission report to go straight there.
 
 ```
@@ -179,6 +207,7 @@ Your chance to contain is the sum of:
 | The cell | Standard +0%, Reinforced +15%, Stasis +30%, Singularity +50% |
 | The lattice | Up to +20% for all locks sealed, +2% per dead-center hit, -3% per miss (0% to +25%) |
 | Mission quality | Up to +10% |
+| The puzzle | Up to +30% for a right answer (see above) |
 
 The total is capped at 98%.
 
@@ -303,10 +332,9 @@ by `·`:
 
 ## Coming later
 
-- **Puzzles (v3):** before containing, an optional quick question built
-  from your own diff (spot the pattern, trace a function, find the bug). A
-  right answer adds up to +25% to your odds. `/dossier` will track your
-  accuracy.
+- **More puzzles:** Trace (predict a function's output, checked by running
+  it) and Complexity Read, more languages (PHP, Python, SQL, Markdown), and
+  `/dossier` for your accuracy by category.
 - **Companion XP and evolution**, with perks that change game odds (never
   your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.

@@ -29,6 +29,28 @@
       ],
       "default": "strict"
     },
+    "puzzles": {
+      "type": "string",
+      "title": "Puzzles",
+      "description": "on: puzzles from your mission's code, some written by the model from filtered code. local: only puzzles the mod makes itself, so no code is sent. off: none.",
+      "options": [
+        "on",
+        "local",
+        "off"
+      ],
+      "default": "on"
+    },
+    "puzzleModel": {
+      "type": "string",
+      "title": "Puzzle model",
+      "description": "Model that writes and checks a puzzle, two calls per puzzle.",
+      "options": [
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default": "sonnet"
+    },
     "devMode": {
       "type": "boolean",
       "title": "Developer mode",

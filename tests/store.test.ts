@@ -113,6 +113,16 @@ test('schema 3 to 5: logged missions record what they gave, by the rules that ap
   for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })
 
+test('schema 6 to 7: values are restamped, and a waiting encounter keeps everything it had', async () => {
+  const store = createMemoryStore()
+  await store.set(KEYS.meta, { schemaVersion: 6, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: 1, completedMissions: 1, activeEpicKey: null, companionId: null, encountersToday: { day: '', count: 0 } })
+  const pending = { id: 'e', systemId: 's', speciesId: 'x', tier: 'rare', quality: 0.5, attempts: 1, createdAt: 1 }
+  await store.set(KEYS.pending, { schemaVersion: 6, ...pending })
+  await migrate(store, 99)
+  expect(await createRepo(store).pending()).toEqual(pending)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(7)
+})
+
 test('schema 5 to 6: sync records gain an empty waiting list and keep where they left off', async () => {
   const store = createMemoryStore()
   await store.set(KEYS.meta, { schemaVersion: 5, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: null, completedMissions: 1, activeEpicKey: null, companionId: null, encountersToday: { day: '', count: 0 } })
@@ -122,7 +132,7 @@ test('schema 5 to 6: sync records gain an empty waiting list and keep where they
   const repo = createRepo(store)
   expect(await repo.sync('plans:x')).toEqual({ lastSync: 7, processed: ['NOVA-2:a'], waiting: [] })
   expect((await repo.inventory()).reinforced).toBe(1)
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(6)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })
 
 test('schema 4 to 5: logged rewards gain no Stasis Cells and no flora; the active mission and inventory keep theirs', async () => {

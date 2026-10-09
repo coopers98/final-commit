@@ -1,6 +1,6 @@
 import type { PluginOptions } from 'claude-code'
 import type { BandView, ChartingEntry, MoodState } from '../types'
-import { COMPANION, GENERATION, PLANS, TIER_SPECS, type GenerationModel } from './config'
+import { COMPANION, GENERATION, PLANS, PUZZLE, TIER_SPECS, type GenerationModel } from './config'
 import { statusText } from './bridge/status'
 import { sourceNames } from './detect/sources'
 import type { PrivacyMode } from './puzzle/privacy-filter'
@@ -12,13 +12,18 @@ import type { StarSystem } from './store/schema'
 // reach only functions in the same file, so nothing here takes `$`: each
 // wiring file adapts `$.store` and `$.model` itself and hands the result in.
 
-export type Settings = { generationModel: GenerationModel; privacyMode: PrivacyMode; devMode: boolean; workSources: string[]; plansFolders: string[]; githubRepos: string[]; jira: { site: unknown; email: unknown; token: unknown } }
+export type PuzzleMode = 'on' | 'local' | 'off'
+
+export type Settings = { generationModel: GenerationModel; puzzleModel: GenerationModel; puzzles: PuzzleMode; privacyMode: PrivacyMode; devMode: boolean; workSources: string[]; plansFolders: string[]; githubRepos: string[]; jira: { site: unknown; email: unknown; token: unknown } }
 
 export function readSettings(options: PluginOptions): Settings {
   const model = options.generationModel
   const privacy = options.privacyMode
+  const isModel = (v: unknown): v is GenerationModel => v === 'sonnet' || v === 'haiku' || v === 'opus'
   return {
-    generationModel: model === 'sonnet' || model === 'haiku' || model === 'opus' ? model : GENERATION.defaultModel,
+    generationModel: isModel(model) ? model : GENERATION.defaultModel,
+    puzzleModel: isModel(options.puzzleModel) ? options.puzzleModel : PUZZLE.defaultModel,
+    puzzles: options.puzzles === 'local' || options.puzzles === 'off' ? options.puzzles : 'on',
     // Strict unless the user chose otherwise: the safe direction for a privacy default.
     privacyMode: privacy === 'strict' || privacy === 'off' || privacy === 'standard' ? privacy : 'strict',
     devMode: options.devMode === true,
