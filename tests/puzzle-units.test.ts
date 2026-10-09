@@ -277,6 +277,9 @@ const COUNTEREXAMPLES = [
   '#!/usr/bin/env node\r/*\nzqU patient words\n*/',
   '#!/usr/bin/env node\rconst t = `\nzqV words\n`',
   '#!/usr/bin/env node\u2028/*\nzqW\n*/',
+  // Seventh review.
+  '\uFEFF#!node zqX words\nconst a = 1',
+  'const el = < a title="\n  zqY Jane Roe\n" / //c\n>',
 ]
 
 test('none of the reviews\' counterexamples leaks a sentinel, and line counts hold', async () => {
@@ -366,4 +369,34 @@ test('a file with a minified line is blanked whole, fast', async () => {
   expect(Date.now() - at < 1_000).toBe(true)
   expect(out.every(l => l.trim() === '…')).toBe(true)
   expect(out.length).toBe(3)
+})
+
+test('braces from inside literals never show, even where a scan misreads', async () => {
+  for (const src of [
+    'x = 1 // c\ry = `\n}}{{\n`',
+    'x = 1 // c\u2028y = `\n{{}}\n`',
+    '#!node `\nconst y = `\n{ x }}\n`',
+    "let of = 4\nx = of / 2; s = '/{{'; // '",
+  ]) {
+    const out = filterCode(src, 'standard').split('\n')
+    // Only the first line of each may keep braces of its own; none of these has any.
+    for (const line of out.slice(1)) expect(/[{}]/.test(line)).toBe(false)
+  }
+})
+
+test('the filter and unit reading stay fast on hostile shapes within the size limits', async () => {
+  const time = (f: () => unknown) => {
+    const at = Date.now()
+    f()
+    return Date.now() - at
+  }
+  const many = Array.from({ length: 131 }, () => `${'a'.repeat(999)}+${'b/'.repeat(499)}`).join('\n')
+  expect(time(() => filterCode(many, 'standard')) < 3_000).toBe(true)
+  const regexes = '(/a/'.repeat(60_000)
+  expect(time(() => filterCode(regexes.replace(/(.{1900})/g, '$1\n'), 'standard')) < 3_000).toBe(true)
+  expect(time(() => hasJsx('\n'.repeat(262_143), 'src/x.ts')) < 1_000).toBe(true)
+  const sig = Array.from({ length: 130 }, () => `const a = b :${' '.repeat(1980)}`).join('\n')
+  expect(time(() => TS_ADAPTER.units(sig, new Set([1]))) < 2_000).toBe(true)
+  const openers = 'function a(){\n'.repeat(9_000) + '}\n'.repeat(9_000)
+  expect(time(() => TS_ADAPTER.units(openers, new Set([1]))) < 2_000).toBe(true)
 })

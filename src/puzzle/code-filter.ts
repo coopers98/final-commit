@@ -25,30 +25,37 @@ const UNSURE_AFTER = new Set([')', '}', '!', '+', '-'])
 const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|case|do|else|in|of|new|delete|void|throw|yield|await|default|extends)$/
 
 /** Whether a `/` here opens a regular expression, and whether that is sure. */
-function slashOpensRegex(out: string): { isRegex: boolean; isSure: boolean } {
-  const line = out.slice(out.lastIndexOf('\n') + 1).trimEnd()
+function slashOpensRegex(current: string): { isRegex: boolean; isSure: boolean } {
+  const line = current.trimEnd()
   // At a line's start it may continue a division from the line before.
   if (line === '') return { isRegex: true, isSure: false }
   const last = line[line.length - 1]!
   if (REGEX_AFTER.has(last)) return { isRegex: true, isSure: true }
   if (UNSURE_AFTER.has(last)) return { isRegex: true, isSure: false }
-  if (/[\w$]/.test(last)) return { isRegex: REGEX_AFTER_WORD.test(line), isSure: true }
+  // A keyword before it may be a name (`let of = 4; of / 2`) or a property (`x.of / 2`): unsure.
+  if (/[\w$]/.test(last)) return REGEX_AFTER_WORD.test(line.slice(-16)) ? { isRegex: true, isSure: false } : { isRegex: false, isSure: true }
   if (last === ']') return { isRegex: false, isSure: true }
   return { isRegex: true, isSure: false }
 }
 
 /** `source` with literals blanked and comments removed, line for line, and the 0-based lines the scanner is unsure of. */
-export function scanLiterals(source: string): { text: string; uncertain: Set<number> } {
+export function scanLiterals(source: string): { text: string; uncertain: Set<number>; unterminated: Set<number> } {
+  // The current line apart from the lines done: a look back at it never copies the whole output.
+  const done: string[] = []
   let out = ''
   let line = 0
   const uncertain = new Set<number>()
+  const unterminated = new Set<number>()
   const unsure = () => void uncertain.add(line)
   const newline = () => {
-    out += '\n'
+    done.push(out)
+    out = ''
     line += 1
   }
   let i = 0
   const n = source.length
+  // A hashbang (after a byte order mark too) is a comment to the first line break of any kind.
+  if (/^\uFEFF?#!/.test(source)) while (i < n && !'\n\r\u2028\u2029'.includes(source[i]!)) i += 1
   while (i < n) {
     const c = source[i]!
     const next = source[i + 1]
@@ -58,7 +65,8 @@ export function scanLiterals(source: string): { text: string; uncertain: Set<num
       continue
     }
     if (c === '/' && next === '/') {
-      while (i < n && source[i] !== '\n') i += 1
+      // A line comment ends at any line break: CR, LS and PS too.
+      while (i < n && !'\n\r\u2028\u2029'.includes(source[i]!)) i += 1
       continue
     }
     if (c === '/' && next === '*') {
@@ -114,7 +122,10 @@ export function scanLiterals(source: string): { text: string; uncertain: Set<num
       }
       out += `${c}${BLANK}${c}`
       if (source[i] === c) i += 1
-      else unsure()
+      else {
+        unsure()
+        unterminated.add(line)
+      }
       continue
     }
     if (c === '`') {
@@ -153,8 +164,9 @@ export function scanLiterals(source: string): { text: string; uncertain: Set<num
     out += c
     i += 1
   }
+  done.push(out)
   // Comments leave trailing spaces behind.
-  return { text: out.split('\n').map(l => l.trimEnd()).join('\n'), uncertain }
+  return { text: done.map(l => l.trimEnd()).join('\n'), uncertain, unterminated }
 }
 
 /** `source` with literals blanked and comments removed, line for line. */
@@ -179,13 +191,16 @@ const WORDS_BEFORE_REGEX = new Set((
 function slashesAreDivision(line: string): boolean {
   for (let k = line.indexOf('/'); k >= 0; k = line.indexOf('/', k + 1)) {
     if (line[k + 1] === '/' || line[k + 1] === '*' || line[k - 1] === '*' || line[k - 1] === '/') return false
-    const before = line.slice(0, k).trimEnd()
-    const word = /[\w$]+$/.exec(before)?.[0]
-    if (word !== undefined) {
-      if (WORDS_BEFORE_REGEX.has(word)) return false
+    // Back over spaces, then over a word: a loop, as a regex here backtracks on long lines.
+    let j = k - 1
+    while (j >= 0 && (line[j] === ' ' || line[j] === '\t')) j -= 1
+    let w = j
+    while (w >= 0 && /[\w$]/.test(line[w]!)) w -= 1
+    if (w < j) {
+      if (WORDS_BEFORE_REGEX.has(line.slice(w + 1, j + 1))) return false
       continue
     }
-    if (!before.endsWith(']')) return false
+    if (line[j] !== ']') return false
   }
   return true
 }
@@ -207,30 +222,47 @@ export function isPlainLine(line: string): boolean {
  * backtick; a backslash at a line's end; code after a comment's end), every
  * line from there on is blanked.
  */
-export function shownLines(lines: readonly string[]): boolean[] {
+export function shownLines(lines: readonly string[], unterminated: ReadonlySet<number> = new Set()): boolean[] {
+  return lineStates(lines, unterminated).shown
+}
+
+/**
+ * `shownLines`, and which lines the scan was in code for from start to end
+ * (`trusted`): only those keep their braces when blanked, as a line after
+ * the scan went dead or inside a comment may hold a literal's braces.
+ */
+export function lineStates(lines: readonly string[], unterminated: ReadonlySet<number> = new Set()): { shown: boolean[]; trusted: boolean[] } {
   const shown: boolean[] = []
+  const trusted: boolean[] = []
   let state: 'code' | 'comment' | 'dead' = 'code'
   for (const [index, line] of lines.entries()) {
-    // A hashbang is a comment, to the first line break of any kind.
-    if (index === 0 && line.startsWith('#!')) {
+    const was = state
+    const push = (isShown: boolean) => {
+      shown.push(isShown)
+      trusted.push(was === 'code' && state === 'code')
+    }
+    // A string the literal scanner saw run to the line's end: it may go on (a JSX attribute does).
+    if (state === 'code' && unterminated.has(index)) state = 'dead'
+    // A hashbang (after a byte order mark too) is a comment, to the first line break of any kind.
+    if (index === 0 && /^\uFEFF?#!/.test(line)) {
       if (/[\r\u2028\u2029]/.test(line)) state = 'dead'
-      shown.push(false)
+      push(false)
       continue
     }
     if (state === 'dead') {
-      shown.push(false)
+      push(false)
       continue
     }
     if (state === 'comment') {
       const end = line.indexOf('*/')
       if (end >= 0) state = /['"`\\/]|<!--|-->/.test(line.slice(end + 2)) ? 'dead' : 'code'
-      shown.push(false)
+      push(false)
       continue
     }
     // A lone CR, LS or PS is a line break to JavaScript that this scan, splitting at LF, would not see.
     if (/\\\s*$/.test(line) || /[\r\u2028\u2029]/.test(line)) {
       state = 'dead'
-      shown.push(false)
+      push(false)
       continue
     }
     // `//` and `/*` always open a comment where the scan is in code, so one is sure when nothing
@@ -238,7 +270,7 @@ export function shownLines(lines: readonly string[]): boolean[] {
     const neutral = (text: string) => !/['"`\\/]|<!--|-->/.test(text)
     const slash = line.indexOf('/')
     if (slash >= 0 && line[slash + 1] === '/' && neutral(line.slice(0, slash))) {
-      shown.push(false)
+      push(false)
       continue
     }
     const open = line.indexOf('/*')
@@ -247,7 +279,7 @@ export function shownLines(lines: readonly string[]): boolean[] {
       // After a comment that ends on its line, only neutral text keeps the scan sure.
       if (close < 0) state = 'comment'
       else if (!neutral(line.slice(close + 2))) state = 'dead'
-      shown.push(false)
+      push(false)
       continue
     }
     // A backtick is trusted only on a line with no other quote, slash or backslash to hide it:
@@ -255,12 +287,12 @@ export function shownLines(lines: readonly string[]): boolean[] {
     const ticks = [...line].filter(c => c === '`').length
     if (open >= 0 || (ticks > 0 && (ticks !== 2 || /['"\/\\]/.test(line) || !isClosedTemplate(line)))) {
       state = 'dead'
-      shown.push(false)
+      push(false)
       continue
     }
-    shown.push(state === 'code' && ticks === 0 && isPlainLine(line))
+    push(state === 'code' && ticks === 0 && isPlainLine(line))
   }
-  return shown
+  return { shown, trusted }
 }
 
 /** A line's two backticks surely open and close one template: no `${}` beside a quote or slash, and every `${` closed before the second. */
@@ -303,11 +335,11 @@ export function filterCode(source: string, mode: PrivacyMode): string {
   const lines = clean.split('\n')
   // Minified code: every line blank, and no scan of it (the scan's cost grows with line length).
   if (lines.some(l => l.length > PUZZLE.maxLineChars)) return lines.map(l => `${/^[ \t]*/.exec(l)![0].slice(0, PUZZLE.maxLineChars)}${BLANK}`).join('\n')
-  const { text, uncertain } = scanLiterals(clean)
+  const { text, uncertain, unterminated } = scanLiterals(clean)
   const scanned = text.split('\n')
-  const shown = shownLines(lines)
+  const { shown, trusted } = lineStates(lines, unterminated)
   return lines
-    // A line the scan was unsure of keeps no braces: they could be a literal's.
-    .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, uncertain.has(i) ? '' : (scanned[i] ?? ''))))
+    // Braces only from a line both scans were sure of: otherwise they could be a literal's.
+    .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, trusted[i] && !uncertain.has(i) ? (scanned[i] ?? '') : '')))
     .join('\n')
 }

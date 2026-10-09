@@ -56,27 +56,41 @@ export function changedLines(diff: string): Map<string, Set<number>> {
 
 /** Matching `{` and `}` from line `from` (0-based): the 0-based line the block closes on, or undefined. */
 export function blockEnd(lines: readonly string[], from: number): number | undefined {
-  let depth = 0
-  let isOpen = false
-  for (let i = from; i < lines.length; i += 1) {
-    for (const c of lines[i]!) {
-      if (c === '{') {
-        depth += 1
-        isOpen = true
-      } else if (c === '}') {
-        depth -= 1
-        if (isOpen && depth === 0) return i
-        if (depth < 0) return undefined
-      }
-    }
+  return blockEnds(lines)(from)
+}
+
+/**
+ * `blockEnd` for every start line at once: braces are matched in one pass,
+ * so a file of many candidate lines is read once, not once per line.
+ */
+export function blockEnds(lines: readonly string[]): (from: number) => number | undefined {
+  // Each brace in order, with its line; each `{`'s matching `}` line, or -1 when it never closes.
+  const braces: { line: number; isOpen: boolean }[] = []
+  for (const [i, l] of lines.entries()) for (const c of l) if (c === '{' || c === '}') braces.push({ line: i, isOpen: c === '{' })
+  const closeOf = new Array<number>(braces.length).fill(-1)
+  const stack: number[] = []
+  for (const [k, b] of braces.entries()) {
+    if (b.isOpen) stack.push(k)
+    else if (stack.length > 0) closeOf[stack.pop()!] = b.line
   }
-  return undefined
+  // The first brace at or after each line.
+  const firstFrom = new Array<number>(lines.length + 1).fill(braces.length)
+  for (let k = braces.length - 1; k >= 0; k -= 1) firstFrom[braces[k]!.line] = k
+  for (let i = lines.length - 1; i >= 0; i -= 1) firstFrom[i] = Math.min(firstFrom[i]!, firstFrom[i + 1]!)
+  return from => {
+    const k = firstFrom[from] ?? braces.length
+    const b = braces[k]
+    // A `}` first means the block began before `from`; one that never closes has no end.
+    if (!b || !b.isOpen || closeOf[k]! < 0) return undefined
+    return closeOf[k]
+  }
 }
 
 const NOT_A_NAME = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'else', 'do', 'try', 'with', 'new', 'typeof'])
 
 /** The function a line starts, by name; undefined for any other line. */
 export function functionName(line: string): string | undefined {
+  if (line.length > PUZZLE.maxSignatureChars) return undefined
   const decl = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*[<(]/.exec(line)
   if (decl) return decl[1]
   const arrow = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:<[^>]*>\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::\s*[^=]+?)?\s*=>\s*\{\s*$/.exec(line)
@@ -93,21 +107,30 @@ export const TS_ADAPTER: ContentAdapter = {
   claims: path => /\.[cm]?[jt]s$/.test(path) && !path.endsWith('.d.ts'),
   units(filtered, changed) {
     const lines = filtered.split('\n')
+    const endOf = blockEnds(lines)
     // JSX in a .js or .ts file: its text lines are prose the filter cannot tell from code.
     if (lines.some(l => /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<[A-Za-z>]/.test(l))) return []
+    // Counts up to each line (non-blank lines, changed lines), so a span is sized in one step:
+    // nested functions in a long file never re-read their whole bodies.
+    const filled = [0]
+    const touched = [0]
+    for (const [k, l] of lines.entries()) {
+      filled.push(filled[k]! + (l.trim() !== '' ? 1 : 0))
+      touched.push(touched[k]! + (changed.has(k + 1) ? 1 : 0))
+    }
     const out: Unit[] = []
     let i = 0
     while (i < lines.length) {
       const name = functionName(lines[i]!)
-      const end = name === undefined ? undefined : blockEnd(lines, i)
+      const end = name === undefined ? undefined : endOf(i)
       if (name === undefined || end === undefined) {
         i += 1
         continue
       }
-      const body = lines.slice(i, end + 1).filter(l => l.trim() !== '')
-      let isTouched = false
-      for (let n = i + 1; n <= end + 1 && !isTouched; n += 1) isTouched = changed.has(n)
-      if (isTouched && body.length >= PUZZLE.unitMinLines && body.length <= PUZZLE.unitMaxLines && !body.some(isUnsafeLine)) {
+      const size = filled[end + 1]! - filled[i]!
+      const isTouched = touched[end + 1]! - touched[i]! > 0
+      const body = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? lines.slice(i, end + 1).filter(l => l.trim() !== '') : []
+      if (body.length > 0 && !body.some(isUnsafeLine)) {
         out.push({ lang: this.lang, name, lines: dedent(body) })
         i = end + 1
       } else {

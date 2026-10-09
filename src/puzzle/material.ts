@@ -43,7 +43,8 @@ export function regularFiles(raw: string): Set<string> {
  */
 export function hasJsx(text: string, path = ''): boolean {
   if (/\.[cm]?js$/.test(path)) return /<[A-Za-z>]|<\s*\/|\/\s*>/.test(text)
-  return /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))\s*<[A-Za-z>]/m.test(text) || /<\s*\/|\/\s*>/.test(text)
+  // Line by line, and spaces only: a multi-line `\s*` here backtracks across blank runs.
+  return text.split('\n').some(l => /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))[ \t]*<[A-Za-z>]/.test(l)) || /<\s*\/|\/\s*>/.test(text)
 }
 
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
