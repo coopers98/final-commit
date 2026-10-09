@@ -120,7 +120,25 @@ test('schema 6 to 7: values are restamped, and a waiting encounter keeps everyth
   await store.set(KEYS.pending, { schemaVersion: 6, ...pending })
   await migrate(store, 99)
   expect(await createRepo(store).pending()).toEqual(pending)
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(7)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
+})
+
+test('schema 7 to 8: values are restamped, older rewards get no companion XP, and specimens keep a level that follows their XP', async () => {
+  const store = createMemoryStore()
+  await store.set(KEYS.meta, { schemaVersion: 7, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: 1, completedMissions: 1, activeEpicKey: null, companionId: 'spec-1', encountersToday: { day: '', count: 0 } })
+  const mission = { issueKey: 'NOVA-2', systemId: 's', startedAt: 1, completedAt: 2, commits: 1, testRuns: 1, testsGreen: true, lint: 'pass', tacticalClean: false, reward: { counted: true, reinforced: 1, stasis: 0, flora: {} } }
+  await store.set(KEYS.missionLog, { schemaVersion: 7, items: [mission] })
+  const fresh = { id: 'spec-1', speciesId: 'x', systemId: 's', tier: 'common', level: 1, xp: 0, stage: 0, containedAt: 1 }
+  // A value no build wrote, to show the step makes it whole: no XP, a stale level.
+  const odd = { id: 'spec-2', speciesId: 'x', systemId: 's', tier: 'rare', level: 7, stage: 0, containedAt: 1 }
+  await store.set(KEYS.specimens, { schemaVersion: 7, items: [fresh, odd] })
+  await migrate(store, 99)
+  const repo = createRepo(store)
+  expect(await repo.missionLog()).toEqual([mission])
+  expect('companionXp' in (await repo.missionLog())[0]!.reward!).toBe(false)
+  expect(await repo.specimens()).toEqual([fresh, { ...odd, xp: 0, level: 1 }])
+  expect((await repo.meta())!.companionId).toBe('spec-1')
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(8)
 })
 
 test('schema 5 to 6: sync records gain an empty waiting list and keep where they left off', async () => {

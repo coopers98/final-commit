@@ -283,9 +283,21 @@ tier, mood and the current mission. Its mood follows your session:
 | asleep | Nothing has happened for 10 minutes |
 | idle | Otherwise |
 
-**Levels:** every specimen is level 1 for now. Companion XP from missions,
-and evolution at levels 10 and 25 (each fauna already has its later sprites
-drawn), are planned but not built yet.
+**Levels and evolution:** your companion earns XP, and only your
+companion, so pick the one you want to grow with `/bay companion N`.
+
+| Earns | XP |
+|---|---|
+| A completed mission | 10, up to 20 with green tests and a clean Tactical review |
+| An epic survey | 25 |
+
+A mission closed with no work tracked on it gives none. Level 2 takes 15
+XP, and each level after takes 5 more than the last (20 for level 3, 25
+for level 4), up to level 99. At level 10 your companion evolves into its
+second form, and at level 25 its third; it never evolves back. The mission
+report shows the XP, and a toast tells you when it levels up or evolves.
+`/mission reopen` takes the mission's XP back (the level drops with it, but
+an evolution stays).
 
 ## The Bridge and the crew
 
@@ -337,8 +349,7 @@ by `·`:
 - **More puzzles:** Trace (predict a function's output, checked by running
   it) and Complexity Read, more languages (PHP, Python, SQL, Markdown), and
   `/dossier` for your accuracy by category.
-- **Companion XP and evolution**, with perks that change game odds (never
-  your code).
+- **Companion perks** that change game odds (never your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.
 
 ## Quick reference

@@ -1,6 +1,7 @@
 import type { CellCounts, ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
-import { CELLS, CRAFT, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
+import { grantXp, missionXp, takeXp } from './companion'
+import { CELLS, COMPANION_XP, CRAFT, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { puzzleBonus } from './puzzle/puzzle'
 import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
@@ -25,9 +26,10 @@ import { type Complete, type EpicInput, generateSystem } from './world/generate'
 
 /**
  * `report` is the pane a finished mission or survey shows until dismissed
- * (game flavor is fine there: panes never reach the model).
+ * (game flavor is fine there: panes never reach the model). `companionToast`:
+ * the companion's level up or evolution, toasted even when the report shows.
  */
-export type Outcome = { text: string; toast?: string; report?: ReportView }
+export type Outcome = { text: string; toast?: string; report?: ReportView; companionToast?: string }
 
 function encounterHeading(species: Species | undefined, pending: PendingEncounter): { heading: string; sprite: string[]; tier: Tier } {
   const spec = TIER_SPECS[pending.tier]
@@ -63,6 +65,36 @@ async function allSystems(repo: Repo): Promise<StarSystem[]> {
   }
   return systems
 }
+
+type Fed = { specimenId: string; xp: number; lines: string[]; toast?: string }
+
+/**
+ * SPEC 9.3: gives the active companion `xp`. Undefined with no companion.
+ * `lines` name it, for the report pane only; `toast` is its evolution, else
+ * its level up.
+ */
+async function feedCompanion(repo: Repo, xp: number): Promise<Fed | undefined> {
+  const { companionId } = await requireMeta(repo)
+  const specimens = await repo.specimens()
+  const at = specimens.findIndex(s => s.id === companionId)
+  const was = specimens[at]
+  if (!was) return undefined
+  const { specimen, isLevelUp, isEvolved } = grantXp(was, xp)
+  await repo.saveSpecimens(specimens.map((s, i) => (i === at ? specimen : s)))
+  const system = await repo.system(specimen.systemId)
+  const name = specimen.nickname ?? system?.species.find(sp => sp.id === specimen.speciesId)?.name ?? 'Your companion'
+  const levelLine = `${name} reached level ${specimen.level}.`
+  const evolvedLine = `${name} evolved!`
+  return {
+    specimenId: specimen.id,
+    xp,
+    lines: [`${name} +${xp} XP (level ${specimen.level})`, ...(isLevelUp ? [levelLine] : []), ...(isEvolved ? [evolvedLine] : [])],
+    ...(isEvolved ? { toast: evolvedLine } : isLevelUp ? { toast: levelLine } : {}),
+  }
+}
+
+/** The command-text fact for XP given: no name (the model reads it). */
+const xpNote = (fed: Fed | undefined) => (fed ? [`Companion +${fed.xp} XP`] : [])
 
 /** Special cells usable now: a Singularity Cell only with a Legendary flora sample to activate it (SPEC 7.2). */
 export function usableCells(inv: Inventory, systems: readonly StarSystem[]): CellCounts {
@@ -212,16 +244,18 @@ export async function completeEpic(deps: GameDeps & { epicKey?: string }): Promi
   const cells = await cellsOf(repo)
   // Usable counts only those with flora to activate them, so the held total says whether one waits for it.
   const singularityLine = `Singularity Cell +${REWARDS.singularityForSurvey}${cells.singularity < inv.singularity + REWARDS.singularityForSurvey ? ' (activates with a Legendary flora sample)' : ''}`
+  const fed = await feedCompanion(repo, COMPANION_XP.survey)
   const pending = await createEncounter(deps, system, ENCOUNTER.surveyQuality, { excludeCommon: true })
   const species = system.species.find(s => s.id === pending.speciesId)
   // The survey resolves every hidden signal left, after the encounter so its creature is not among them.
   const picked = await resolveSignals(repo, system, Number.MAX_SAFE_INTEGER)
   return {
-    text: `Surveyed epic ${system.epicKey}. Singularity Cell +${REWARDS.singularityForSurvey}. Encounter waiting.`,
+    text: `Surveyed epic ${system.epicKey}. ${[`Singularity Cell +${REWARDS.singularityForSurvey}`, ...xpNote(fed)].join(', ')}. Encounter waiting.`,
     toast: `System surveyed: ${system.name}. Something rare stirs. /contain`,
+    ...(fed?.toast ? { companionToast: fed.toast } : {}),
     report: {
       title: `System surveyed: ${system.name}`,
-      lines: [`Epic ${system.epicKey} complete.`, singularityLine, ...(picked.length > 0 ? [signalLine(picked)] : []), 'Something rare stirs.'],
+      lines: [`Epic ${system.epicKey} complete.`, singularityLine, ...(fed?.lines ?? []), ...(picked.length > 0 ? [signalLine(picked)] : []), 'Something rare stirs.'],
       encounter: encounterHeading(species, pending),
       cells,
     },
@@ -297,7 +331,9 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
   const stasis = mission.tacticalClean && attachedWork ? REWARDS.stasisForCleanReview : 0
   // SPEC 6.4: flora never flee, so a mission with work always harvests.
   const flora = system && attachedWork ? harvest(system, harvestCount(quality), rng) : {}
-  const reward: MissionReward = { counted: attachedWork, reinforced, stasis, flora }
+  // SPEC 9.3: only a mission that counted feeds the companion.
+  const fed = attachedWork ? await feedCompanion(repo, missionXp(quality)) : undefined
+  const reward: MissionReward = { counted: attachedWork, reinforced, stasis, flora, ...(fed ? { companionXp: { specimenId: fed.specimenId, xp: fed.xp } } : {}) }
   const done: Mission = { ...mission, completedAt: now, reward }
   await repo.appendMission(done)
   await repo.clearActiveMission()
@@ -309,7 +345,7 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
   if (stasis > 0) notes.push(`Stasis Cells +${stasis}`)
   const samples = Object.values(flora).reduce((a, b) => a + b, 0)
   // The command's text names no species (the model reads it); the report does.
-  const said = [...notes, ...(samples > 0 ? [`Flora samples +${samples}`] : [])]
+  const said = [...notes, ...(samples > 0 ? [`Flora samples +${samples}`] : []), ...xpNote(fed)]
   // Harvested flora are met: /scan names them.
   for (const id of Object.keys(flora)) {
     const s = system?.species.find(sp => sp.id === id)
@@ -335,7 +371,9 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
     ...(done.tacticalClean ? ['Tactical review: all clear'] : []),
     ...notes,
     ...(harvested.length > 0 ? [`Harvested: ${harvested.join(', ')}`] : []),
+    ...(fed?.lines ?? []),
   ]
+  const companionToast = fed?.toast ? { companionToast: fed.toast } : {}
   if (system && attachedWork && !hasPending && underCap && shouldEncounter(ctx, rng)) {
     const pending = await createEncounter(deps, system, quality, { missionKey: done.issueKey })
     await repo.patchMeta(m => ({ ...m, encountersToday: { day, count: today + 1 } }))
@@ -343,6 +381,7 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
     return {
       text: `Mission ${done.issueKey} complete.${said.length ? ` ${said.join(', ')}.` : ''} Encounter waiting.`,
       toast: `Encounter! ${species?.name ?? 'Something'} (${pending.tier}) detected. /contain`,
+      ...companionToast,
       report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, 'Encounter!'], encounter: encounterHeading(species, pending), cells },
     }
   }
@@ -353,6 +392,7 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
     : hasPending ? 'An encounter is already waiting: /contain.' : !underCap ? 'No more encounters today.' : 'No encounter this time.'
   return {
     text: `Mission ${done.issueKey} complete.${said.length ? ` ${said.join(', ')}.` : ''}`,
+    ...companionToast,
     report: { title: `Mission ${done.issueKey} complete`, lines: [...lines, why, ...(picked.length > 0 ? [signalLine(picked)] : [])], encounter: null },
   }
 }
@@ -361,7 +401,8 @@ export async function completeMission(deps: GameDeps & { attachedWork?: boolean 
  * `/mission reopen <KEY>` (SPEC 4.5): undoes the latest completion of KEY,
  * for one completed by mistake. Its log entry goes, so it can be started
  * again; what the completion recorded giving is taken back (the completed
- * count, and Reinforced Cells as far as they are still held). The count never
+ * count, cells, flora and companion XP, as far as they are still held; the
+ * companion's level follows its XP, its stage never goes back). The count never
  * returns to zero once an encounter has happened, so the first mission's
  * guaranteed encounter cannot be had twice. An encounter it led to and scan
  * signals it resolved stay. It does not start the mission.
@@ -395,6 +436,18 @@ export async function reopenMission(deps: GameDeps & { issueKey: string }): Prom
   const harvested = count(reward.flora)
   const takenFlora = count(inv.flora) - count(flora)
   await repo.saveInventory({ ...inv, reinforced: inv.reinforced - taken, stasis: inv.stasis - takenStasis, flora })
+  // The XP goes back from the specimen that earned it, whether or not it is still the companion.
+  let takenXp = 0
+  const gaveXp = reward.companionXp
+  if (gaveXp) {
+    const specimens = await repo.specimens()
+    const at = specimens.findIndex(s => s.id === gaveXp.specimenId)
+    if (at >= 0) {
+      const back = takeXp(specimens[at]!, gaveXp.xp)
+      takenXp = back.taken
+      await repo.saveSpecimens(specimens.map((s, i) => (i === at ? back.specimen : s)))
+    }
+  }
   const kept = (gave: number, took: number, what: string) => (gave > took ? [`${gave - took} ${what} already spent, kept`] : [])
   const parts = [
     ...(isUncounted ? ['1 fewer completed mission'] : []),
@@ -404,6 +457,7 @@ export async function reopenMission(deps: GameDeps & { issueKey: string }): Prom
     ...kept(reward.stasis, takenStasis, 'Stasis Cell'),
     ...(takenFlora > 0 ? [`Flora samples -${takenFlora}`] : []),
     ...kept(harvested, takenFlora, 'flora sample'),
+    ...(takenXp > 0 ? [`Companion XP -${takenXp}`] : []),
   ]
   return { text: `Mission ${key} reopened: removed from the log${parts.length > 0 ? `; ${parts.join(', ')}` : ''}. Encounters and scan signals it gave stay. Start it again with /mission ${key}.` }
 }

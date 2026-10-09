@@ -184,6 +184,8 @@ async function submitForm($: EngineInterface, value: string) {
  * vanishes before a long name is read), or its toast where no pane can open.
  */
 async function announce($: EngineInterface, out: Outcome) {
+  // A level up or evolution is told by toast too: the report may be dismissed unread.
+  if (out.companionToast) $.ui.toast(out.companionToast)
   if (out.report) {
     const r = out.report
     await update($, report, () => r)
@@ -262,6 +264,7 @@ async function syncTracked($: EngineInterface) {
         await announce($, out)
       } else {
         $.ui.toast(out.toast ?? out.text)
+        if (out.companionToast) $.ui.toast(out.companionToast)
       }
     }
     void preparePuzzle($)

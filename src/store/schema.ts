@@ -52,13 +52,20 @@ export type Mission = {
   /**
    * What completing it gave, so `/mission reopen` takes back exactly that:
    * whether it counted as a completed mission, the Reinforced and Stasis
-   * Cells it earned, and the flora samples it harvested (per species id). Set
-   * on completed missions in the log; absent on the active one.
+   * Cells it earned, the flora samples it harvested (per species id), and the
+   * XP the companion of the time earned (absent when none did). Set on
+   * completed missions in the log; absent on the active one.
    */
   reward?: MissionReward
 }
 
-export type MissionReward = { counted: boolean; reinforced: number; stasis: number; flora: Record<string, number> }
+export type MissionReward = {
+  counted: boolean
+  reinforced: number
+  stasis: number
+  flora: Record<string, number>
+  companionXp?: { specimenId: string; xp: number }
+}
 
 export type Specimen = {
   id: string
@@ -66,6 +73,7 @@ export type Specimen = {
   systemId: string
   tier: Tier
   attachment?: { class: AttachmentClass; item: string }
+  /** SPEC 9.3: `level` follows from the total `xp`; `stage` rises at evolution levels and never goes back. */
   level: number
   xp: number
   stage: 0 | 1 | 2

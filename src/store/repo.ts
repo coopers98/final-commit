@@ -115,6 +115,7 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     saveMissionLog: (items: Mission[]) => writeList(KEYS.missionLog, items),
 
     specimens: () => readList<Specimen>(KEYS.specimens, v => isObject(v) && typeof v.id === 'string' && isTier(v.tier)),
+    saveSpecimens: (items: Specimen[]) => writeList(KEYS.specimens, items),
     addSpecimen: async (s: Specimen) => writeList(KEYS.specimens, [...(await readList<Specimen>(KEYS.specimens, v => isObject(v) && isTier(v.tier))), s]),
 
     inventory: () =>

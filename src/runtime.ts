@@ -2,6 +2,7 @@ import type { PluginOptions } from 'claude-code'
 import type { BandView, ChartingEntry, MoodState } from '../types'
 import { COMPANION, GENERATION, PLANS, PUZZLE, TIER_SPECS, type GenerationModel } from './config'
 import { statusText } from './bridge/status'
+import { stageRows } from './companion'
 import { sourceNames } from './detect/sources'
 import type { PrivacyMode } from './puzzle/privacy-filter'
 import { createRng, seedFromCrypto, type Rng } from './rng'
@@ -129,7 +130,7 @@ export async function snapshot(
       tier: `${TIER_SPECS[specimen.tier].glyph} ${TIER_SPECS[specimen.tier].label}`,
       tierName: specimen.tier,
       mood: moodOf(now, mood),
-      sprite: species?.stages[specimen.stage]?.rows ?? species?.stages[0]?.rows ?? [],
+      sprite: stageRows(species, specimen.stage),
       mission: mission?.issueKey ?? null,
       isBlinking: false,
     }

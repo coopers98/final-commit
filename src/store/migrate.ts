@@ -1,3 +1,4 @@
+import { levelForXp, stageForLevel } from '../companion'
 import { REWARDS, STORE } from '../config'
 import { KEYS, type StoreLike } from './repo'
 import type { SaveMeta, Versioned } from './schema'
@@ -92,6 +93,30 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 7 })
   },
+  // 7 -> 8: the companion earns XP (SPEC 9.3), and a reward records what it
+  // earned (`companionXp`, optional). No completion gave XP before, so older
+  // rewards get none. Specimens keep their XP; a level or stage that does not
+  // follow from it (all were 1 and 0 before) is set from it.
+  7: async store => {
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (!isObject(value) || value.schemaVersion !== 7) continue
+      let next: Record<string, unknown> = { ...value, schemaVersion: 8 }
+      if (key === KEYS.specimens && Array.isArray(value.items)) next = { ...next, items: value.items.map(withProgress) }
+      await store.set(key, next)
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 8 })
+  },
+}
+
+/** A specimen's level from its XP, and a stage at least the one that level reached. */
+function withProgress(s: unknown): unknown {
+  if (!isObject(s)) return s
+  const xp = typeof s.xp === 'number' && Number.isFinite(s.xp) && s.xp > 0 ? Math.floor(s.xp) : 0
+  const level = levelForXp(xp)
+  const kept = s.stage === 1 || s.stage === 2 ? s.stage : 0
+  return { ...s, xp, level, stage: Math.max(kept, stageForLevel(level)) }
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

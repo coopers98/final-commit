@@ -631,7 +631,44 @@ test('the band shows the companion once one is contained, and steps aside during
   await hidden.unmount()
 })
 
-test('/bay companion N picks a companion by its list number', { options: { devMode: true } }, async ($, on) => {
+test('a finished mission feeds the companion: XP in the report and the command text, a level up toasted', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  let contained = false
+  for (let i = 0; i < 30 && !contained; i += 1) {
+    await run($, 'encounter')
+    await containWith($, async ui => {
+      await ui.input({ key: 'keys', text: '', kind: 'submit' })
+      await ui.input({ key: 'done', text: '', kind: 'submit' })
+    })
+    contained = (await run($, 'bay')).text !== 'Opened the specimen bay (0 specimens).'
+  }
+  expect(contained).toBe(true)
+  const reportLines = async () => {
+    const ui = await $.ui.mount(PANE('fc-report'))
+    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+    await ui.unmount()
+    return texts
+  }
+  await run($, 'mission', 'NOVA-2')
+  // No tests ran: quality 0, 10 XP, short of level 2.
+  expect((await run($, 'mission', 'complete anyway')).text).toContain('Companion +10 XP')
+  expect((await reportLines()).some(t => / \+10 XP \(level 1\)$/.test(t))).toBe(true)
+  expect(w.toasts.some(t => t.includes('reached level'))).toBe(false)
+  await run($, 'mission', 'NOVA-3')
+  const text = (await run($, 'mission', 'complete anyway')).text!
+  expect(text).toContain('Companion +10 XP')
+  expect(text).not.toContain('reached')
+  const lines = await reportLines()
+  expect(lines.some(t => / \+10 XP \(level 2\)$/.test(t))).toBe(true)
+  expect(lines.some(t => / reached level 2\.$/.test(t))).toBe(true)
+  expect(w.toasts.filter(t => / reached level 2\.$/.test(t)).length).toBe(1)
+  // Reopening takes the XP back; the command text says so without a name.
+  expect((await run($, 'mission', 'reopen NOVA-3')).text).toContain('Companion XP -10')
+})
+
+test('/bay companion N picks a companion by its list number',{ options: { devMode: true } }, async ($, on) => {
   const w = world(on)
   await $.session.start(START)
   await chart($, w, 'NOVA-1', 'Billing export')

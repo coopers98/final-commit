@@ -5,6 +5,7 @@ import {
   queueTarget, recordBash, recordClosure, recordTactical, reopenMission, setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
+import { xpForLevel } from '../src/companion'
 import { DAY_MS } from '../src/encounter/roll'
 import { createRng } from '../src/rng'
 import { migrate } from '../src/store/migrate'
@@ -580,4 +581,97 @@ test('an encounter a mission rolled carries its key, for its puzzle; a forced on
   await repo.clearPending()
   await forceEncounter(deps)
   expect((await repo.pending())!.missionKey).toBe(undefined)
+})
+
+async function withCompanion(seed = 1, over: { xp?: number; level?: number; stage?: 0 | 1 | 2 } = {}) {
+  const w = await withEpic(seed)
+  const system = (await w.repo.system((await w.repo.systemIds())[0]!))!
+  const species = system.species.find(s => s.kind === 'fauna')!
+  await w.repo.addSpecimen({ id: 'spec-1', speciesId: species.id, systemId: system.id, tier: species.tier, level: 1, xp: 0, stage: 0, containedAt: 0, ...over })
+  await w.repo.patchMeta(m => ({ ...m, companionId: 'spec-1' }))
+  return { ...w, name: species.name, systemId: system.id, speciesId: species.id }
+}
+
+const companionOf = async (repo: Awaited<ReturnType<typeof fresh>>['repo'], id = 'spec-1') => (await repo.specimens()).find(s => s.id === id)!
+
+test('with no companion a mission gives no XP and records none', async () => {
+  const { repo, deps } = await withEpic()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission(deps)
+  expect(out.text).not.toContain('XP')
+  expect(out.report!.lines.some(l => l.includes('XP'))).toBe(false)
+  expect('companionXp' in (await repo.missionLog()).at(-1)!.reward!).toBe(false)
+})
+
+test('the companion earns 10 XP for a mission of quality 0; the report names it, the command text does not', async () => {
+  const { repo, deps, name } = await withCompanion()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission(deps)
+  expect(out.text).toContain('Companion +10 XP')
+  expect(out.text).not.toContain(name)
+  expect(out.report!.lines).toContain(`${name} +10 XP (level 1)`)
+  expect(out.companionToast).toBe(undefined)
+  const held = await companionOf(repo)
+  expect([held.xp, held.level]).toEqual([10, 1])
+  expect((await repo.missionLog()).at(-1)!.reward!.companionXp).toEqual({ specimenId: 'spec-1', xp: 10 })
+})
+
+test('green tests raise mission XP to 15: a level up is reported and toasted', async () => {
+  const { repo, deps, name } = await withCompanion()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await recordBash({ ...deps, signals: classifyBash('npm test'), commits: 0, isError: false, output: '' })
+  const out = await completeMission(deps)
+  expect(out.text).toContain('Companion +15 XP')
+  expect(out.report!.lines).toContain(`${name} +15 XP (level 2)`)
+  expect(out.report!.lines).toContain(`${name} reached level 2.`)
+  expect(out.companionToast).toBe(`${name} reached level 2.`)
+  expect((await companionOf(repo)).level).toBe(2)
+})
+
+test('a closure with no work attached gives the companion nothing', async () => {
+  const { repo, deps } = await withCompanion()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission({ ...deps, attachedWork: false })
+  expect(out.text).not.toContain('XP')
+  expect((await companionOf(repo)).xp).toBe(0)
+  expect('companionXp' in (await repo.missionLog()).at(-1)!.reward!).toBe(false)
+})
+
+test('an epic survey gives the companion 25 XP; with no companion, none', async () => {
+  const { repo, deps, name } = await withCompanion()
+  const out = await completeEpic(deps)
+  expect(out.text).toBe('Surveyed epic NOVA-1. Singularity Cell +1, Companion +25 XP. Encounter waiting.')
+  expect(out.report!.lines).toContain(`${name} +25 XP (level 2)`)
+  expect(out.companionToast).toBe(`${name} reached level 2.`)
+  expect((await companionOf(repo)).xp).toBe(25)
+  const plain = await withEpic()
+  expect((await completeEpic(plain.deps)).text).toBe('Surveyed epic NOVA-1. Singularity Cell +1. Encounter waiting.')
+})
+
+test('reaching level 10 evolves the companion; reopening takes the XP back but not the evolution', async () => {
+  const { repo, deps, name } = await withCompanion(1, { xp: xpForLevel(10) - 5, level: 9 })
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  const out = await completeMission(deps)
+  for (const line of [`${name} +10 XP (level 10)`, `${name} reached level 10.`, `${name} evolved!`]) expect(out.report!.lines).toContain(line)
+  // One toast: the evolution outranks the level up.
+  expect(out.companionToast).toBe(`${name} evolved!`)
+  const evolved = await companionOf(repo)
+  expect([evolved.level, evolved.stage]).toEqual([10, 1])
+  const back = await reopenMission({ ...deps, issueKey: 'NOVA-2' })
+  expect(back.text).toContain('Companion XP -10')
+  const after = await companionOf(repo)
+  expect([after.xp, after.level, after.stage]).toEqual([xpForLevel(10) - 5, 9, 1])
+})
+
+test('reopening takes XP from the specimen that earned it, even after the companion changed, never below 0', async () => {
+  const { repo, deps, systemId, speciesId } = await withCompanion()
+  await startMission({ ...deps, issueKey: 'NOVA-2' })
+  await completeMission(deps)
+  await repo.addSpecimen({ id: 'spec-2', speciesId, systemId, tier: 'common', level: 1, xp: 0, stage: 0, containedAt: 0 })
+  await setCompanion({ ...deps, specimenId: 'spec-2' })
+  // Its XP fell below what the mission gave (a save edited by hand): only what is held goes.
+  await repo.saveSpecimens((await repo.specimens()).map(s => (s.id === 'spec-1' ? { ...s, xp: 4 } : s)))
+  expect((await reopenMission({ ...deps, issueKey: 'NOVA-2' })).text).toContain('Companion XP -4')
+  expect((await companionOf(repo)).xp).toBe(0)
+  expect((await companionOf(repo, 'spec-2')).xp).toBe(0)
 })

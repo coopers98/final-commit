@@ -385,7 +385,10 @@ Built: each is registered at session start as `final-commit:engineering`, `final
 - The band is drawn again after a `/clear`, which resets session state without a session start.
 - While the Bridge pane is open the companion moves into it, at its foot, and the band steps aside; closing the Bridge brings it back.
 - Reacts to events: build pass (eats), stack trace (flinches), idle 10+ min (sleeps).
-- Earns XP from completed missions; evolves at levels 10 and 25.
+- Earns XP (built): the active companion gets `10 + round(10 * q)` XP for each completed mission that counted (4.3; `q` is mission quality, so 10 to 20) and 25 XP for each epic survey. No companion, no XP. The specimen stores its total XP; its level follows from it (level L to L + 1 takes `15 + 5 * (L - 1)` XP, capped at level 99).
+- Evolves at levels 10 (stage 1) and 25 (stage 2), and never reverts. Wherever a contained specimen is drawn (the band, the Bridge's foot) it is drawn at its stage, falling back to the last stage below it that has a drawing, then to none; wild encounters, silhouettes and the report of a new creature draw stage 0.
+- The mission or survey report names the XP, a level reached and an evolution (`Glimmer +15 XP (level 3)`, `Glimmer reached level 3.`, `Glimmer evolved!`); a level up or evolution is also toasted (one toast, the evolution first). Command text says only `Companion +15 XP`, with no name.
+- `/mission reopen` takes back the XP the completion gave (`Mission.reward.companionXp`) from the specimen that earned it, as far as it still holds it; the level follows, the stage stays. Survey XP is not reopenable.
 - **Perks affect game mechanics only** (encounter odds, harvest yield). Never code behavior.
 
 ### 9.4 Scan
@@ -427,7 +430,8 @@ type Mission      = { issueKey: string; systemId: string; startedAt: string;
                       testsGreen: boolean; lint: 'pass'|'fail'|null;
                       tacticalClean: boolean; score?: number;
                       reward?: { counted: boolean; reinforced: number; stasis: number;
-                                 flora: Record<string /* speciesId */, number> } /* set when completed */ }
+                                 flora: Record<string /* speciesId */, number>;
+                                 companionXp?: { specimenId: string; xp: number } /* 9.3 */ } /* set when completed */ }
 type Inventory    = { reinforced: number; stasis: number; singularity: number;
                       flora: Record<string /* speciesId */, number> }
 type CatalogEntry = { speciesId: string; tier: Tier; attachment?: string;
@@ -442,7 +446,7 @@ type PuzzleStat   = { category: string; type: string; attempts: number; correct:
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle. Schema 8 adds companion XP (9.3): a reward may record `companionXp`, which older rewards lack (no completion gave XP before); each specimen's `level` is set from its `xp`, and its `stage` raised to that level's stage if lower (every specimen was level 1, XP 0, stage 0 before, which stays valid).
 
 ---
 
@@ -515,7 +519,7 @@ The "First Diffling" slice is implemented, with flora harvesting, all four cells
 - Dossier pane, spaced repetition
 
 ### v4: Depth
-- Evolution, companion perks
+- Companion XP, levels and evolution (done early, 9.3); companion perks
 - Design Probe, Deep Expedition
 - Anomaly tier, closed-system behavior
 
@@ -636,6 +640,8 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Lattice speeds | One sweep: slow 2000 ms, medium 1400 ms, fast 900 ms, erratic 700 ms with +/-35% jitter; frame every 40 ms |
 | Lattice twists | Exotic reverses with probability 0.6 per second; Anomaly zone flickers every 300 ms, visible 70% of the time |
 | Calibration | 8 beats 750 ms apart after a 1 s lead-in; offset = median press error, clamped to +/-400 ms |
+| Companion XP | Mission that counted `10 + round(10 * q)` (10 to 20); epic survey 25; level L to L + 1 takes `15 + 5 * (L - 1)`; level cap 99 |
+| Evolution | Stage 1 at level 10, stage 2 at level 25; never reverts |
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |
 | Generation | Opus by default (setting), 16,000 output tokens, 180 s timeout, names at most 24 characters, 2 to 4 biomes |
 | Tracker sync | Poll every 12 minutes; each query reaches back 60 s; 500 processed transitions kept; 100 waiting transitions kept per record |
