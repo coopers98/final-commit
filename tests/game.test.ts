@@ -11,7 +11,7 @@ import { createRng } from '../src/rng'
 import { migrate } from '../src/store/migrate'
 import { createMemoryStore, createRepo } from '../src/store/repo'
 import type { Complete } from '../src/world/generate'
-import { ENCOUNTER } from '../src/config'
+import { DOSSIER, ENCOUNTER } from '../src/config'
 
 const offline: Complete = async () => ({ ok: false, reason: 'offline' })
 
@@ -541,7 +541,28 @@ test('a puzzle answer is kept with the encounter once, counts in the accuracy re
   expect(first!.bonus > 0).toBe(true)
   // A second answer changes nothing.
   expect(await answerPuzzle({ ...deps, choice: 0, elapsedMs: 0 })).toEqual(first)
-  expect(await repo.puzzleStats()).toEqual([{ category: 'off by one', type: 'bug-hunt', attempts: 1, correct: 1, lastSeen: 0 }])
+  expect(await repo.puzzleStats()).toEqual([{ category: 'off by one', type: 'bug-hunt', attempts: 1, correct: 1, lastSeen: 0, recent: [true] }])
+})
+
+test('the accuracy record keeps the last answers per category, newest last, up to the window', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  const answer = async (choice: number) => {
+    await repo.savePending({ ...(await repo.pending())!, puzzle: PUZZLE_FIXTURE, analysis: undefined })
+    await answerPuzzle({ ...deps, choice, elapsedMs: 0 })
+  }
+  await answer(0)
+  for (let i = 0; i < DOSSIER.recentWindow + 2; i++) await answer(2)
+  let [stat] = await repo.puzzleStats()
+  expect(stat!.attempts).toBe(DOSSIER.recentWindow + 3)
+  expect(stat!.correct).toBe(DOSSIER.recentWindow + 2)
+  expect(stat!.recent.length).toBe(DOSSIER.recentWindow)
+  expect(stat!.recent.every(Boolean)).toBe(true)
+  await answer(0)
+  ;[stat] = await repo.puzzleStats()
+  expect(stat!.recent.length).toBe(DOSSIER.recentWindow)
+  expect(stat!.recent.at(-1)).toBe(false)
+  expect(stat!.recent.at(-2)).toBe(true)
 })
 
 test('a right answer\'s bonus raises the odds of every containment attempt on that creature', async () => {

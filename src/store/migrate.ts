@@ -108,6 +108,22 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 8 })
   },
+  // 8 -> 9: puzzle accuracy keeps the last answers per category (`recent`,
+  // SPEC 8.2). Older stats did not record them, so they start empty and
+  // show no trend until answers come in.
+  8: async store => {
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (!isObject(value) || value.schemaVersion !== 8) continue
+      let next: Record<string, unknown> = { ...value, schemaVersion: 9 }
+      if (key === KEYS.puzzleStats && Array.isArray(value.items)) {
+        next = { ...next, items: value.items.map(s => (isObject(s) && !Array.isArray(s.recent) ? { ...s, recent: [] } : s)) }
+      }
+      await store.set(key, next)
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 9 })
+  },
 }
 
 /** A specimen's level from its XP, and a stage at least the one that level reached. */

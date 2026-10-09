@@ -203,6 +203,20 @@ export const SCAN = {
   silhouetteChar: '#',
 } as const
 
+// SPEC 8.2, DEFAULT: the Dossier. A category keeps its last `recentWindow`
+// answers. With at least `minAnswers` of them, its recent accuracy against
+// its overall accuracy reads `up` (at least `trendMargin` above), `down` (at
+// least that far below) or `steady`; with fewer, no trend. The weakest
+// category is marked once it has `minAnswers` answers and a miss. Groups
+// follow `typeOrder`, with these labels; a type not listed follows, by id.
+export const DOSSIER = {
+  recentWindow: 10,
+  minAnswers: 5,
+  trendMargin: 0.1,
+  typeOrder: ['pattern-id', 'bug-hunt', 'trace'] as readonly string[],
+  typeLabels: { 'pattern-id': 'Pattern ID', 'bug-hunt': 'Bug Hunt', trace: 'Trace' } as Record<string, string>,
+} as const
+
 // DEFAULT: drawing colors (SPEC 6.2, 9). Tier colors are in TIER_SPECS; the
 // Anomaly's `cycle` steps through `cycle` every `cycleMs`. Status colors are
 // theme keys, so they follow the person's light or dark theme.
@@ -220,7 +234,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 8 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 9 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const

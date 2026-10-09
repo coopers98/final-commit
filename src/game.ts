@@ -1,7 +1,7 @@
 import type { CellCounts, ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
 import { grantXp, missionXp, takeXp } from './companion'
-import { CELLS, COMPANION_XP, CRAFT, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
+import { CELLS, COMPANION_XP, CRAFT, DOSSIER, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { puzzleBonus } from './puzzle/puzzle'
 import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
@@ -646,7 +646,7 @@ export async function answerPuzzle(deps: GameDeps & { choice: number | undefined
   if (!isSkipped) {
     const stats = await repo.puzzleStats()
     const was = stats.find(s => s.category === puzzle.category && s.type === puzzle.type)
-    const next = { category: puzzle.category, type: puzzle.type, attempts: (was?.attempts ?? 0) + 1, correct: (was?.correct ?? 0) + (isCorrect ? 1 : 0), lastSeen: now }
+    const next = { category: puzzle.category, type: puzzle.type, attempts: (was?.attempts ?? 0) + 1, correct: (was?.correct ?? 0) + (isCorrect ? 1 : 0), lastSeen: now, recent: [...(was?.recent ?? []), isCorrect].slice(-DOSSIER.recentWindow) }
     await repo.savePuzzleStats([...stats.filter(s => s !== was), next])
   }
   return analysis

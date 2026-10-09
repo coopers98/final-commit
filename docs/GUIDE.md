@@ -171,6 +171,17 @@ ID needs `privacyMode` set to `standard` or `off`: under the default
 Hunt (Common to Rare get a Trace when one can be made, Exotic and up a Bug
 Hunt). Trace never sends anything: it runs on this machine.
 
+### Dossier
+
+`/dossier` opens your puzzle accuracy: a line of totals (`12 answered, 9
+right (75%)`), then each category by puzzle type (Pattern ID, Bug Hunt,
+Trace) as `category  right/answered  pct%  trend`, weakest first. The trend
+(`up`, `down` or `steady`) compares your last 10 answers in that category
+with your whole record, and shows once you have 5. The one weakest category
+with at least 5 answers and a miss is marked `weakest`. The dossier only
+shows this: it does not change which puzzles you get. Esc closes it (a Close
+button on mobile).
+
 ### Seal the Lattice
 
 `/contain` then opens **Seal the Lattice**. You can also press Enter on the
@@ -356,8 +367,9 @@ by `·`:
 ## Coming later
 
 - **More puzzles:** Complexity Read, more languages (PHP, Python, SQL,
-  Markdown, with Trace for each), and `/dossier` for your accuracy by
-  category.
+  Markdown, with Trace for each), and puzzles that come up more often in
+  the categories where you are weakest (the dossier shows them but does not
+  yet change which puzzles you get).
 - **Companion perks** that change game odds (never your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.
 
@@ -375,6 +387,7 @@ by `·`:
 | `/calibrate` | Measure this device's key delay |
 | `/bay`, `/bay companion N` | Your collection and companion |
 | `/scan [KEY]` | What the sensors know about a system |
+| `/dossier` | Puzzle accuracy by category, with trend |
 | `/bridge` | Gauges, crew and log |
 | `/captains-log` | Write a session summary |
 | `/setup` | Choose and set up work sources |

@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { tierColor } from '../src/bridge/color'
-import { COLORS, SYNC } from '../src/config'
+import { COLORS, STORE, SYNC } from '../src/config'
 
 // Engine-level tests: the plugin loaded by the engine's own host, with the
 // clock, store, env, model and UI operations answered beneath it.
@@ -18,9 +18,9 @@ type Gh = (argv: readonly string[]) => { exitCode: number; stdout: string; stder
 /** `node`: answers a `node` command (Trace's runner), with its init (cwd, stdin). */
 type Node = (argv: readonly string[], init?: { cwd?: string; stdin?: string }) => { exitCode: number; stdout: string; stderr?: string }
 
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh; git?: Gh; node?: Node } = {}): World {
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; store?: Record<string, unknown>; gh?: Gh; git?: Gh; node?: Node } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on)
+  mock.store(on, opts.store)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
   const held: (() => void)[] = []
   const w: World = { clock, logs: [], commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], release: () => held.splice(0).forEach(r => r()) }
@@ -95,7 +95,7 @@ async function containWith($: any, keys: (ui: any) => Promise<void>) {
 test('session start registers the commands', async ($, on) => {
   const w = world(on)
   await $.session.start(START)
-  for (const n of ['epic', 'mission', 'contain', 'craft', 'calibrate', 'bay', 'scan']) expect(w.commands).toContain(n)
+  for (const n of ['epic', 'mission', 'contain', 'craft', 'calibrate', 'bay', 'scan', 'dossier']) expect(w.commands).toContain(n)
   expect(w.commands).not.toContain('encounter')
 })
 
@@ -1263,6 +1263,53 @@ test('/scan opens a pane for the active system and keeps species names out of it
   expect(texts.some(t => t.endsWith('not yet encountered'))).toBe(true)
   expect(texts.every(t => [...t].length <= 40)).toBe(true)
   await ui.unmount()
+})
+
+test('/dossier opens a pane of puzzle accuracy and tells the model only the count', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  expect((await run($, 'dossier')).text).toBe('Opened the dossier (0 answered).')
+  expect(w.opened.at(-1)).toBe('fc-dossier')
+  const ui = await $.ui.mount(PANE('fc-dossier', 40))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.slice(0, 2)).toEqual(['No puzzles answered yet. They come', '  before containment.'])
+  await ui.unmount()
+})
+
+const SEEDED_STATS = [
+  { category: 'off by one', type: 'bug-hunt', attempts: 6, correct: 2, lastSeen: 1, recent: [false, false, true, false, true, false] },
+  { category: 'closures and scope scoping', type: 'pattern-id', attempts: 6, correct: 6, lastSeen: 1, recent: [true, true, true, true, true, true] },
+]
+
+test('/dossier lists seeded accuracy by type, weakest first, within 40 columns, and a mobile Close button clears its state', async ($, on) => {
+  const w = world(on, { store: { 'fc:puzzle-stats': { schemaVersion: STORE.schemaVersion, items: SEEDED_STATS } } })
+  await $.session.start(START)
+  const said = (await run($, 'dossier')).text!
+  expect(said).toBe('Opened the dossier (12 answered).')
+  expect(said).not.toContain('off by one')
+  expect(w.opened.at(-1)).toBe('fc-dossier')
+  const ui = await $.ui.mount(PANE('fc-dossier', 40))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts[0]).toBe('12 answered, 8 right (67%)')
+  expect(texts.indexOf('Pattern ID')).toBeLessThan(texts.indexOf('Bug Hunt'))
+  expect(texts.find(t => t.startsWith('off by one'))).toMatch(/2\/6 +33% .*weakest$/)
+  expect(texts.every(t => [...t].length <= 40)).toBe(true)
+  expect(await ui.find({ key: 'dossier-close' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/dossier on mobile (no keys): a Close button closes the pane and clears its state', async ($, on) => {
+  const w = world(on, { store: { 'fc:puzzle-stats': { schemaVersion: STORE.schemaVersion, items: SEEDED_STATS } } })
+  await $.session.start({ ...START, surface: 'mobile' as const })
+  await run($, 'dossier')
+  expect(w.opened.at(-1)).toBe('fc-dossier')
+  const ui = await $.ui.mount({ ...PANE('fc-dossier', 40), surface: 'mobile' as const })
+  expect((await ui.findAll({ type: 'Text' })).length > 3).toBe(true)
+  await ui.press({ key: 'dossier-close' })
+  await ui.unmount()
+  const after = await $.ui.mount({ ...PANE('fc-dossier', 40), surface: 'mobile' as const })
+  expect((await after.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['Nothing to show.'])
+  await after.unmount()
 })
 
 test('an Engineering LINT verdict counts as the mission\'s lint, so /mission complete stops asking about it', async ($, on) => {

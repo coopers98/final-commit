@@ -98,8 +98,8 @@ export type PendingEncounter = {
   analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number }
 }
 
-/** SPEC 8.2: accuracy per puzzle category. `lastSeen` is epoch milliseconds. */
-export type PuzzleStat = { category: string; type: string; attempts: number; correct: number; lastSeen: number }
+/** SPEC 8.2: accuracy per puzzle category. `lastSeen` is epoch milliseconds; `recent` is the last answers, newest last (right is true). */
+export type PuzzleStat = { category: string; type: string; attempts: number; correct: number; lastSeen: number; recent: boolean[] }
 
 export type Inventory = Record<Exclude<Cell, 'standard'>, number> & { flora: Record<string, number> }
 

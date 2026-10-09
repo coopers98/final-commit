@@ -138,7 +138,20 @@ test('schema 7 to 8: values are restamped, older rewards get no companion XP, an
   expect('companionXp' in (await repo.missionLog())[0]!.reward!).toBe(false)
   expect(await repo.specimens()).toEqual([fresh, { ...odd, xp: 0, level: 1 }])
   expect((await repo.meta())!.companionId).toBe('spec-1')
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(8)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
+})
+
+test('schema 8 to 9: puzzle stats gain an empty recent list, everything is restamped, and the counts are kept', async () => {
+  const store = createMemoryStore()
+  await store.set(KEYS.meta, { schemaVersion: 8, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: 1, completedMissions: 1, activeEpicKey: null, companionId: null, encountersToday: { day: '', count: 0 } })
+  const old = { category: 'off by one', type: 'bug-hunt', attempts: 4, correct: 3, lastSeen: 7 }
+  await store.set(KEYS.puzzleStats, { schemaVersion: 8, items: [old, { ...old, category: 'loops', recent: [true] }] })
+  await store.set(KEYS.inventory, { schemaVersion: 8, reinforced: 1, stasis: 0, singularity: 0, flora: {} })
+  await migrate(store, 99)
+  const repo = createRepo(store)
+  expect(await repo.puzzleStats()).toEqual([{ ...old, recent: [] }, { ...old, category: 'loops', recent: [true] }])
+  expect((await repo.inventory()).reinforced).toBe(1)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(9)
 })
 
 test('schema 5 to 6: sync records gain an empty waiting list and keep where they left off', async () => {

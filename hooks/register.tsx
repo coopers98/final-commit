@@ -8,6 +8,7 @@ import { wireCrew } from '../src/crew/crew-wire'
 import { CREW_SPECS, ROLES } from '../src/crew/roster'
 import { wireBand } from '../src/bridge/band'
 import { wireBay } from '../src/bridge/bay-pane'
+import { wireDossier } from '../src/bridge/dossier-pane'
 import { wireScan } from '../src/bridge/scan-pane'
 import { wireSetup } from '../src/setup/setup-pane'
 import { wrap } from '../src/bridge/text'
@@ -570,6 +571,7 @@ async function startSession($: EngineInterface) {
   await $.command.register({ name: 'calibrate', description: "Measure this device's key latency for containment" })
   await $.command.register({ name: 'bay', description: 'Open the specimen bay', argumentHint: '[companion N]' })
   await $.command.register({ name: 'scan', description: 'Scan a star system: the lifeforms known so far', argumentHint: '[KEY]' })
+  await $.command.register({ name: 'dossier', description: 'Open the dossier: puzzle accuracy by category' })
   await $.command.register({ name: 'setup', description: 'Choose and set up the work sources the game reads: plans, GitHub, Jira' })
   await $.command.register({ name: 'bridge', description: 'Open the bridge: system, mission, hull, shields, fuel' })
   await $.command.register({ name: 'captains-log', description: 'Write a summary of this session to the captain\'s log' })
@@ -627,6 +629,7 @@ export const register: Register = (on, options) => {
   wireCalibration(on)
   wireBay(on)
   wireScan(on)
+  wireDossier(on)
   wireSetup(on, options)
   wireBridge(on)
   wireCrew(on)

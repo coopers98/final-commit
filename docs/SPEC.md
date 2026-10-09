@@ -324,8 +324,8 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 ### 8.2 Training layer
 
 - Accuracy tracked per category (sliding window, heaps, two pointers, N+1, etc.).
-- Weak categories resurface more often (spaced repetition).
-- `/dossier` pane shows accuracy by category and trend.
+- Weak categories resurface more often (spaced repetition). Not built: `/dossier` shows the weak spots, but which puzzles are generated is unchanged (8.4 "Not yet", D4).
+- `/dossier` pane shows accuracy by category and trend. Built (8.4).
 
 ### 8.3 Adapters
 
@@ -348,8 +348,9 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 - **When:** prepared in the background as the encounter is rolled (and again at session start if a reload cut it off); `/contain` never waits for it. A prepared puzzle not yet answered comes first in the containment pane: `1` to `4` answer, `s` skips, Esc leaves both for later. The answer is kept with the encounter, so its bonus counts for every attempt on that creature; it is asked once.
 - **Settings:** `puzzles` is `on` (default), `local` (Trace and Bug Hunt: nothing is sent to a model) or `off`; `puzzleModel` is the model for Pattern ID, Sonnet by default, two calls per puzzle. Code is sent only with `puzzles` on **and** `privacyMode` other than `strict` (`sendsCode`, `src/runtime.ts`): the code filter keeps identifiers and type names, which strict mode exists to keep back, so under strict (the default) puzzles are local (Trace and Bug Hunt).
 - **Safety (security review of FC-15):** paths come only from a diff's file headers, must be relative with no `..`, and must be regular files in `git diff --raw` (no symlinks or submodules); git's output format is pinned (`--no-textconv`, plain prefixes, no renames). The code filter shows only lines it can prove are plain code (5.3), after three security reviews found the earlier literal-blanking scanner could be desynced; every reported counterexample and a seeded fuzz are tests. A file whose filtered line count differs is skipped; git runs with `core.fsmonitor=false` (a `clean` filter assigned in `.gitattributes` still runs on `git diff`, as it would for any git command there); control characters are removed from code, and model text with control characters or line breaks is refused; units with JSX or a code fence are skipped; the check call is told the question is data.
-- **Accuracy:** each answer (not a skip) counts in `fc:puzzle-stats` by category and type, for `/dossier` later.
-- **Not yet:** Complexity Read, the other runners (`python3`, `php`, `sqlite3`) and adapters, Trace for SQL and plan documents, a fresh temporary folder per run (the system one is used; node's permission model denies file access anyway), theming on the epic, the dispute key, `/dossier`.
+- **Accuracy:** each answer (not a skip) counts in `fc:puzzle-stats` by category and type, and the last 10 answers per category are kept (`recent`, newest last).
+- **Dossier (FC-21):** `/dossier` opens a pane "Dossier" (`src/bridge/dossier.ts`, `dossier-pane.tsx`). First a totals line (`12 answered, 9 right (75%)`), then a group per puzzle type (Pattern ID, Bug Hunt, Trace), each category as `category  right/answered  pct%  trend`. Within a group the lowest accuracy comes first, ties by more answers then name. The trend reads `up`, `down` or `steady` by comparing the accuracy of the last answers with the overall accuracy (a gap of at least 10 points; at least 5 recent answers, else none). The one weakest category pane-wide, with at least 5 answers and a miss, is marked `weakest`. Rows are cut to the pane's width on the category, so the numbers stay whole at 40 columns; the empty state wraps (`No puzzles answered yet. They come before containment.`). Esc closes (the state is cleared with it); mobile has a Close button. The command's text, which the model reads, is only `Opened the dossier (12 answered).`
+- **Not yet:** Complexity Read, the other runners (`python3`, `php`, `sqlite3`) and adapters, Trace for SQL and plan documents, a fresh temporary folder per run (the system one is used; node's permission model denies file access anyway), theming on the epic, the dispute key, and spaced repetition in picking puzzles: `/dossier` only shows the weakest categories, and which puzzle a creature gets is not weighted by them (D4 stays open).
 
 **Open decisions:** D4 puzzle balance (weak spots vs strengths vs even); D5 Deep Expedition on demand via `/expedition` or Anomaly-only.
 
@@ -366,7 +367,7 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 | **Report pane** | Opens on `/mission complete` and `/epic complete` and stays until dismissed (a toast vanishes before a long name is read): commits, test runs, cells earned, and the creature that turned up with its sprite. Enter goes straight to containment (`r`, `s` or `x` then Enter uses a Reinforced, Stasis or Singularity Cell, each offered while one is usable); Esc leaves the encounter waiting. |
 | **Specimen Bay pane** (`/bay`) | The cells and flora held, collection grid, set companion, the catalog of everything met across systems (no per-system completion: an epic holds too few missions to meet a whole system). v1: a list, and `/bay companion N` |
 | **Scan pane** (`/scan [KEY]`) | What the sensors know about a system (9.4) |
-| **Dossier pane** (`/dossier`) | Puzzle accuracy |
+| **Dossier pane** (`/dossier`) | Puzzle accuracy by category, grouped by puzzle type, weakest first, with a trend and the weakest category marked (8.4). Built. Esc closes; mobile has a Close button |
 
 ### 9.1 Crew (subagents)
 
@@ -447,12 +448,12 @@ type PendingEncounter = { id: string; systemId: string; speciesId: string; tier:
                       missionKey?: string /* the mission that rolled it */;
                       puzzle?: Puzzle | null /* 8; null when none could be made */;
                       analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number } }
-type PuzzleStat   = { category: string; type: string; attempts: number; correct: number; lastSeen: number }  // fc:puzzle-stats
+type PuzzleStat   = { category: string; type: string; attempts: number; correct: number; lastSeen: number; recent: boolean[] }  // recent: last answers, newest last, at most 10  // fc:puzzle-stats
 ```
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle. Schema 8 adds companion XP (9.3): a reward may record `companionXp`, which older rewards lack (no completion gave XP before); each specimen's `level` is set from its `xp`, and its `stage` raised to that level's stage if lower (every specimen was level 1, XP 0, stage 0 before, which stays valid).
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle. Schema 8 adds companion XP (9.3): a reward may record `companionXp`, which older rewards lack (no completion gave XP before); each specimen's `level` is set from its `xp`, and its `stage` raised to that level's stage if lower (every specimen was level 1, XP 0, stage 0 before, which stays valid). Schema 9 adds `PuzzleStat.recent` (8.4); older stats start with none, so they show no trend until answers come in.
 
 ---
 
@@ -525,7 +526,7 @@ The "First Diffling" slice is implemented, with flora harvesting, all four cells
 - Content adapters and runners (8.3): PHP, TypeScript/JavaScript, Python, SQL, Markdown
 - Pattern ID, Complexity Read, Trace, Bug Hunt
 - Answer verification, dispute key
-- Dossier pane, spaced repetition
+- Dossier pane (built, 8.4); spaced repetition (not built)
 
 ### v4: Depth
 - Companion XP, levels and evolution (done early, 9.3); companion perks
@@ -652,6 +653,7 @@ The spec left these numbers open. They are the playtest defaults, approved 2026-
 | Lattice speeds | One sweep: slow 2000 ms, medium 1400 ms, fast 900 ms, erratic 700 ms with +/-35% jitter; frame every 40 ms |
 | Lattice twists | Exotic reverses with probability 0.6 per second; Anomaly zone flickers every 300 ms, visible 70% of the time |
 | Calibration | 8 beats 750 ms apart after a 1 s lead-in; offset = median press error, clamped to +/-400 ms |
+| Dossier | Last 10 answers kept per category; a trend needs 5 of them and a gap of 10 points between recent and overall accuracy; the weakest category needs 5 answers and a miss |
 | Companion XP | Mission that counted `10 + round(10 * q)` (10 to 20); epic survey 25; level L to L + 1 takes `15 + 5 * (L - 1)`; level cap 99 |
 | Evolution | Stage 1 at level 10, stage 2 at level 25; never reverts |
 | Companion | Reacts to an event for 60 s; sleeps after 10 idle minutes; blinks every 3 s; the sprite shows when the band has at least 9 rows |

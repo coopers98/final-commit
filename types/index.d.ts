@@ -73,6 +73,12 @@ export type QueuedMission = { issueKey: string; epicKey: string; at: number }
 /** One row of the /scan pane (SPEC 9.4); `isArt` rows are cut, never wrapped. */
 export type ScanRow = { text: string; style?: 'bold' | 'dim'; isArt?: boolean; tier?: TierName }
 
+/** One puzzle category's accuracy, as the Dossier pane gets it (SPEC 8.2). `recent` is the last answers, newest last. */
+export type DossierStat = { category: string; type: string; attempts: number; correct: number; recent: boolean[] }
+
+/** One row of the Dossier pane (SPEC 8.2). */
+export type DossierRow = { text: string; style?: 'bold' | 'dim' }
+
 /** One row of the Specimen Bay pane. */
 export type BayRow = { text: string; tier?: TierName }
 
@@ -137,6 +143,8 @@ declare module 'claude-code' {
       gauges: { tests: { runs: number; passes: number }; lint: 'pass' | 'fail' | null }
       calibration: CalibrationView | null
       bay: BayRow[]
+      /** The Dossier pane's stats while it is open; null when closed. */
+      dossier: DossierStat[] | null
     }
   }
 }
