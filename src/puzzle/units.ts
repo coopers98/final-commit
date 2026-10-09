@@ -99,11 +99,14 @@ export function functionName(line: string): string | undefined {
   if (!trimmed.endsWith('{')) return undefined
   const arrow = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(line)
   if (arrow) {
-    const rest = trimmed.slice(arrow[0].length, -1).trimEnd()
-    return rest.endsWith('=>') && /^\s*(?::[^=]*)?=[^=>]/.test(rest) ? arrow[1] : undefined
+    // `= (params) =>` or `= param =>`, optionally async, generic or typed: not a call that takes a callback.
+    const right = /^\s*(?::[^=]*)?=(.*)=>$/.exec(trimmed.slice(arrow[0].length, -1).trimEnd())?.[1]?.trim()
+    return right !== undefined && /^(?:async\s+)?(?:<[^>]*>\s*)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)(?::[^=()]*)?$/.test(right) ? arrow[1] : undefined
   }
-  const method = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(/.exec(line)
-  if (method && !NOT_A_NAME.has(method[1]!) && !line.includes(';') && trimmed.slice(method[0].length).includes(')')) return method[1]
+  // A method: modifiers, a name, its parameters, an optional return type, then the block; never an arrow (a call taking a callback).
+  if (trimmed.includes('=>') || line.includes(';')) return undefined
+  const method = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*(?:\*\s*)?([A-Za-z_$][\w$]*)\s*(?:<[^>]*>\s*)?\(/.exec(line)
+  if (method && !NOT_A_NAME.has(method[1]!) && /\)\s*(?::[^{]*)?\{$/.test(trimmed)) return method[1]
   return undefined
 }
 

@@ -44,7 +44,10 @@ export function regularFiles(raw: string): Set<string> {
 export function hasJsx(text: string, path = ''): boolean {
   if (/\.[cm]?js$/.test(path)) return /<[A-Za-z>]|<\s*\/|\/\s*>/.test(text)
   // Line by line, and spaces only: a multi-line `\s*` here backtracks across blank runs.
-  return text.split('\n').some(l => /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))[ \t]*<[A-Za-z>]/.test(l)) || /<\s*\/|\/\s*>/.test(text)
+  // A triple-slash directive (`/// <reference ... />`) is a comment, not a tag.
+  const lines = text.split('\n').filter(l => !/^\s*\/\/\//.test(l))
+  if (/<\s*\/|\/\s*>/.test(lines.join('\n'))) return true
+  return lines.some(l => /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))[ \t]*<[A-Za-z>]/.test(l))
 }
 
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */

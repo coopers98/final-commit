@@ -419,3 +419,19 @@ test('eighth review: a guessed regex hiding a quote ends trust; HTML-like commen
   expect(functionName('const n = (a: number) => a + 1')).toBe(undefined)
   expect(functionName('  private static parse(text: string): Result {')).toBe('parse')
 })
+
+test('ninth review: a slash after a type\'s closing > is unsure; callbacks are not units; a triple-slash directive is not JSX', async () => {
+  for (const src of ["const y = x as Array<number> / 2; const s = '/{'; // '", "const y = x as Array<number> / 2; const s = '/}}'; // '", "const y = f<string> / 2, r = /a{/, z = 1 / 2"]) {
+    expect(/[{}]/.test(filterCode(src, 'standard'))).toBe(false)
+  }
+  expect(functionName("test('x', async () => {")).toBe(undefined)
+  expect(functionName("on('x', async ($, e, next) => {")).toBe(undefined)
+  expect(functionName('const kept = plan.tasks.filter(t => {')).toBe(undefined)
+  expect(functionName('const pick = (list: string[]) => {')).toBe('pick')
+  expect(functionName('const twice = x => {')).toBe('twice')
+  expect(functionName('  async load(id: number): Promise<void> {')).toBe('load')
+  expect(hasJsx('/// <reference path="./types.d.ts" />\nconst a: Array<number> = []', 'src/a.ts')).toBe(false)
+  const at = Date.now()
+  for (let k = 0; k < 900; k += 1) for (const head of ['static', 'a', 'const a = b :']) functionName(`${head}${' '.repeat(297 - head.length)}{`)
+  expect(Date.now() - at < 1_000).toBe(true)
+})

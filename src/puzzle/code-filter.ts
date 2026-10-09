@@ -19,7 +19,7 @@ import { filterValues, type PrivacyMode } from './privacy-filter'
 export const BLANK = '…'
 
 /** Characters after which a `/` surely starts a regular expression. */
-const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '&', '|', '?', '{', ';', '*', '%', '<', '>', '~', '^'])
+const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '&', '|', '?', '{', ';', '*', '%', '<', '~', '^'])
 /** Characters after which it may start one or be a division. */
 const UNSURE_AFTER = new Set([')', '}', '!', '+', '-'])
 const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|case|do|else|in|of|new|delete|void|throw|yield|await|default|extends)$/
@@ -31,6 +31,8 @@ function slashOpensRegex(current: string): { isRegex: boolean; isSure: boolean }
   if (line === '') return { isRegex: true, isSure: false }
   const last = line[line.length - 1]!
   if (REGEX_AFTER.has(last)) return { isRegex: true, isSure: true }
+  // `=>` surely precedes an expression; a bare `>` may close a type's arguments (`Array<number> / 2`).
+  if (last === '>') return { isRegex: true, isSure: line.endsWith('=>') }
   if (UNSURE_AFTER.has(last)) return { isRegex: true, isSure: false }
   // A keyword before it may be a name (`let of = 4; of / 2`) or a property (`x.of / 2`): unsure.
   if (/[\w$]/.test(last)) return REGEX_AFTER_WORD.test(line.slice(-16)) ? { isRegex: true, isSure: false } : { isRegex: false, isSure: true }
