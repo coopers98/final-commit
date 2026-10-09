@@ -15,6 +15,8 @@ import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, PUZZLE, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
 import { missionUnits } from '../src/puzzle/material'
 import { buildPuzzle } from '../src/puzzle/puzzle'
+import { isRunnerAvailable, runCalls, type Run } from '../src/puzzle/runners'
+import { buildTrace, type TraceCapability } from '../src/puzzle/trace'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
 import { classifyBash, lintVerdict, testRunFailed, testRunPassed } from '../src/detect/git'
@@ -375,9 +377,11 @@ async function preparePuzzle($: EngineInterface) {
       },
     }
     const units = mission ? await missionUnits(io, mission.startedAt, settings.privacyMode) : []
+    const trace = units.length > 0 ? await traceVia($) : undefined
     const puzzle = await buildPuzzle({
       units, tier: pending.tier, rng: await rngOf($),
       ...(sendsCode(settings) ? { complete: completeVia($, settings.puzzleModel, PUZZLE) } : {}),
+      ...(trace ? { trace } : {}),
     })
     // Kept only if the same creature is still waiting.
     const now = await repo.pending()
@@ -387,6 +391,23 @@ async function preparePuzzle($: EngineInterface) {
   } finally {
     preparing = undefined
   }
+}
+
+/** SPEC 8.3 rule 3: whether node answers, checked once per session (once per module load). */
+let nodeRunner: Promise<boolean> | undefined
+
+/**
+ * SPEC 8, Trace: runs a unit with node in the system's temporary folder
+ * (never the project), or undefined when node is not available. Nothing is
+ * sent to a model, so it is built with puzzles `local` and under strict too.
+ */
+async function traceVia($: EngineInterface): Promise<TraceCapability | undefined> {
+  const tmp = await $.env.get('TMPDIR')
+  const cwd = tmp !== undefined && tmp.startsWith('/') ? tmp : '/tmp'
+  const run: Run = (argv, init) => $.process.run(argv, init)
+  nodeRunner ??= isRunnerAvailable('node', run, cwd)
+  if (!(await nodeRunner)) return undefined
+  return (units, rng) => buildTrace(units, rng, (unit, inputs) => runCalls({ name: 'node', run, cwd, code: unit.code, fn: unit.name, inputs }))
 }
 
 /** Enter on the confirmation: complete the mission it asked about, if that one is still active. */

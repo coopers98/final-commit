@@ -15,8 +15,10 @@ type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: s
 /** `refuse`: pane ids that cannot be placed. `holdModel`: model calls wait for `w.release()`, so charting stays in flight. */
 /** `gh`: answers a `gh` command (the github work source); other commands answer as git on `branch`. */
 type Gh = (argv: readonly string[]) => { exitCode: number; stdout: string; stderr?: string }
+/** `node`: answers a `node` command (Trace's runner), with its init (cwd, stdin). */
+type Node = (argv: readonly string[], init?: { cwd?: string; stdin?: string }) => { exitCode: number; stdout: string; stderr?: string }
 
-function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh; git?: Gh } = {}): World {
+function world(on: On, opts: { branch?: string; seed?: string; env?: Record<string, string>; refuse?: string[]; holdModel?: boolean; gh?: Gh; git?: Gh; node?: Node } = {}): World {
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
@@ -51,7 +53,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     return { value: undefined }
   })
   on('process.run', (_$, e) => {
-    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : e.argv[0] === 'git' && opts.git ? opts.git(e.argv) : undefined
+    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : e.argv[0] === 'git' && opts.git ? opts.git(e.argv) : e.argv[0] === 'node' && opts.node ? opts.node(e.argv, e.init) : undefined
     const out = gh ? { stderr: '', ...gh } : { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '' }
     return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } } as never
   })
@@ -1392,4 +1394,58 @@ test('with puzzles on but the strict filter (the default), no code is sent: Bug 
   await missionWithCode($, on, w)
   expect(w.prompts.filter(p => p.includes('totalOf'))).toEqual([])
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+})
+
+/** Seed 38 rolls a Rare for missionWithCode. */
+const RARE_SEED = '38'
+
+/** node as the Trace harness would answer it: totalOf run on each input of the payload. */
+const harnessNode = (calls: { argv: readonly string[]; cwd?: string; stdin?: string }[]): Node => (argv, init) => {
+  calls.push({ argv, ...(init?.cwd ? { cwd: init.cwd } : {}), ...(init?.stdin ? { stdin: init.stdin } : {}) })
+  if (argv[1] === '--version') return { exitCode: 0, stdout: 'v24.0.0\n' }
+  const payload = JSON.parse(init!.stdin!) as { inputs: [number[], number][] }
+  const totalOf = (items: number[], limit: number) => {
+    let total = 0
+    for (const n of items) if (n > 0 && total < limit) total = total + 1
+    return total
+  }
+  return { exitCode: 0, stdout: `${JSON.stringify({ results: payload.inputs.map(([xs, l]) => ({ ok: true, value: totalOf(xs, l) })) })}\n` }
+}
+
+test('a Rare encounter\'s puzzle is a Trace: node runs the filtered function in the temporary folder, and nothing is sent to a model', { options: { puzzles: 'on', privacyMode: 'standard' } }, async ($, on) => {
+  const calls: { argv: readonly string[]; cwd?: string; stdin?: string }[] = []
+  const w = world(on, { git: missionGit, seed: RARE_SEED, node: harnessNode(calls), env: { TMPDIR: '/scratch/tmp' } })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  // Checked once, then one run with every candidate input in it, in TMPDIR.
+  expect(calls.map(c => c.argv[1])).toEqual(['--version', '--permission'])
+  expect(calls.every(c => c.cwd === '/scratch/tmp')).toBe(true)
+  expect(JSON.parse(calls[1]!.stdin!).code.startsWith('function totalOf(')).toBe(true)
+  expect(w.prompts.filter(p => p.includes('totalOf'))).toEqual([])
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.some(t => t.includes('(Rare)'))).toBe(true)
+  expect(texts).toContain('Analyze Specimen · Trace · TypeScript')
+  const question = texts.find(t => t.startsWith('What does totalOf('))!
+  const [items, limit] = JSON.parse(`[${/totalOf\((.*)\) return\?/.exec(question)![1]}]`) as [number[], number]
+  let total = 0
+  for (const n of items) if (n > 0 && total < limit) total = total + 1
+  const choice = texts.filter(t => /^\d {2}/.test(t)).findIndex(t => t.slice(3) === String(total)) + 1
+  expect(choice > 0).toBe(true)
+  await pane.input({ key: 'analyze', text: String(choice), kind: 'change' })
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain(`Running it gives ${total}.`)
+  await pane.unmount()
+})
+
+test('with no node on the host, a Rare encounter falls back to Bug Hunt', { options: { puzzles: 'local' } }, async ($, on) => {
+  const calls: { argv: readonly string[] }[] = []
+  const w = world(on, { git: missionGit, seed: RARE_SEED, node: argv => (calls.push({ argv }), { exitCode: 127, stdout: '' }) })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  expect(calls.map(c => c.argv[1])).toEqual(['--version'])
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
+  await pane.unmount()
 })

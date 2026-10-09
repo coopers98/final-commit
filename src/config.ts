@@ -82,7 +82,7 @@ export const CELLS: Record<Cell, { bonus: number; label: string }> = {
 export const CONTAINMENT_CAP = 0.98
 
 // SPEC 8 (types, bonus ends), DEFAULT (the rest). Analyze Specimen.
-export type PuzzleType = 'pattern-id' | 'bug-hunt'
+export type PuzzleType = 'pattern-id' | 'trace' | 'bug-hunt'
 export const PUZZLE = {
   /** The type each tier asks for; a type not built yet falls back down this order (SPEC 8). */
   typeByTier: {
@@ -114,6 +114,35 @@ export const PUZZLE = {
   maxExplanationChars: 320,
   /** Bug Hunt: choices offered (lines), and the fewest candidate lines a unit needs. */
   choices: 4,
+} as const
+
+// SPEC 8.3 rules 3 and 4 (shape), DEFAULT (numbers). Trace: a unit run by a
+// runner on generated inputs. A runner's command and limits; one now (node),
+// `python3`, `php` and `sqlite3` take their own rows when their adapters land.
+export type RunnerName = 'node'
+export const RUNNERS: Record<RunnerName, { binary: string; maxOldSpaceMb: number; timeoutMs: number; outputMaxChars: number }> = {
+  node: { binary: 'node', maxOldSpaceMb: 32, timeoutMs: 10_000, outputMaxChars: 65_536 },
+}
+export const TRACE = {
+  /** Each call of the function, inside the runner; and all of them together. */
+  callTimeoutMs: 1_000,
+  totalMs: 4_000,
+  /** A result: nesting depth and its JSON's length, inside the runner. */
+  maxDepth: 8,
+  maxValueChars: 2_000,
+  /** Probed once per session. */
+  probeTimeoutMs: 5_000,
+  /** Input tuples generated per unit, and units tried (one runner call each). */
+  candidates: 6,
+  maxUnits: 2,
+  /** Generated inputs: integers in [min, max], arrays of 0 to maxArrayLength items. */
+  intMin: -5,
+  intMax: 12,
+  maxArrayLength: 5,
+  /** Words a string input is drawn from: short, lowercase, invented. */
+  words: ['nova', 'comet', 'orbit', 'flux', 'quark', 'ion', 'zeta', 'lumen'] as readonly string[],
+  /** The answer and each choice, as compact JSON, in characters. */
+  maxAnswerChars: 40,
 } as const
 
 // SPEC 5.2. A first-stage hatchling is often drawn in 5 to 7 cells: the minimum admits it.

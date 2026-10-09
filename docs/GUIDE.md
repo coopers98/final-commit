@@ -143,10 +143,16 @@ them. `/contain` asks it first:
 - **Bug Hunt** (Exotic and up): one line of your function was changed to
   bring in a bug (a flipped comparison, an off-by-one, `&&` for `||`).
   Which line?
-- **Pattern ID** (Common to Rare): which pattern or technique does this
-  function use? The question is written by a model and checked by a second,
-  independent call, so a question whose answer the two disagree on is
-  thrown away.
+- **Trace** (Rare): what does this function return for these arguments?
+  The game runs your function (as shown, filtered) with `node` on a few
+  made-up inputs, so the answer is its real output. It only runs a small,
+  self-contained function: no imports, files, network, timers, `this` or
+  strings; anything else is never run. Without `node` on the host there is
+  no Trace.
+- **Pattern ID** (Common and Uncommon; Rare too when Trace cannot be made):
+  which pattern or technique does this function use? The question is
+  written by a model and checked by a second, independent call, so a
+  question whose answer the two disagree on is thrown away.
 
 Press **1** to **4** to answer, **s** to skip, **Esc** to come back later.
 A right answer adds +10% (Common) up to +25% (Legendary), plus up to +5% for
@@ -159,9 +165,11 @@ code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
 TypeScript or JavaScript yet (`.tsx` and `.jsx` files are not read). The `puzzles` setting in `/config` is `on`,
-`local` (Bug Hunt only, so no code is sent anywhere) or `off`. Pattern ID
-needs `privacyMode` set to `standard` or `off`: under the default `strict`,
-no code leaves your machine, so every puzzle is a Bug Hunt.
+`local` (Trace and Bug Hunt, so no code is sent anywhere) or `off`. Pattern
+ID needs `privacyMode` set to `standard` or `off`: under the default
+`strict`, no code leaves your machine, so every puzzle is a Trace or a Bug
+Hunt (Common to Rare get a Trace when one can be made, Exotic and up a Bug
+Hunt). Trace never sends anything: it runs on this machine.
 
 ### Seal the Lattice
 
@@ -347,9 +355,9 @@ by `·`:
 
 ## Coming later
 
-- **More puzzles:** Trace (predict a function's output, checked by running
-  it) and Complexity Read, more languages (PHP, Python, SQL, Markdown), and
-  `/dossier` for your accuracy by category.
+- **More puzzles:** Complexity Read, more languages (PHP, Python, SQL,
+  Markdown, with Trace for each), and `/dossier` for your accuracy by
+  category.
 - **Companion perks** that change game odds (never your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.
 

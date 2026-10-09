@@ -6,7 +6,7 @@ import type { Puzzle } from './puzzle'
 // SPEC 8: what the Analyze Specimen step shows. Pure; the pane wraps and
 // cuts to its width when it draws.
 
-const TYPE_LABEL: Record<Puzzle['type'], string> = { 'pattern-id': 'Pattern ID', 'bug-hunt': 'Bug Hunt' }
+const TYPE_LABEL: Record<Puzzle['type'], string> = { 'pattern-id': 'Pattern ID', trace: 'Trace', 'bug-hunt': 'Bug Hunt' }
 
 export function analyzeView(puzzle: Puzzle, heading: string, tier: Tier): AnalyzeView {
   return {

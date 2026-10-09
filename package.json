@@ -8,7 +8,7 @@
   "scripts": {
     "types": "scripts/dev-types.sh",
     "typecheck": "tsc -p .",
-    "test": "claude plugin test .",
+    "test": "claude plugin test . && node --test scripts/harness-check.mjs",
     "validate": "claude plugin validate ."
   },
   "devDependencies": {

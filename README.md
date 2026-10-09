@@ -133,6 +133,15 @@ Identifiers and type names are not changed. That is why the default
 `strict` mode never sends code: under it, puzzles are made on this machine
 only. Set `puzzles` to `local` for the same with any filter, or `off` for
 none.
+**Trace runs your code locally.** For a Trace puzzle the game runs one of
+the changed functions, the filtered version the puzzle shows, with `node`
+on this machine: in the system's temporary folder, under node's permission
+model (no file reads or writes, no child processes), in a sandbox that
+holds only a few built-ins (`Math`, `JSON`, `Array` and the like) and no
+access to files, the network, the environment or the process, with a 1 s
+limit per call and 10 s in all. Only a small, self-contained function is
+ever run; anything that could reach outside is refused before running.
+Its inputs are made up by the game. Nothing is sent to a model for Trace.
 `/captains-log` asks your session's own model to summarize the session it
 already holds; the mod adds only a fixed instruction, and the summary is
 stored locally. The crew subagents read your code the way any Claude Code
