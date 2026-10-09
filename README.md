@@ -127,7 +127,8 @@ requests: one writes a question about it, one checks the answer. The code
 is filtered first: every string, template and regular-expression literal
 is blanked, every comment removed, and the value shapes below (emails,
 keys, IDs, names after a title, and so on) replaced; a line the filter
-cannot account for is blanked whole, and functions with JSX are skipped.
+cannot be sure of is blanked whole, and JSX is skipped (`.tsx` and `.jsx`
+files are not read).
 Identifiers and type names are not changed. That is why the default
 `strict` mode never sends code: under it, puzzles are made on this machine
 only. Set `puzzles` to `local` for the same with any filter, or `off` for

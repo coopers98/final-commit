@@ -7,32 +7,55 @@ import { filterValues, type PrivacyMode } from './privacy-filter'
 // the prose filter's value shapes run over what is left. Line count is kept,
 // so line numbers from a diff still point at the same code.
 //
-// It fails closed: a line where a quote is left over once the literals are
-// blanked (a literal the scanner misread) is blanked whole, so a misread can
-// hide code but never show a literal's contents. A template literal's `${}`
-// expressions are blanked with its text.
+// It fails closed. Where the scanner cannot be sure what it reads (whether a
+// `/` opens a regular expression after `)`, `}`, `!`, `+` or `-`, or at a
+// line's start; a literal cut off by the line's end; a template with `${}`
+// inside; a backslash before a line break), it marks the line uncertain, and
+// that line is blanked whole. A wrong guess changes only its own line, or
+// swallows code into a literal, so a misread can hide code but never show a
+// literal's contents.
 
 export const BLANK = '…'
 
-/** Characters after which a `/` starts a regular expression, not a division. */
-const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^'])
+/** Characters after which a `/` surely starts a regular expression. */
+const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '&', '|', '?', '{', ';', '*', '%', '<', '>', '~', '^'])
+/** Characters after which it may start one or be a division. */
+const UNSURE_AFTER = new Set([')', '}', '!', '+', '-'])
 const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|case|do|else|in|of|new|delete|void|throw|yield|await)$/
 
-/** Whether a `/` at this point of `out` opens a regular expression literal. */
-function opensRegex(out: string): boolean {
+/** Whether a `/` here opens a regular expression, and whether that is sure. */
+function slashOpensRegex(out: string): { isRegex: boolean; isSure: boolean } {
   const line = out.slice(out.lastIndexOf('\n') + 1).trimEnd()
-  if (line === '') return true
-  return REGEX_AFTER.has(line[line.length - 1]!) || REGEX_AFTER_WORD.test(line)
+  // At a line's start it may continue a division from the line before.
+  if (line === '') return { isRegex: true, isSure: false }
+  const last = line[line.length - 1]!
+  if (REGEX_AFTER.has(last)) return { isRegex: true, isSure: true }
+  if (UNSURE_AFTER.has(last)) return { isRegex: true, isSure: false }
+  if (/[\w$]/.test(last)) return { isRegex: REGEX_AFTER_WORD.test(line), isSure: true }
+  if (last === ']') return { isRegex: false, isSure: true }
+  return { isRegex: true, isSure: false }
 }
 
-/** `source` with literals blanked and comments removed, line for line. */
-export function stripLiterals(source: string): string {
+/** `source` with literals blanked and comments removed, line for line, and the 0-based lines the scanner is unsure of. */
+export function scanLiterals(source: string): { text: string; uncertain: Set<number> } {
   let out = ''
+  let line = 0
+  const uncertain = new Set<number>()
+  const unsure = () => void uncertain.add(line)
+  const newline = () => {
+    out += '\n'
+    line += 1
+  }
   let i = 0
   const n = source.length
   while (i < n) {
     const c = source[i]!
     const next = source[i + 1]
+    if (c === '\n') {
+      newline()
+      i += 1
+      continue
+    }
     if (c === '/' && next === '/') {
       while (i < n && source[i] !== '\n') i += 1
       continue
@@ -40,19 +63,29 @@ export function stripLiterals(source: string): string {
     if (c === '/' && next === '*') {
       i += 2
       while (i < n && !(source[i] === '*' && source[i + 1] === '/')) {
-        if (source[i] === '\n') out += '\n'
+        if (source[i] === '\n') newline()
         i += 1
       }
+      if (i >= n) unsure()
       i += 2
       continue
     }
-    if (c === '/' && opensRegex(out)) {
+    if (c === '/') {
+      const { isRegex, isSure } = slashOpensRegex(out)
+      if (!isSure) unsure()
+      if (!isRegex) {
+        out += c
+        i += 1
+        continue
+      }
       // To the closing slash outside a character class; flags follow. A regex never spans lines.
       i += 1
       let inClass = false
       while (i < n && source[i] !== '\n' && (inClass || source[i] !== '/')) {
-        if (source[i] === '\\') i += 1
-        else if (source[i] === '[') inClass = true
+        if (source[i] === '\\') {
+          if (source[i + 1] === '\n') break
+          i += 1
+        } else if (source[i] === '[') inClass = true
         else if (source[i] === ']') inClass = false
         i += 1
       }
@@ -60,29 +93,47 @@ export function stripLiterals(source: string): string {
       if (source[i] === '/') {
         i += 1
         while (i < n && /[a-z]/.test(source[i]!)) i += 1
-      }
+      } else unsure()
       continue
     }
     if (c === '"' || c === "'") {
       i += 1
-      while (i < n && source[i] !== c && source[i] !== '\n') i += source[i] === '\\' ? 2 : 1
-      out += `${c}${BLANK}${c}`
-      if (source[i] === c) i += 1
-      continue
-    }
-    if (c === '`') {
-      i += 1
-      let lines = 0
-      let depth = 0
-      while (i < n) {
-        const d = source[i]!
-        if (d === '\\') {
+      while (i < n && source[i] !== c && source[i] !== '\n') {
+        if (source[i] === '\\') {
+          // A backslash before a break carries the string onto the next line.
+          if (source[i + 1] === '\n') {
+            unsure()
+            newline()
+            unsure()
+          }
           i += 2
           continue
         }
-        if (d === '\n') lines += 1
+        i += 1
+      }
+      out += `${c}${BLANK}${c}`
+      if (source[i] === c) i += 1
+      else unsure()
+      continue
+    }
+    if (c === '`') {
+      // Every line it spans is uncertain once it holds `${}`: braces in strings inside can end it early.
+      const from = line
+      let hasExpr = false
+      let breaks = 0
+      let depth = 0
+      i += 1
+      while (i < n) {
+        const d = source[i]!
+        if (d === '\\') {
+          if (source[i + 1] === '\n') breaks += 1
+          i += 2
+          continue
+        }
+        if (d === '\n') breaks += 1
         if (depth === 0 && d === '`') break
         if (d === '$' && source[i + 1] === '{') {
+          hasExpr = true
           depth += 1
           i += 2
           continue
@@ -91,20 +142,23 @@ export function stripLiterals(source: string): string {
         if (depth > 0 && d === '}') depth -= 1
         i += 1
       }
+      const isClosed = i < n
       i += 1
-      out += `\`${BLANK}\`${'\n'.repeat(lines)}`
+      out += `\`${BLANK}\``
+      for (let k = 0; k < breaks; k += 1) newline()
+      if (hasExpr || !isClosed) for (let k = from; k <= line; k += 1) uncertain.add(k)
       continue
     }
     out += c
     i += 1
   }
   // Comments leave trailing spaces behind.
-  return out.split('\n').map(l => l.trimEnd()).join('\n')
+  return { text: out.split('\n').map(l => l.trimEnd()).join('\n'), uncertain }
 }
 
-/** A line with a quote left over once its blanked literals are set aside: something was misread. */
-export function hasStrayQuote(line: string): boolean {
-  return /["'`]/.test(line.replace(new RegExp(`(["'\`])${BLANK}\\1`, 'g'), ''))
+/** `source` with literals blanked and comments removed, line for line. */
+export function stripLiterals(source: string): string {
+  return scanLiterals(source).text
 }
 
 /** Control characters (escape sequences among them) a terminal would act on. Tab is kept. */
@@ -116,12 +170,10 @@ export function filterCode(source: string, mode: PrivacyMode): string {
   // A CR before LF goes; a lone CR is a control character below. Either way the line count holds.
   const clean = source.replace(/\r(?=\n)/g, '')
   if (mode === 'off') return clean.split('\n').map(l => l.replace(CONTROL, '')).join('\n')
+  const { text, uncertain } = scanLiterals(clean)
   // Line by line, so no value shape can swallow a line break.
-  return stripLiterals(clean)
+  return text
     .split('\n')
-    .map(l => {
-      if (hasStrayQuote(l)) return `${l.slice(0, l.length - l.trimStart().length)}${BLANK}`
-      return filterValues(l.replace(CONTROL, '')).text
-    })
+    .map((l, i) => (uncertain.has(i) ? `${l.slice(0, l.length - l.trimStart().length)}${BLANK}` : filterValues(l.replace(CONTROL, '')).text))
     .join('\n')
 }

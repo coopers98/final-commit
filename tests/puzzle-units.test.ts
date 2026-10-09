@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { filterCode, hasStrayQuote, stripLiterals } from '../src/puzzle/code-filter'
+import { filterCode, scanLiterals, stripLiterals } from '../src/puzzle/code-filter'
 import { EMPTY_TREE, missionUnits, regularFiles } from '../src/puzzle/material'
 import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, TS_ADAPTER } from '../src/puzzle/units'
 
@@ -101,8 +101,8 @@ test('the adapter keeps functions the diff touched, within the size limits, with
 })
 
 test('the adapter claims TypeScript and JavaScript sources, not declarations or other files', async () => {
-  for (const p of ['a.ts', 'b.tsx', 'c.js', 'd.mjs', 'e.cts', 'f.jsx']) expect(TS_ADAPTER.claims(p)).toBe(true)
-  for (const p of ['a.d.ts', 'b.php', 'c.md', 'tsconfig.json']) expect(TS_ADAPTER.claims(p)).toBe(false)
+  for (const p of ['a.ts', 'c.js', 'd.mjs', 'e.cts', 'f.mts']) expect(TS_ADAPTER.claims(p)).toBe(true)
+  for (const p of ['a.d.ts', 'b.tsx', 'f.jsx', 'b.php', 'c.md', 'tsconfig.json']) expect(TS_ADAPTER.claims(p)).toBe(false)
 })
 
 test('mission material: the diff against the last commit before the start, read and filtered per claimed file', async () => {
@@ -123,6 +123,7 @@ test('mission material: the diff against the last commit before the start, read 
   expect(calls[0]).toEqual(['rev-list', '-1', '--before=2026-01-02T00:00:00.000Z', 'HEAD'])
   expect(calls[1]!.at(-1)).toBe('abc123')
   expect(calls[2]).toContain('--no-textconv')
+  expect(calls[2]!.slice(0, 2)).toEqual(['-c', 'core.fsmonitor=false'])
   // No commit before the start: everything since the repository began.
   calls.length = 0
   await missionUnits(io(''), 0, 'strict')
@@ -152,10 +153,24 @@ test('a quote inside a regular expression never lets a later string through', as
   expect(stripLiterals('const half = total / 2 / count')).toBe('const half = total / 2 / count')
 })
 
-test('a line the scanner cannot account for is blanked whole, keeping its indent', async () => {
-  expect(hasStrayQuote('const a = "…" + \'…\' + `…`')).toBe(false)
-  expect(hasStrayQuote('const a = "…" + oops"leak')).toBe(true)
-  expect(hasStrayQuote("  it's prose")).toBe(true)
+test('a line the scanner cannot be sure of is blanked whole, keeping its indent', async () => {
+  // Second security review: each of these once let a literal's contents through.
+  const leaks: [string, string[]][] = [
+    ['const r = counts[k]! / total; log("/patients/JaneDoe/chart")', ['JaneDoe', 'patients']],
+    ['n = i++ / 2; s = "hello / SECRETB tail"', ['SECRETB']],
+    ['if (ok) /"/.test(a), y = "SECRET_A text"', ['SECRET_A']],
+    ["s = `${ '}' + `INNER_SECRET` } tail`", ['INNER_SECRET']],
+    ['x = a\n  / "q/w" + "SECRETC"', ['SECRETC']],
+    ['const s = "line one \\\nSECRETD continues"', ['SECRETD']],
+  ]
+  for (const [src, words] of leaks) {
+    const out = filterCode(src, 'standard')
+    for (const w of words) expect(out).not.toContain(w)
+    expect(out.split('\n').length).toBe(src.split('\n').length)
+  }
+  expect(filterCode('    if (ok) /x/.test(a)', 'standard')).toBe('    …')
+  // Sure lines stay readable.
+  expect(scanLiterals('const half = total / 2\nconst re = /a"b/g').uncertain.size).toBe(0)
 })
 
 test('control characters never reach the pane or a prompt, in any mode', async () => {
@@ -213,7 +228,7 @@ test('a symlink the diff names is never read', async () => {
 })
 
 test('units with JSX or a code fence are never taken', async () => {
-  for (const l of ['  return <p>Call Jane</p>', '  <Header title={t} />', '  const s = ```', 'const el = (<div>', '  </div>']) expect(isUnsafeLine(l)).toBe(true)
+  for (const l of ['  return <p>Call Jane</p>', '  <Header title={t} />', '  const s = ```', 'const el = (<div>', '  </div>', '    <>', '    </>', '    </…/']) expect(isUnsafeLine(l)).toBe(true)
   for (const l of ['  if (a < b && c > d) return a', '  const xs: Array<string> = []', '  return total', '  const f = (x: number) => x']) expect(isUnsafeLine(l)).toBe(false)
   const jsx = 'function Card(p: Props) {\n  const name = p.name\n  const n = name.length\n  return <p>Jane Roe</p>\n}'
   expect(TS_ADAPTER.units(jsx, new Set([2]))).toEqual([])

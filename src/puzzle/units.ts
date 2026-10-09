@@ -89,7 +89,8 @@ export function functionName(line: string): string | undefined {
 /** SPEC 8.3 rule 2: TypeScript and JavaScript. */
 export const TS_ADAPTER: ContentAdapter = {
   lang: 'TypeScript',
-  claims: path => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(path) && !path.endsWith('.d.ts'),
+  // Not .tsx or .jsx: their JSX text is prose with no quotes to blank (SPEC 8.4).
+  claims: path => /\.[cm]?[jt]s$/.test(path) && !path.endsWith('.d.ts'),
   units(filtered, changed) {
     const lines = filtered.split('\n')
     const out: Unit[] = []
@@ -119,12 +120,12 @@ export const TS_ADAPTER: ContentAdapter = {
 export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER]
 
 /**
- * A line a unit is never taken with: JSX (its text is prose with no quotes
- * to blank) or a fence (it could close the one around code in a prompt).
+ * A line a unit is never taken with: JSX, fragments included (its text is
+ * prose with no quotes to blank, in a .js or .ts file too), or a fence (it could close the one around code in a prompt).
  * A generic arrow (`= <T>(`) reads as JSX too, which only loses a unit.
  */
 export function isUnsafeLine(line: string): boolean {
-  return line.includes('```') || /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<\/?[A-Za-z]/.test(line) || /<\/[A-Za-z]/.test(line) || /\/>/.test(line)
+  return line.includes('```') || /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<\/?[A-Za-z>]/.test(line) || /<\/|<>|\/>/.test(line)
 }
 
 /** `lines` less their shared leading indent. */

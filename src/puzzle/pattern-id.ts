@@ -54,8 +54,8 @@ export function checkerPrompt(unit: Unit, question: string, choices: readonly st
 
 type Generated = { question: string; choices: string[]; answer: number; explanation: string; category: string }
 
-/** Text fit to show: not empty, short enough, and free of control characters a terminal would act on. */
-const isText = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= max && !new RegExp(CONTROL.source).test(v)
+/** Text fit to show: one line, not empty, short enough, and free of control characters a terminal would act on. */
+const isText = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= max && !/[\n\t]/.test(v) && !new RegExp(CONTROL.source).test(v)
 
 /** A generated question, checked for shape and length; undefined when it does not hold. */
 export function parseGenerated(text: string): Generated | undefined {

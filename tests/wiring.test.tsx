@@ -1276,8 +1276,8 @@ const TOTAL_TS = [
 /** git as a mission that changed src/total.ts: the diff touches line 4. */
 const missionGit: Gh = argv => {
   if (argv[1] === 'rev-list') return { exitCode: 0, stdout: 'abc123\n' }
-  if (argv[1] === 'diff' && argv.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 aaa bbb M\0src/total.ts\0' }
-  if (argv[1] === 'diff') return { exitCode: 0, stdout: 'diff --git a/src/total.ts b/src/total.ts\n+++ b/src/total.ts\n@@ -4 +4 @@\n' }
+  if (argv.includes('diff') && argv.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 aaa bbb M\0src/total.ts\0' }
+  if (argv.includes('diff')) return { exitCode: 0, stdout: 'diff --git a/src/total.ts b/src/total.ts\n+++ b/src/total.ts\n@@ -4 +4 @@\n' }
   return { exitCode: 0, stdout: 'main\n' }
 }
 
@@ -1330,7 +1330,7 @@ test('s skips the puzzle straight to the lattice', { options: { puzzles: 'local'
 
 test('with puzzles off, containment opens with no puzzle and git is never asked for the diff', { options: { puzzles: 'off' } }, async ($, on) => {
   const asked: string[] = []
-  const w = world(on, { git: argv => (asked.push(argv[1]!), missionGit(argv)) })
+  const w = world(on, { git: argv => (asked.push(...argv), missionGit(argv)) })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
   expect(asked).not.toContain('diff')

@@ -45,9 +45,11 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
   const base = before.stdout.trim() || EMPTY_TREE
   // Paths relative to the session's folder; the working tree, so uncommitted work counts. The
   // format is pinned, whatever git config says: plain prefixes, no conversion drivers.
+  // No fsmonitor command from the folder's own config.
+  const git = (args: readonly string[]) => io.git(['-c', 'core.fsmonitor=false', ...args])
   const pinned = ['--relative', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/']
-  const raw = await io.git(['diff', ...pinned, '--raw', '-z', base])
-  const diff = await io.git(['diff', ...pinned, '--unified=0', base])
+  const raw = await git(['diff', ...pinned, '--raw', '-z', base])
+  const diff = await git(['diff', ...pinned, '--unified=0', base])
   if (raw.exitCode !== 0 || diff.exitCode !== 0) return []
   const files = regularFiles(raw.stdout)
   const units: Unit[] = []
@@ -59,7 +61,10 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     read += 1
     const text = await io.read(path)
     if (text === undefined || text.length > PUZZLE.maxFileBytes) continue
-    units.push(...adapter.units(filterCode(text, mode), changed))
+    const filtered = filterCode(text, mode)
+    // Line numbers from the diff must still point at the same lines.
+    if (filtered.split('\n').length !== text.replace(/\r(?=\n)/g, '').split('\n').length) continue
+    units.push(...adapter.units(filtered, changed))
     if (units.length >= PUZZLE.maxUnits) break
   }
   return units.slice(0, PUZZLE.maxUnits)
