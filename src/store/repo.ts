@@ -138,8 +138,8 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     saveCalibration: (c: Calibration) => store.set(KEYS.calibration, stamp(c)),
 
     sync: (source: string) =>
-      readRecord<SyncState>(KEYS.sync(source), { lastSync: null, processed: [] }, v =>
-        (v.lastSync === null || typeof v.lastSync === 'number') && Array.isArray(v.processed)),
+      readRecord<SyncState>(KEYS.sync(source), { lastSync: null, processed: [], waiting: [] }, v =>
+        (v.lastSync === null || typeof v.lastSync === 'number') && Array.isArray(v.processed) && Array.isArray(v.waiting)),
     saveSync: (source: string, s: SyncState) => store.set(KEYS.sync(source), stamp(s)),
 
     plans: (id: string) =>

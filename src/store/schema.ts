@@ -110,16 +110,17 @@ export type Calibration = { clients: Record<string, { offsetMs: number; measured
  * SPEC 4.2: where one work source's sync left off (one record per source,
  * SPEC 4.4). `lastSync` is null until that source's first sync, which starts
  * from that moment (nothing before it is awarded). `processed` holds
- * `<issueKey>:<transitionId>` for each applied transition.
+ * `<issueKey>:<transitionId>` for each applied transition. `waiting` holds
+ * changes that could not apply yet, tried again at each sync (rule 5).
  */
-export type SyncState = { lastSync: number | null; processed: string[] }
+export type SyncState = { lastSync: number | null; processed: string[]; waiting: WorkTransition[] }
 
 /**
  * SPEC 4.4 rule 3: what the plan documents of one project last read as. A
  * task stays when it disappears from the files, so a file briefly missing
  * reports nothing when it returns. `log` keeps recent changes, newest last,
- * so a sync that waits (SPEC 4.2 rule 5) can read them again. `epoch`: when
- * the baseline was read, part of every transition id.
+ * so a sync that failed, or one reaching back by the overlap, reads them
+ * again. `epoch`: when the baseline was read, part of every transition id.
  */
 export type PlansState = {
   epoch: number

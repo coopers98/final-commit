@@ -1,7 +1,7 @@
 import { ANTI_FARMING, SYNC } from '../config'
 import { completeEpic, completeMission, recordClosure, startMission, type GameDeps, type Outcome } from '../game'
 import type { Repo } from '../store/repo'
-import type { Mission, StarSystem } from '../store/schema'
+import type { Mission, StarSystem, SyncState } from '../store/schema'
 import { transitionKey, type WorkItem, type WorkSource, type WorkTransition } from './work-source'
 
 // SPEC 4.1 and 4.2: tracker status changes in, game actions out. Pure apart
@@ -12,12 +12,16 @@ export type SyncDeps = GameDeps & {
   /**
    * Starts charting an epic in the background; the glue's own charting. It
    * must not make the epic active (`startEpic` with `activate: false`): an
-   * issue's start does that, and a running mission keeps its epic.
+   * issue's start does that, and a running mission keeps its epic. Returns
+   * whether a chart started: a chart sitting out its retry wait does not.
    */
-  chart: (epic: WorkItem) => void
+  chart: (epic: WorkItem) => boolean
   /** Epics being charted right now. */
   charting: ReadonlySet<string>
 }
+
+/** What applying needs: everything but the source, which was read already. */
+export type ApplyDeps = Omit<SyncDeps, 'source'>
 
 export type SyncResult = { outcomes: Outcome[]; applied: number; deferred: number; error?: string }
 
@@ -39,18 +43,24 @@ async function systemFor(repo: Repo, epicKey: string): Promise<StarSystem | unde
   return undefined
 }
 
-type Applied = { status: 'applied'; outcome?: Outcome } | { status: 'deferred' }
+/** `isCharting`: it waits for a chart that is running, so later starts wait behind it (SPEC 4.2 rule 5). */
+type Applied = { status: 'applied'; outcome?: Outcome } | { status: 'deferred'; isCharting?: boolean }
 const APPLIED: Applied = { status: 'applied' }
 const DEFERRED: Applied = { status: 'deferred' }
 
-async function applyEpic(deps: SyncDeps, t: WorkTransition, charting: Set<string>): Promise<Applied> {
+/** Charts `epic` unless it is charting already; true when it is charting after. */
+function chartOnce(deps: ApplyDeps, epic: WorkItem, charting: Set<string>): boolean {
+  if (charting.has(epic.key)) return true
+  if (!deps.chart(epic)) return false
+  charting.add(epic.key)
+  return true
+}
+
+async function applyEpic(deps: ApplyDeps, t: WorkTransition, charting: Set<string>): Promise<Applied> {
   const { repo } = deps
   const key = t.item.key
   if (t.to === 'in_progress') {
-    if (!charting.has(key) && !(await systemFor(repo, key))) {
-      charting.add(key)
-      deps.chart(t.item)
-    }
+    if (!(await systemFor(repo, key))) chartOnce(deps, t.item, charting)
     return APPLIED
   }
   if (t.to !== 'done') return APPLIED
@@ -62,7 +72,7 @@ async function applyEpic(deps: SyncDeps, t: WorkTransition, charting: Set<string
   return { status: 'applied', outcome: await completeEpic({ ...deps, epicKey: key }) }
 }
 
-async function applyIssue(deps: SyncDeps, t: WorkTransition, charting: Set<string>): Promise<Applied> {
+async function applyIssue(deps: ApplyDeps, t: WorkTransition, charting: Set<string>): Promise<Applied> {
   const { repo } = deps
   const key = t.item.key
   const active = await repo.activeMission()
@@ -82,11 +92,7 @@ async function applyIssue(deps: SyncDeps, t: WorkTransition, charting: Set<strin
   const system = await systemFor(repo, epic.key)
   if (!system) {
     // SPEC 4.1: a child issue starting charts its epic; the mission waits for the chart.
-    if (!charting.has(epic.key)) {
-      charting.add(epic.key)
-      deps.chart(epic)
-    }
-    return DEFERRED
+    return { status: 'deferred', isCharting: chartOnce(deps, epic, charting) }
   }
   // One mission at a time: a second issue in progress is not tracked.
   if (active || (await repo.missionLog()).some(m => m.issueKey === key)) return APPLIED
@@ -95,71 +101,125 @@ async function applyIssue(deps: SyncDeps, t: WorkTransition, charting: Set<strin
   return { status: 'applied', outcome: { ...out, toast: out.toast ?? out.text } }
 }
 
+/** One source's read, ready to apply: its record and the changes found. */
+export type SourceRead =
+  | { kind: 'read'; name: string; state: SyncState; found: WorkTransition[] }
+  /** The source's first sync: it took its baseline and recorded its start, so it has nothing to apply. */
+  | { kind: 'first' }
+  | { kind: 'error'; error: string }
+
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
 /**
- * One sync (SPEC 4.2): the catch-up at session start and each poll. Applies
- * every transition not yet processed, oldest first, and records each one so
- * a reload or restart never applies it twice. A transition that must wait
- * (its epic still charting, an encounter in the survey's way) holds back the
- * later ones for the same epic and keeps `lastSync` from moving past it.
+ * Reads one source (SPEC 4.2): its record, then the changes since its
+ * `lastSync`, reaching back by the overlap. A first sync only takes the
+ * baseline and records where it starts: nothing earlier is awarded.
  */
-export async function syncWork(deps: SyncDeps): Promise<SyncResult> {
+export async function readSource(deps: Pick<GameDeps, 'repo' | 'now'>, source: WorkSource): Promise<SourceRead> {
   const { repo, now } = deps
   let name: string
   try {
-    name = deps.source.record ? await deps.source.record() : deps.source.name
+    name = source.record ? await source.record() : source.name
   } catch (err) {
-    return { outcomes: [], applied: 0, deferred: 0, error: err instanceof Error ? err.message : String(err) }
+    return { kind: 'error', error: message(err) }
   }
   const state = await repo.sync(name)
   if (state.lastSync === null) {
     try {
-      await deps.source.start?.()
+      await source.start?.()
     } catch (err) {
-      return { outcomes: [], applied: 0, deferred: 0, error: err instanceof Error ? err.message : String(err) }
+      return { kind: 'error', error: message(err) }
     }
-    await repo.saveSync(name, { lastSync: now, processed: [] })
-    return { outcomes: [], applied: 0, deferred: 0 }
+    await repo.saveSync(name, { lastSync: now, processed: [], waiting: [] })
+    return { kind: 'first' }
   }
-  let found: WorkTransition[]
   try {
-    found = await deps.source.changedSince(state.lastSync - SYNC.overlapMs)
+    return { kind: 'read', name, state, found: await source.changedSince(state.lastSync - SYNC.overlapMs) }
   } catch (err) {
-    return { outcomes: [], applied: 0, deferred: 0, error: err instanceof Error ? err.message : String(err) }
+    return { kind: 'error', error: message(err) }
   }
+}
 
-  const seen = new Set(state.processed)
+/** `errors`: per read, why applying one of its changes threw (that change and its later ones wait), else undefined. */
+export type ApplyResult = { outcomes: Outcome[]; applied: number; deferred: number; errors: (string | undefined)[] }
+
+/**
+ * Applies the changes of every source read in this sync as one list (SPEC
+ * 4.2 rule 5, 4.4), oldest first, so one source's later change never takes
+ * what another's earlier one needed (an epic survey taking the encounter
+ * slot a mission's roll needed). Each read's waiting changes are tried again
+ * with it. Each record then saves what it applied and what still waits, and
+ * `lastSync` moves to now: a change that waits is kept in the record, never
+ * by holding `lastSync` back.
+ *
+ * A change that waits holds back later ones for the same epic, so an issue's
+ * Done is never read before its start. An issue's start waiting on a chart
+ * that is running holds back later starts in every epic, so the first issue
+ * started becomes the mission.
+ *
+ * A change that throws while applying waits, with the later changes of its
+ * source, and that source reports the error; every record is still saved,
+ * so a change already applied is never applied again.
+ */
+export async function applyReads(deps: ApplyDeps, reads: readonly Extract<SourceRead, { kind: 'read' }>[]): Promise<ApplyResult> {
+  const { repo, now } = deps
   // At one instant, a start goes before a Done: otherwise the issue would read as closed unworked.
   const rank = { todo: 0, in_progress: 1, done: 2 } as const
-  const todo = found.filter(t => !seen.has(transitionKey(t))).sort((a, b) => a.at - b.at || rank[a.to] - rank[b.to])
+  const seen = reads.map(r => new Set(r.state.processed))
+  const todo = reads
+    .flatMap((r, i) => {
+      // A source may report one change twice, or again while it waits.
+      const fresh = new Map<string, WorkTransition>()
+      for (const t of [...r.state.waiting, ...r.found]) if (!seen[i]!.has(transitionKey(t))) fresh.set(transitionKey(t), t)
+      return [...fresh.values()].map(t => ({ t, i }))
+    })
+    .sort((a, b) => a.t.at - b.t.at || rank[a.t.to] - rank[b.t.to])
   const charting = new Set(deps.charting)
   const blocked = new Set<string>()
+  let isStartHeld = false
   const outcomes: Outcome[] = []
-  const applied: string[] = []
-  let deferredAt: number | undefined
-  let deferred = 0
+  const applied = reads.map((): string[] => [])
+  const waiting = reads.map((): WorkTransition[] => [])
+  const errors = reads.map((): string | undefined => undefined)
 
-  for (const t of todo) {
-    // A source may report one change twice in a batch.
-    if (seen.has(transitionKey(t))) continue
+  for (const { t, i } of todo) {
     const epicKey = t.item.kind === 'epic' ? t.item.key : t.epic?.key
-    const result = epicKey !== undefined && blocked.has(epicKey)
-      ? DEFERRED
-      : t.item.kind === 'epic' ? await applyEpic(deps, t, charting) : await applyIssue(deps, t, charting)
+    const isStart = t.item.kind === 'issue' && t.to === 'in_progress'
+    let result: Applied
+    try {
+      result =
+        errors[i] !== undefined || (epicKey !== undefined && blocked.has(epicKey)) || (isStart && isStartHeld)
+          ? DEFERRED
+          : t.item.kind === 'epic' ? await applyEpic(deps, t, charting) : await applyIssue(deps, t, charting)
+    } catch (err) {
+      errors[i] = message(err)
+      result = DEFERRED
+    }
     if (result.status === 'deferred') {
-      deferred += 1
-      deferredAt = Math.min(deferredAt ?? t.at, t.at)
+      waiting[i]!.push(t)
       if (epicKey !== undefined) blocked.add(epicKey)
+      if (isStart && result.isCharting) isStartHeld = true
       continue
     }
-    const key = transitionKey(t)
-    applied.push(key)
-    seen.add(key)
+    applied[i]!.push(transitionKey(t))
     if (result.outcome) outcomes.push(result.outcome)
   }
 
-  await repo.saveSync(name, {
-    lastSync: deferredAt === undefined ? now : Math.min(deferredAt, now),
-    processed: [...state.processed, ...applied].slice(-SYNC.maxProcessed),
-  })
-  return { outcomes, applied: applied.length, deferred }
+  for (const [i, r] of reads.entries()) {
+    await repo.saveSync(r.name, {
+      lastSync: now,
+      processed: [...r.state.processed, ...applied[i]!].slice(-SYNC.maxProcessed),
+      waiting: waiting[i]!.slice(-SYNC.maxWaiting),
+    })
+  }
+  return { outcomes, applied: applied.flat().length, deferred: waiting.flat().length, errors }
+}
+
+/** One sync of one source (SPEC 4.2): read it, then apply what it found. */
+export async function syncWork(deps: SyncDeps): Promise<SyncResult> {
+  const read = await readSource(deps, deps.source)
+  if (read.kind === 'error') return { outcomes: [], applied: 0, deferred: 0, error: read.error }
+  if (read.kind === 'first') return { outcomes: [], applied: 0, deferred: 0 }
+  const { errors, ...r } = await applyReads(deps, [read])
+  return errors[0] === undefined ? r : { ...r, error: errors[0] }
 }

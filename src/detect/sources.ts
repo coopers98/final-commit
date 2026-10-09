@@ -1,5 +1,5 @@
 import type { Outcome } from '../game'
-import { syncWork, type SyncDeps } from './sync'
+import { applyReads, readSource, type ApplyDeps, type SourceRead } from './sync'
 import type { WorkSource } from './work-source'
 
 // SPEC 4.4: the configured work sources, each synced on its own. A source is
@@ -47,7 +47,7 @@ export function resolveSources(names: readonly string[], backends: Readonly<Reco
   return out
 }
 
-export type SourcesDeps = Omit<SyncDeps, 'source'> & {
+export type SourcesDeps = ApplyDeps & {
   sources: readonly WorkSource[]
   /** Sources whose failure was already reported (SPEC 4.4 rule 5: once per outage). */
   failing: ReadonlySet<string>
@@ -63,34 +63,32 @@ export type SourcesResult = {
 
 /**
  * One sync of every source (SPEC 4.2, 4.4): the catch-up at session start and
- * each poll. A source that fails is reported once and retried at the next
- * poll; the others keep running. An epic one source starts charting counts as
- * charting for the sources after it, so it is charted once.
+ * each poll. Every source is read first, then all their changes apply as one
+ * list, oldest first, so no source's change goes before an earlier one of
+ * another. A source that fails to read is reported once and retried at the
+ * next poll; the others keep running. An epic one change starts charting
+ * counts as charting for every change after it, so it is charted once.
  */
 export async function syncSources(deps: SourcesDeps): Promise<SourcesResult> {
   const { sources, failing: before, ...rest } = deps
-  const charting = new Set(rest.charting)
-  const chart: SyncDeps['chart'] = epic => {
-    // Marked only once the chart has started, so a refused chart is tried by the next source.
-    rest.chart(epic)
-    charting.add(epic.key)
-  }
   const result: SourcesResult = { outcomes: [], toasts: [], failing: new Set() }
   /** Newly failing sources by their error: several failing alike (a backend's shared login) are told in one toast. */
   const fresh = new Map<string, string[]>()
-  for (const source of sources) {
-    let error: string | undefined
-    try {
-      const r = await syncWork({ ...rest, source, chart, charting })
-      result.outcomes.push(...r.outcomes)
-      error = r.error
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err)
+  const fail = (names: readonly string[], error: string) => {
+    for (const name of names) {
+      result.failing.add(name)
+      if (!before.has(name)) fresh.set(error, [...(fresh.get(error) ?? []), name])
     }
-    if (error === undefined) continue
-    result.failing.add(source.name)
-    if (!before.has(source.name)) fresh.set(error, [...(fresh.get(error) ?? []), source.name])
   }
+  const reads: { source: WorkSource; read: Extract<SourceRead, { kind: 'read' }> }[] = []
+  for (const source of sources) {
+    const read = await readSource(rest, source)
+    if (read.kind === 'error') fail([source.name], read.error)
+    else if (read.kind === 'read') reads.push({ source, read })
+  }
+  const r = await applyReads(rest, reads.map(r => r.read))
+  result.outcomes.push(...r.outcomes)
+  for (const [i, error] of r.errors.entries()) if (error !== undefined) fail([reads[i]!.source.name], error)
   for (const [error, names] of fresh) {
     const who = names.length === 1 ? `Work source ${names[0]}` : `Work sources ${names.join(', ')}`
     result.toasts.push(`${who} failed (${error}); retrying at the next poll.`)

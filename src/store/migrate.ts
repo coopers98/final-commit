@@ -69,6 +69,18 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 5 })
   },
+  // 5 -> 6: a sync record keeps the changes that wait (`waiting`) instead of
+  // holding `lastSync` back. A record held back reads them again at its next
+  // sync and keeps them from then on, so none start out waiting.
+  5: async store => {
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (!isObject(value) || value.schemaVersion !== 5) continue
+      await store.set(key, key.startsWith(KEYS.syncPrefix) ? { ...value, waiting: [], schemaVersion: 6 } : { ...value, schemaVersion: 6 })
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 6 })
+  },
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

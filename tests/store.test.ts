@@ -90,7 +90,7 @@ test('schema 2 to 3: values are restamped and the unowned single sync record is 
   expect(await store.get('fc:sync')).toBe(undefined)
   const repo = createRepo(store)
   expect((await repo.inventory()).reinforced).toBe(3)
-  expect(await repo.sync('jira')).toEqual({ lastSync: null, processed: [] })
+  expect(await repo.sync('jira')).toEqual({ lastSync: null, processed: [], waiting: [] })
   for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })
 
@@ -110,7 +110,19 @@ test('schema 3 to 5: logged missions record what they gave, by the rules that ap
     ['NOVA-3', { counted: true, reinforced: 0, stasis: 0, flora: {} }],
     ['NOVA-4', { counted: false, reinforced: 0, stasis: 0, flora: {} }],
   ])
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(5)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
+})
+
+test('schema 5 to 6: sync records gain an empty waiting list and keep where they left off', async () => {
+  const store = createMemoryStore()
+  await store.set(KEYS.meta, { schemaVersion: 5, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: null, completedMissions: 1, activeEpicKey: null, companionId: null, encountersToday: { day: '', count: 0 } })
+  await store.set(KEYS.sync('plans:x'), { schemaVersion: 5, lastSync: 7, processed: ['NOVA-2:a'] })
+  await store.set(KEYS.inventory, { schemaVersion: 5, reinforced: 1, stasis: 0, singularity: 0, flora: {} })
+  await migrate(store, 99)
+  const repo = createRepo(store)
+  expect(await repo.sync('plans:x')).toEqual({ lastSync: 7, processed: ['NOVA-2:a'], waiting: [] })
+  expect((await repo.inventory()).reinforced).toBe(1)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(6)
 })
 
 test('schema 4 to 5: logged rewards gain no Stasis Cells and no flora; the active mission and inventory keep theirs', async () => {
@@ -126,5 +138,5 @@ test('schema 4 to 5: logged rewards gain no Stasis Cells and no flora; the activ
   expect((await repo.activeMission())?.issueKey).toBe('NOVA-3')
   expect((await repo.activeMission())?.reward).toBe(undefined)
   expect((await repo.inventory()).reinforced).toBe(2)
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(5)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })

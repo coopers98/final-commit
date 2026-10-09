@@ -244,7 +244,9 @@ async function syncTracked($: EngineInterface) {
       ...d, sources, failing, charting: new Set(live),
       // An epic whose last chart failed waits out its retry; its issues stay deferred meanwhile.
       chart: e => {
-        if (!isChartHeld(held, e.key, d.now)) void chart($, e.key, e.title, e.description, false)
+        if (isChartHeld(held, e.key, d.now)) return false
+        void chart($, e.key, e.title, e.description, false)
+        return true
       },
     })
     failing = r.failing

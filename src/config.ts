@@ -156,7 +156,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 5 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 6 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const
@@ -175,7 +175,8 @@ export const GIT = { timeoutMs: 5_000, outputTailChars: 4_000 } as const
 // SPEC 4.2: tracker sync. A poll every 12 minutes (inside the 10 to 15 the
 // SPEC gives); each query reaches back `overlapMs` before the last sync so a
 // tracker clock a little behind ours loses nothing (idempotency drops repeats).
-export const SYNC = { pollMs: 720_000, overlapMs: 60_000, maxProcessed: 500 } as const
+// `maxWaiting`: changes one record keeps waiting (rule 5), the newest kept.
+export const SYNC = { pollMs: 720_000, overlapMs: 60_000, maxProcessed: 500, maxWaiting: 100 } as const
 
 // DEFAULT: a chart a work source started that failed waits `firstMs` before
 // it is tried again, doubling with each failure in a row up to `maxMs`.

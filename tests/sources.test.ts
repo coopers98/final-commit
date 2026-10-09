@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { createSyncGate, resolveSources, sourceNames, syncSources, type SourcesDeps } from '../src/detect/sources'
 import type { WorkItem, WorkSource, WorkTransition } from '../src/detect/work-source'
+import { classifyBash } from '../src/detect/git'
+import { recordBash, startEpic } from '../src/game'
 import { createRng } from '../src/rng'
 import { migrate } from '../src/store/migrate'
 import { createMemoryStore, createRepo, type Repo } from '../src/store/repo'
@@ -30,7 +32,7 @@ async function harness(): Promise<{ repo: Repo; charted: string[]; deps: (now: n
     repo, charted,
     deps: (now, sources, failing = new Set()) => ({
       repo, now, rng: createRng(3 + n++), day: '2026-01-01', sources, failing, charting: new Set(),
-      chart: epic => void charted.push(epic.key),
+      chart: epic => (charted.push(epic.key), true),
     }),
   }
 }
@@ -118,16 +120,52 @@ test('a source that recovers and fails again is reported again', async () => {
   expect(again.toasts.length).toBe(1)
 })
 
-test('a source whose sync throws while applying is reported and does not stop the next one', async () => {
+test('a change that throws while applying is reported; it and what follows for its epic wait, and the rest apply', async () => {
   const h = await harness()
-  const throwing: WorkSource = { name: 'github', changedSince: async () => [{ id: 'z', at: 5 * MIN, item: EPIC, to: 'in_progress' }] }
-  const good = scripted('plans', [{ id: 'g1', at: 5 * MIN, item: EPIC, to: 'in_progress' }])
+  const OTHER: WorkItem = { key: 'NOVA-50', kind: 'epic', title: 'Search', description: '' }
+  const throwing = scripted('github', [{ id: 'z', at: 5 * MIN, item: EPIC, to: 'in_progress' }])
+  const good = scripted('plans', [{ id: 'g1', at: 6 * MIN, item: EPIC, to: 'in_progress' }, { id: 'g2', at: 7 * MIN, item: OTHER, to: 'in_progress' }])
   await syncSources(h.deps(0, [throwing, good]))
   const deps = h.deps(10 * MIN, [throwing, good])
   let calls = 0
-  const r = await syncSources({ ...deps, chart: epic => { calls += 1; if (calls === 1) throw new Error('chart refused'); h.charted.push(epic.key) } })
+  const r = await syncSources({ ...deps, chart: epic => { calls += 1; if (calls === 1) throw new Error('chart refused'); h.charted.push(epic.key); return true } })
   expect(r.toasts).toEqual(['Work source github failed (chart refused); retrying at the next poll.'])
-  expect(h.charted).toEqual(['NOVA-1'])
+  // NOVA-1's later start waits behind the one that threw; NOVA-50 is charted.
+  expect(h.charted).toEqual(['NOVA-50'])
+  expect((await h.repo.sync('github')).waiting.map(t => t.id)).toEqual(['z'])
+  expect((await h.repo.sync('plans')).waiting.map(t => t.id)).toEqual(['g1'])
+  expect((await h.repo.sync('plans')).processed).toEqual(['NOVA-50:g2'])
+  // The next sync applies both, charting NOVA-1 once; nothing already applied runs again.
+  await syncSources(h.deps(20 * MIN, [throwing, good], r.failing))
+  expect(h.charted).toEqual(['NOVA-50', 'NOVA-1'])
+  expect((await h.repo.sync('github')).waiting).toEqual([])
+  expect((await h.repo.sync('plans')).waiting).toEqual([])
+})
+
+test('changes from every source apply as one list, oldest first: a later survey never takes the slot an earlier mission\'s roll needed', async () => {
+  const h = await harness()
+  const OTHER: WorkItem = { key: 'NOVA-50', kind: 'epic', title: 'Search', description: '' }
+  const offline = async () => ({ ok: false as const, reason: 'offline' })
+  // Distinct clocks, so the two systems get distinct ids.
+  for (const [i, epic] of [EPIC, OTHER].entries()) await startEpic({ repo: h.repo, now: i, rng: createRng(1), epic, complete: offline, privacy: 'standard', activate: false })
+  const task: WorkItem = { key: 'NOVA-2', kind: 'issue', title: 'Task', description: '' }
+  const planLog: WorkTransition[] = [{ id: 'p1', at: 2 * MIN, item: task, to: 'in_progress', epic: EPIC }]
+  const gitLog: WorkTransition[] = []
+  // `github` is synced first, but its epic closed after `plans`' mission was done.
+  const github = scripted('github', gitLog)
+  const plans = scripted('plans', planLog)
+  await syncSources(h.deps(0, [github, plans]))
+  await syncSources(h.deps(3 * MIN, [github, plans]))
+  expect((await h.repo.activeMission())?.issueKey).toBe('NOVA-2')
+  // A commit attaches work, so the tracker's Done rolls (the first mission's encounter is guaranteed).
+  await recordBash({ repo: h.repo, now: 4 * MIN, rng: createRng(1), signals: classifyBash('git commit -m x'), commits: 1, isError: false })
+  planLog.push({ id: 'p2', at: 6 * MIN, item: task, to: 'done', epic: EPIC })
+  gitLog.push({ id: 'e1', at: 8 * MIN, item: OTHER, to: 'done' })
+  const r = await syncSources(h.deps(10 * MIN, [github, plans]))
+  // The mission's encounter came first; the survey then waits for the slot.
+  expect(r.outcomes.map(o => o.text)).toEqual([expect.stringContaining('Mission NOVA-2 complete.')])
+  expect(r.outcomes[0]!.text).toContain('Encounter waiting')
+  expect((await h.repo.sync('github')).waiting.map(t => t.id)).toEqual(['e1'])
 })
 
 /** A run the test finishes by hand, counting how many started. */
