@@ -231,7 +231,7 @@ export function shownLines(lines: readonly string[], unterminated: ReadonlySet<n
  * (`trusted`): only those keep their braces when blanked, as a line after
  * the scan went dead or inside a comment may hold a literal's braces.
  */
-export function lineStates(lines: readonly string[], unterminated: ReadonlySet<number> = new Set()): { shown: boolean[]; trusted: boolean[] } {
+export function lineStates(lines: readonly string[], unterminated: ReadonlySet<number> = new Set(), uncertain: ReadonlySet<number> = new Set()): { shown: boolean[]; trusted: boolean[] } {
   const shown: boolean[] = []
   const trusted: boolean[] = []
   let state: 'code' | 'comment' | 'dead' = 'code'
@@ -239,10 +239,12 @@ export function lineStates(lines: readonly string[], unterminated: ReadonlySet<n
     const was = state
     const push = (isShown: boolean) => {
       shown.push(isShown)
-      trusted.push(was === 'code' && state === 'code')
+      // An HTML-like comment's braces are a comment's: the literal scanner does not know them.
+      trusted.push(was === 'code' && state === 'code' && !line.includes('<!--') && !line.includes('-->'))
     }
-    // A string the literal scanner saw run to the line's end: it may go on (a JSX attribute does).
-    if (state === 'code' && unterminated.has(index)) state = 'dead'
+    // A string the literal scanner saw run to the line's end (it may go on), or a quote on a line
+    // the scanner guessed at (a guessed regex can hide one): the scan cannot be sure from here.
+    if (state === 'code' && (unterminated.has(index) || (uncertain.has(index) && /['"`]/.test(line)))) state = 'dead'
     // A hashbang (after a byte order mark too) is a comment, to the first line break of any kind.
     if (index === 0 && /^\uFEFF?#!/.test(line)) {
       if (/[\r\u2028\u2029]/.test(line)) state = 'dead'
@@ -337,7 +339,7 @@ export function filterCode(source: string, mode: PrivacyMode): string {
   if (lines.some(l => l.length > PUZZLE.maxLineChars)) return lines.map(l => `${/^[ \t]*/.exec(l)![0].slice(0, PUZZLE.maxLineChars)}${BLANK}`).join('\n')
   const { text, uncertain, unterminated } = scanLiterals(clean)
   const scanned = text.split('\n')
-  const { shown, trusted } = lineStates(lines, unterminated)
+  const { shown, trusted } = lineStates(lines, unterminated, uncertain)
   return lines
     // Braces only from a line both scans were sure of: otherwise they could be a literal's.
     .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, trusted[i] && !uncertain.has(i) ? (scanned[i] ?? '') : '')))

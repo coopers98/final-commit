@@ -164,7 +164,8 @@ The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
-TypeScript or JavaScript yet (`.tsx` and `.jsx` files are not read). The `puzzles` setting in `/config` is `on`,
+TypeScript yet (only `.ts`, `.mts` and `.cts` files are read for now:
+JavaScript files may hold JSX, which the filter cannot make safe). The `puzzles` setting in `/config` is `on`,
 `local` (Trace and Bug Hunt, so no code is sent anywhere) or `off`. Pattern
 ID needs `privacyMode` set to `standard` or `off`: under the default
 `strict`, no code leaves your machine, so every puzzle is a Trace or a Bug

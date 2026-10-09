@@ -102,8 +102,8 @@ test('the adapter keeps functions the diff touched, within the size limits, with
 })
 
 test('the adapter claims TypeScript and JavaScript sources, not declarations or other files', async () => {
-  for (const p of ['a.ts', 'c.js', 'd.mjs', 'e.cts', 'f.mts']) expect(TS_ADAPTER.claims(p)).toBe(true)
-  for (const p of ['a.d.ts', 'b.tsx', 'f.jsx', 'b.php', 'c.md', 'tsconfig.json']) expect(TS_ADAPTER.claims(p)).toBe(false)
+  for (const p of ['a.ts', 'e.cts', 'f.mts']) expect(TS_ADAPTER.claims(p)).toBe(true)
+  for (const p of ['a.d.ts', 'b.tsx', 'f.jsx', 'c.js', 'd.mjs', 'g.cjs', 'b.php', 'c.md', 'tsconfig.json']) expect(TS_ADAPTER.claims(p)).toBe(false)
 })
 
 test('mission material: the diff against the last commit before the start, read and filtered per claimed file', async () => {
@@ -399,4 +399,23 @@ test('the filter and unit reading stay fast on hostile shapes within the size li
   expect(time(() => TS_ADAPTER.units(sig, new Set([1]))) < 2_000).toBe(true)
   const openers = 'function a(){\n'.repeat(9_000) + '}\n'.repeat(9_000)
   expect(time(() => TS_ADAPTER.units(openers, new Set([1]))) < 2_000).toBe(true)
+})
+
+test('eighth review: a guessed regex hiding a quote ends trust; HTML-like comments keep no braces; signatures stay fast at the cap', async () => {
+  for (const src of [
+    'const el = (a) / < b c="\n  zqZ1 Jane Roe }\n" / //c\n>',
+    'const el = of / < b c="\n  zqZ2 Jane Roe }\n"',
+  ]) expect(/zq/.test(filterCode(src, 'standard'))).toBe(false)
+  for (const src of ['function f() {\n  x = 1 <!-- } { {\n  y = 2\n}', 'x = 1\n--> }}} {\ny = 2']) {
+    const out = filterCode(src, 'standard').split('\n')
+    expect(out.filter(l => l.includes('…')).every(l => !/[{}]/.test(l))).toBe(true)
+  }
+  const at = Date.now()
+  const pad = (head: string) => head + ' '.repeat(299 - head.length)
+  for (let k = 0; k < 300; k += 1) for (const head of ['const a = b :', 'foo(a, b) :', 'const a = (x) :']) functionName(pad(head))
+  expect(Date.now() - at < 1_000).toBe(true)
+  expect(functionName('const pick = (list: string[]) => {')).toBe('pick')
+  expect(functionName('export const sum = async <T>(xs: T[]): Promise<number> => {')).toBe('sum')
+  expect(functionName('const n = (a: number) => a + 1')).toBe(undefined)
+  expect(functionName('  private static parse(text: string): Result {')).toBe('parse')
 })

@@ -93,18 +93,26 @@ export function functionName(line: string): string | undefined {
   if (line.length > PUZZLE.maxSignatureChars) return undefined
   const decl = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*[<(]/.exec(line)
   if (decl) return decl[1]
-  const arrow = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:<[^>]*>\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::\s*[^=]+?)?\s*=>\s*\{\s*$/.exec(line)
-  if (arrow) return arrow[1]
-  const method = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^;]*\)\s*(?::\s*[^{;]+)?\{\s*$/.exec(line)
-  if (method && !NOT_A_NAME.has(method[1]!)) return method[1]
+  // The rest only for a line that opens a block, and each by an anchored prefix plus plain checks:
+  // patterns with several runs that can match the same spaces backtrack badly on long lines.
+  const trimmed = line.trimEnd()
+  if (!trimmed.endsWith('{')) return undefined
+  const arrow = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(line)
+  if (arrow) {
+    const rest = trimmed.slice(arrow[0].length, -1).trimEnd()
+    return rest.endsWith('=>') && /^\s*(?::[^=]*)?=[^=>]/.test(rest) ? arrow[1] : undefined
+  }
+  const method = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(/.exec(line)
+  if (method && !NOT_A_NAME.has(method[1]!) && !line.includes(';') && trimmed.slice(method[0].length).includes(')')) return method[1]
   return undefined
 }
 
 /** SPEC 8.3 rule 2: TypeScript and JavaScript. */
 export const TS_ADAPTER: ContentAdapter = {
   lang: 'TypeScript',
-  // Not .tsx or .jsx: their JSX text is prose with no quotes to blank (SPEC 8.4).
-  claims: path => /\.[cm]?[jt]s$/.test(path) && !path.endsWith('.d.ts'),
+  // TypeScript only (SPEC 8.4): a JavaScript file may hold JSX, whose text is prose with no quotes
+  // to blank and whose attribute strings have no escapes; TypeScript rejects JSX in .ts files.
+  claims: path => /\.[cm]?ts$/.test(path) && !path.endsWith('.d.ts'),
   units(filtered, changed) {
     const lines = filtered.split('\n')
     const endOf = blockEnds(lines)

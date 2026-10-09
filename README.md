@@ -129,7 +129,8 @@ is filtered first: only lines of plain code are kept (any line with a
 string, template, regular expression, comment or escape is blanked to `…`,
 and after anything the filter cannot be sure of, the rest of the file is),
 the value shapes below (emails, keys, IDs, names after a title, and so on)
-are replaced, and JSX is skipped (`.tsx` and `.jsx` files are not read).
+are replaced. Only TypeScript files are read (`.ts`, `.mts`, `.cts`):
+JavaScript files may hold JSX, whose text the filter cannot tell from code.
 Identifiers and type names are not changed. That is why the default
 `strict` mode never sends code: under it, puzzles are made on this machine
 only. Set `puzzles` to `local` for the same with any filter, or `off` for
