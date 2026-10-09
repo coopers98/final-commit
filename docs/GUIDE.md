@@ -158,7 +158,9 @@ The code is shown filtered, as the model sees it: string literals read
 `"…"` and comments are gone. A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
 TypeScript or JavaScript yet. The `puzzles` setting in `/config` is `on`,
-`local` (Bug Hunt only, so no code is sent anywhere) or `off`.
+`local` (Bug Hunt only, so no code is sent anywhere) or `off`. Pattern ID
+needs `privacyMode` set to `standard` or `off`: under the default `strict`,
+no code leaves your machine, so every puzzle is a Bug Hunt.
 
 ### Seal the Lattice
 

@@ -14,19 +14,34 @@ export type ContentAdapter = {
   units(filtered: string, changed: ReadonlySet<number>): Unit[]
 }
 
+/** A path a diff may name: relative, inside the folder, plain (git quotes unusual names, which are skipped). */
+export function isSafePath(path: string): boolean {
+  return path !== '' && !path.startsWith('/') && !path.startsWith('"') && !/^[A-Za-z]:/.test(path) && !path.split(/[\\/]/).includes('..')
+}
+
 /**
- * The lines each file gained, from `git diff --unified=0`: path to 1-based
- * line numbers in the new file. Deleted files and binaries give none.
+ * The lines each file gained, from `git diff --unified=0 --dst-prefix=b/`:
+ * path to 1-based line numbers in the new file. A file's path is read only
+ * in its header (between `diff --git` and its first hunk): a changed line
+ * reads `+`, `-` or ` ` first, so it can never pose as one. Deleted files,
+ * binaries and unsafe paths give none.
  */
 export function changedLines(diff: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>()
   let path: string | undefined
+  let isHeader = false
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++ ')) {
-      const target = line.slice(4).trim()
-      path = target === '/dev/null' ? undefined : target.replace(/^b\//, '')
+    if (line.startsWith('diff --git ')) {
+      isHeader = true
+      path = undefined
       continue
     }
+    if (isHeader && line.startsWith('+++ ')) {
+      const target = line.slice(4).trim()
+      path = target.startsWith('b/') && isSafePath(target.slice(2)) ? target.slice(2) : undefined
+      continue
+    }
+    if (line.startsWith('@@')) isHeader = false
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line)
     if (hunk && path) {
       const start = Number(hunk[1])
@@ -89,7 +104,7 @@ export const TS_ADAPTER: ContentAdapter = {
       const body = lines.slice(i, end + 1).filter(l => l.trim() !== '')
       let isTouched = false
       for (let n = i + 1; n <= end + 1 && !isTouched; n += 1) isTouched = changed.has(n)
-      if (isTouched && body.length >= PUZZLE.unitMinLines && body.length <= PUZZLE.unitMaxLines) {
+      if (isTouched && body.length >= PUZZLE.unitMinLines && body.length <= PUZZLE.unitMaxLines && !body.some(isUnsafeLine)) {
         out.push({ lang: this.lang, name, lines: dedent(body) })
         i = end + 1
       } else {
@@ -102,6 +117,15 @@ export const TS_ADAPTER: ContentAdapter = {
 }
 
 export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER]
+
+/**
+ * A line a unit is never taken with: JSX (its text is prose with no quotes
+ * to blank) or a fence (it could close the one around code in a prompt).
+ * A generic arrow (`= <T>(`) reads as JSX too, which only loses a unit.
+ */
+export function isUnsafeLine(line: string): boolean {
+  return line.includes('```') || /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<\/?[A-Za-z]/.test(line) || /<\/[A-Za-z]/.test(line) || /\/>/.test(line)
+}
 
 /** `lines` less their shared leading indent. */
 function dedent(lines: string[]): string[] {

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { filterCode, stripLiterals } from '../src/puzzle/code-filter'
-import { EMPTY_TREE, missionUnits } from '../src/puzzle/material'
-import { blockEnd, changedLines, functionName, TS_ADAPTER } from '../src/puzzle/units'
+import { filterCode, hasStrayQuote, stripLiterals } from '../src/puzzle/code-filter'
+import { EMPTY_TREE, missionUnits, regularFiles } from '../src/puzzle/material'
+import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, TS_ADAPTER } from '../src/puzzle/units'
 
 // Invented code only (SPEC 15).
 
@@ -112,7 +112,8 @@ test('mission material: the diff against the last commit before the start, read 
     git: async (args: readonly string[]) => {
       calls.push([...args])
       if (args[0] === 'rev-list') return { exitCode: 0, stdout: base }
-      return { exitCode: 0, stdout: '+++ b/src/total.ts\n@@ -5 +6 @@\n+++ b/README.md\n@@ -1 +1 @@\n' }
+      if (args.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 aaa bbb M\0src/total.ts\0:100644 100644 ccc ddd M\0README.md\0' }
+      return { exitCode: 0, stdout: 'diff --git a/src/total.ts b/src/total.ts\n+++ b/src/total.ts\n@@ -5 +6 @@\ndiff --git a/README.md b/README.md\n+++ b/README.md\n@@ -1 +1 @@\n' }
     },
     read: async (path: string) => files[path],
   })
@@ -121,6 +122,7 @@ test('mission material: the diff against the last commit before the start, read 
   expect(units[0]!.lines.join('\n')).not.toContain('example.com')
   expect(calls[0]).toEqual(['rev-list', '-1', '--before=2026-01-02T00:00:00.000Z', 'HEAD'])
   expect(calls[1]!.at(-1)).toBe('abc123')
+  expect(calls[2]).toContain('--no-textconv')
   // No commit before the start: everything since the repository began.
   calls.length = 0
   await missionUnits(io(''), 0, 'strict')
@@ -130,4 +132,89 @@ test('mission material: the diff against the last commit before the start, read 
 test('mission material: outside a repository there is none', async () => {
   const io = { git: async () => ({ exitCode: 128, stdout: '' }), read: async () => undefined }
   expect(await missionUnits(io, 0, 'strict')).toEqual([])
+})
+
+// Security review findings (FC-15): each one a test.
+
+test('a quote inside a regular expression never lets a later string through', async () => {
+  const secrets = [
+    "s.split(/'/).join('apikey SECRETVALUE patient Jane')",
+    'x.replace(/"/g, "Acme Hospital internal password hunter2")',
+    'const re = /acme-payroll-secret/i',
+    'if (ok) return /[/"]x/.test(s) && "Jane Roe"',
+  ]
+  for (const line of secrets) {
+    const out = filterCode(line, 'standard')
+    for (const word of ['SECRETVALUE', 'Jane', 'Acme', 'hunter2', 'payroll']) expect(out).not.toContain(word)
+  }
+  expect(stripLiterals('const re = /a"b/g; const t = "Jane"')).toBe('const re = /…/; const t = "…"')
+  // Division stays code.
+  expect(stripLiterals('const half = total / 2 / count')).toBe('const half = total / 2 / count')
+})
+
+test('a line the scanner cannot account for is blanked whole, keeping its indent', async () => {
+  expect(hasStrayQuote('const a = "…" + \'…\' + `…`')).toBe(false)
+  expect(hasStrayQuote('const a = "…" + oops"leak')).toBe(true)
+  expect(hasStrayQuote("  it's prose")).toBe(true)
+})
+
+test('control characters never reach the pane or a prompt, in any mode', async () => {
+  const esc = 'const a = 1\u001b[31m\r\nconst b = 2\u0007'
+  for (const mode of ['strict', 'standard', 'off'] as const) {
+    const out = filterCode(esc, mode)
+    expect(/[\u0000-\u0008\u000b-\u001f\u007f]/.test(out)).toBe(false)
+    expect(out.split('\n').length).toBe(2)
+  }
+})
+
+test('a changed line that looks like a file header cannot name a file', async () => {
+  const diff = [
+    'diff --git a/src/a.ts b/src/a.ts',
+    '--- a/src/a.ts',
+    '+++ b/src/a.ts',
+    '@@ -1,0 +2,1 @@',
+    '+++ /home/someone/other/billing.ts',
+    '@@ -10,0 +12,30 @@',
+  ].join('\n')
+  const map = changedLines(diff)
+  expect([...map.keys()]).toEqual(['src/a.ts'])
+  expect(map.get('src/a.ts')!.has(12)).toBe(true)
+})
+
+test('only relative, plain paths inside the folder are read', async () => {
+  for (const p of ['src/a.ts', 'a.ts']) expect(isSafePath(p)).toBe(true)
+  for (const p of ['/etc/x.ts', '../x.ts', 'src/../../x.ts', '"src/we\\"ird.ts"', 'C:/x.ts', '']) expect(isSafePath(p)).toBe(false)
+})
+
+test('the raw listing keeps regular files added or modified: no symlinks, submodules or deletions', async () => {
+  const raw = [
+    ':100644 100644 a b M', 'src/ok.ts',
+    ':000000 100755 a b A', 'bin/new.js',
+    ':120000 120000 a b M', 'src/link.ts',
+    ':160000 160000 a b M', 'vendor/sub',
+    ':100644 000000 a b D', 'src/gone.ts',
+    ':100644 100644 a b M', '../escape.ts',
+  ].join('\0') + '\0'
+  expect([...regularFiles(raw)]).toEqual(['src/ok.ts', 'bin/new.js'])
+})
+
+test('a symlink the diff names is never read', async () => {
+  let reads = 0
+  const io = {
+    git: async (args: readonly string[]) => {
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: 'abc\n' }
+      if (args.includes('--raw')) return { exitCode: 0, stdout: ':120000 120000 a b M\0src/total.ts\0' }
+      return { exitCode: 0, stdout: 'diff --git a/src/total.ts b/src/total.ts\n+++ b/src/total.ts\n@@ -0,0 +1 @@\n' }
+    },
+    read: async () => (reads += 1, FILE),
+  }
+  expect(await missionUnits(io, 0, 'standard')).toEqual([])
+  expect(reads).toBe(0)
+})
+
+test('units with JSX or a code fence are never taken', async () => {
+  for (const l of ['  return <p>Call Jane</p>', '  <Header title={t} />', '  const s = ```', 'const el = (<div>', '  </div>']) expect(isUnsafeLine(l)).toBe(true)
+  for (const l of ['  if (a < b && c > d) return a', '  const xs: Array<string> = []', '  return total', '  const f = (x: number) => x']) expect(isUnsafeLine(l)).toBe(false)
+  const jsx = 'function Card(p: Props) {\n  const name = p.name\n  const n = name.length\n  return <p>Jane Roe</p>\n}'
+  expect(TS_ADAPTER.units(jsx, new Set([2]))).toEqual([])
 })

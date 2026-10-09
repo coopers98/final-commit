@@ -34,6 +34,15 @@ export function readSettings(options: PluginOptions): Settings {
   }
 }
 
+/**
+ * SPEC 8.4: whether puzzles may send code to a model. Only with puzzles `on`
+ * and a privacy mode other than `strict`: strict keeps code on this machine
+ * (Bug Hunt only), since identifiers and type names survive the code filter.
+ */
+export function sendsCode(s: Pick<Settings, 'puzzles' | 'privacyMode'>): boolean {
+  return s.puzzles === 'on' && s.privacyMode !== 'strict'
+}
+
 /** A comma-separated text setting as its entries, trimmed, blanks dropped. */
 export function textList(value: unknown): string[] {
   return typeof value === 'string' ? value.split(',').map(v => v.trim()).filter(v => v !== '') : []

@@ -26,7 +26,7 @@ import { createSyncGate, resolveSources, syncSources, type Backend } from '../sr
 import type { WorkSource } from '../src/detect/work-source'
 import { completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCraftCell, parseEpicKey, queueTarget, recordBash, reopenMission, startEpic, startMission, type Outcome } from '../src/game'
 import type { Rng } from '../src/rng'
-import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, snapshot, type Settings } from '../src/runtime'
+import { NO_MOOD, localDay, orphanedCharts, readSettings, rngFor, sendsCode, snapshot, type Settings } from '../src/runtime'
 import { migrate } from '../src/store/migrate'
 import { createRepo, type Repo, type StoreLike } from '../src/store/repo'
 import type { Complete } from '../src/world/generate'
@@ -374,7 +374,7 @@ async function preparePuzzle($: EngineInterface) {
     const units = mission ? await missionUnits(io, mission.startedAt, settings.privacyMode) : []
     const puzzle = await buildPuzzle({
       units, tier: pending.tier, rng: await rngOf($),
-      ...(settings.puzzles === 'on' ? { complete: completeVia($, settings.puzzleModel, PUZZLE) } : {}),
+      ...(sendsCode(settings) ? { complete: completeVia($, settings.puzzleModel, PUZZLE) } : {}),
     })
     // Kept only if the same creature is still waiting.
     const now = await repo.pending()

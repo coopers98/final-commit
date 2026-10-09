@@ -119,15 +119,19 @@ after the privacy filter, in one request per epic (plus up
 to two follow-up requests that redraw creature art; those carry generated
 names and descriptions, not your text). The issue key is never sent. The
 default model is Opus; you can pick Sonnet or Haiku in `/config`.
-**Puzzles send code.** When a mission rolls an encounter, the functions it
-changed are read for a puzzle. With `puzzles` set to `on` (the default),
-one of them is sent to the puzzle model (Sonnet by default, the
-`puzzleModel` setting) in two requests: one writes a question about it, one
-checks the answer. The code is filtered first: every string literal is
-blanked, every comment removed, and the value shapes below (emails, keys,
-IDs, names after a title, and so on) replaced. Set `puzzles` to `local` to
-keep code off the model entirely (only puzzles the mod builds itself), or
-`off` for none.
+**Puzzles can send code.** When a mission rolls an encounter, the
+functions it changed are read for a puzzle. With `puzzles` set to `on` (the
+default) and `privacyMode` set to `standard` or `off`, one of them is sent
+to the puzzle model (Sonnet by default, the `puzzleModel` setting) in two
+requests: one writes a question about it, one checks the answer. The code
+is filtered first: every string, template and regular-expression literal
+is blanked, every comment removed, and the value shapes below (emails,
+keys, IDs, names after a title, and so on) replaced; a line the filter
+cannot account for is blanked whole, and functions with JSX are skipped.
+Identifiers and type names are not changed. That is why the default
+`strict` mode never sends code: under it, puzzles are made on this machine
+only. Set `puzzles` to `local` for the same with any filter, or `off` for
+none.
 `/captains-log` asks your session's own model to summarize the session it
 already holds; the mod adds only a fixed instruction, and the summary is
 stored locally. The crew subagents read your code the way any Claude Code

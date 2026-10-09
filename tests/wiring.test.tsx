@@ -1276,7 +1276,8 @@ const TOTAL_TS = [
 /** git as a mission that changed src/total.ts: the diff touches line 4. */
 const missionGit: Gh = argv => {
   if (argv[1] === 'rev-list') return { exitCode: 0, stdout: 'abc123\n' }
-  if (argv[1] === 'diff') return { exitCode: 0, stdout: '+++ b/src/total.ts\n@@ -4 +4 @@\n' }
+  if (argv[1] === 'diff' && argv.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 aaa bbb M\0src/total.ts\0' }
+  if (argv[1] === 'diff') return { exitCode: 0, stdout: 'diff --git a/src/total.ts b/src/total.ts\n+++ b/src/total.ts\n@@ -4 +4 @@\n' }
   return { exitCode: 0, stdout: 'main\n' }
 }
 
@@ -1336,7 +1337,7 @@ test('with puzzles off, containment opens with no puzzle and git is never asked 
   expect((await run($, 'contain')).text).toBe('Opened containment.')
 })
 
-test('with puzzles on, Pattern ID sends only filtered code to the puzzle model, and falls back to Bug Hunt when the model fails', { options: { puzzles: 'on' } }, async ($, on) => {
+test('with puzzles on and the standard filter, Pattern ID sends filtered code to the puzzle model, and falls back to Bug Hunt when the model fails', { options: { puzzles: 'on', privacyMode: 'standard' } }, async ($, on) => {
   const w = world(on, { git: missionGit })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
@@ -1346,4 +1347,12 @@ test('with puzzles on, Pattern ID sends only filtered code to the puzzle model, 
   const pane = await $.ui.mount(PANE('fc-lattice'))
   expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
   await pane.unmount()
+})
+
+test('with puzzles on but the strict filter (the default), no code is sent: Bug Hunt only', { options: { puzzles: 'on' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  expect(w.prompts.filter(p => p.includes('totalOf'))).toEqual([])
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
 })

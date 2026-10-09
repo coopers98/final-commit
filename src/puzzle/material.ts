@@ -1,7 +1,7 @@
 import { PUZZLE } from '../config'
 import { filterCode } from './code-filter'
 import type { PrivacyMode } from './privacy-filter'
-import { ADAPTERS, changedLines, type Unit } from './units'
+import { ADAPTERS, changedLines, isSafePath, type Unit } from './units'
 
 // SPEC 8: a puzzle's material is the code a mission changed: its commits
 // and anything still uncommitted, against the last commit before it started.
@@ -18,6 +18,22 @@ export type MaterialIo = {
 /** git's empty tree: the base when the repository has no commit from before the mission. */
 export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
+/**
+ * From `git diff --raw -z`: the paths whose new side is a regular file
+ * (mode 100644 or 100755), added or modified. Symlinks (120000),
+ * submodules and deletions are left out.
+ */
+export function regularFiles(raw: string): Set<string> {
+  const out = new Set<string>()
+  const parts = raw.split('\0')
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const meta = /^:\d{6} (\d{6}) \S+ \S+ ([AM])/.exec(parts[i]!.trim())
+    const path = parts[i + 1]!
+    if (meta && (meta[1] === '100644' || meta[1] === '100755') && isSafePath(path)) out.add(path)
+  }
+  return out
+}
+
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
 export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<Unit[]> {
   const before = await io.git(['rev-list', '-1', `--before=${new Date(startedAt).toISOString()}`, 'HEAD'])
@@ -27,15 +43,20 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     if (head.exitCode !== 0) return []
   }
   const base = before.stdout.trim() || EMPTY_TREE
-  // Paths relative to the session's folder; the working tree, so uncommitted work counts.
-  const diff = await io.git(['diff', '--relative', '--unified=0', '--no-color', '--no-ext-diff', base])
-  if (diff.exitCode !== 0) return []
+  // Paths relative to the session's folder; the working tree, so uncommitted work counts. The
+  // format is pinned, whatever git config says: plain prefixes, no conversion drivers.
+  const pinned = ['--relative', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/']
+  const raw = await io.git(['diff', ...pinned, '--raw', '-z', base])
+  const diff = await io.git(['diff', ...pinned, '--unified=0', base])
+  if (raw.exitCode !== 0 || diff.exitCode !== 0) return []
+  const files = regularFiles(raw.stdout)
   const units: Unit[] = []
-  let files = 0
+  let read = 0
   for (const [path, changed] of changedLines(diff.stdout)) {
     const adapter = ADAPTERS.find(a => a.claims(path))
-    if (!adapter || files >= PUZZLE.maxFiles) continue
-    files += 1
+    // Only a regular file git reported changed: never a symlink, which could point outside the folder.
+    if (!adapter || !files.has(path) || read >= PUZZLE.maxFiles) continue
+    read += 1
     const text = await io.read(path)
     if (text === undefined || text.length > PUZZLE.maxFileBytes) continue
     units.push(...adapter.units(filterCode(text, mode), changed))
