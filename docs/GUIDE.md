@@ -154,8 +154,9 @@ answering fast (none after a minute). A wrong answer costs nothing and
 explains why. The bonus counts for every attempt on that creature, and the
 question is asked once.
 
-The code is shown filtered, as the model sees it: string literals read
-`"…"` and comments are gone. A survey's creature has no puzzle (a survey
+The code is shown filtered, as the model sees it: only plain lines of
+code show, and any line with a string, comment or regular expression reads
+`…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
 TypeScript or JavaScript yet (`.tsx` and `.jsx` files are not read). The `puzzles` setting in `/config` is `on`,
 `local` (Bug Hunt only, so no code is sent anywhere) or `off`. Pattern ID

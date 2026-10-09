@@ -124,11 +124,11 @@ functions it changed are read for a puzzle. With `puzzles` set to `on` (the
 default) and `privacyMode` set to `standard` or `off`, one of them is sent
 to the puzzle model (Sonnet by default, the `puzzleModel` setting) in two
 requests: one writes a question about it, one checks the answer. The code
-is filtered first: every string, template and regular-expression literal
-is blanked, every comment removed, and the value shapes below (emails,
-keys, IDs, names after a title, and so on) replaced; a line the filter
-cannot be sure of is blanked whole, and JSX is skipped (`.tsx` and `.jsx`
-files are not read).
+is filtered first: only lines of plain code are kept (any line with a
+string, template, regular expression, comment or escape is blanked to `…`,
+and after anything the filter cannot be sure of, the rest of the file is),
+the value shapes below (emails, keys, IDs, names after a title, and so on)
+are replaced, and JSX is skipped (`.tsx` and `.jsx` files are not read).
 Identifiers and type names are not changed. That is why the default
 `strict` mode never sends code: under it, puzzles are made on this machine
 only. Set `puzzles` to `local` for the same with any filter, or `off` for

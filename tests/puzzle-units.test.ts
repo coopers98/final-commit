@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { filterCode, scanLiterals, stripLiterals } from '../src/puzzle/code-filter'
+import { filterCode, isPlainLine, scanLiterals, shownLines, stripLiterals } from '../src/puzzle/code-filter'
+import { createRng } from '../src/rng'
 import { EMPTY_TREE, missionUnits, regularFiles } from '../src/puzzle/material'
 import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, TS_ADAPTER } from '../src/puzzle/units'
 
@@ -27,7 +28,7 @@ test('literals are blanked and comments removed, line for line', async () => {
 
 test('the filter replaces value shapes left in code, and leaves code alone with the filter off', async () => {
   const src = 'const id = lookup(XJ482130)\nconst host = "db.internal"\nsend(ops@example.com)'
-  expect(filterCode(src, 'strict')).toBe('const id = lookup([id])\nconst host = "…"\nsend([email])')
+  expect(filterCode(src, 'strict')).toBe('const id = lookup([id])\n…\nsend([email])')
   expect(filterCode(src, 'off')).toBe(src)
   // A long string never shifts later lines.
   expect(filterCode('a("x\ny")\nb()', 'standard').split('\n').length).toBe(3)
@@ -232,4 +233,76 @@ test('units with JSX or a code fence are never taken', async () => {
   for (const l of ['  if (a < b && c > d) return a', '  const xs: Array<string> = []', '  return total', '  const f = (x: number) => x']) expect(isUnsafeLine(l)).toBe(false)
   const jsx = 'function Card(p: Props) {\n  const name = p.name\n  const n = name.length\n  return <p>Jane Roe</p>\n}'
   expect(TS_ADAPTER.units(jsx, new Set([2]))).toEqual([])
+})
+
+// Third security review: every counterexample, then a seeded fuzz over the
+// constructs that broke earlier versions. Sentinels must never survive.
+
+const COUNTEREXAMPLES = [
+  'export default /zq4/',
+  'export default /zq5 is secret/g',
+  'class A extends /zq13/.constructor {}',
+  "const r = obj.of / 2, p = '/', s = 'zq1' // '",
+  'let of = 4; const r = of / 2, p = "/\'", s = \'zq3\' // \'',
+  'if (c.in / a - (a) - c.in) arr[0] /* zq1 ` */',
+  'x = (a) / 2; s = "/`";\ny = 1; t = `\nzq6 // `;',
+  "x = `${ '}' + `b//` }\nzq7\n`",
+  'x = `${ /* } */ `b//` }\nzq8\n`',
+  'r = obj.of / 2 + `/`\nq = 3; u = `\nzq14 // `',
+  'x = 1 <!-- zq1 secret html comment',
+  'x = 1\n--> zq2 tail',
+  'const r = counts[k]! / total; log("/patients/zqJane/chart")',
+  'n = i++ / 2; s = "hello / zqB tail"',
+  'if (ok) /"/.test(a), y = "zqA text"',
+  'const s = "line one \\\nzqD continues"',
+  '/* open\nzqC\n*/ zqE()',
+  'a = "x" /* still open\nzqF\n',
+  'x = 1 /* c */ y = 2 /* zqG',
+]
+
+test('none of the reviews\' counterexamples leaks a sentinel, and line counts hold', async () => {
+  for (const src of COUNTEREXAMPLES) {
+    for (const mode of ['strict', 'standard'] as const) {
+      const out = filterCode(src, mode)
+      expect(/zq/.test(out)).toBe(false)
+      expect(out.split('\n').length).toBe(src.split('\n').length)
+    }
+  }
+})
+
+test('fuzz: literals and comments in any arrangement never leak', async () => {
+  const pieces = [
+    // A regex only where the grammar makes one (after an identifier, a slash is a division and its neighbors are code).
+    "'zqS'", '"zqS"', '`zqS`', '`a${b}zqS`', '`${ "}" }zqS`', '= /zqS/g', '(/[/"]zqS/', '// zqS', '/* zqS */', '/* zqS', '*/',
+    'a / b', 'x! / y', 'i++ / 2', '(a) / 2', 'obj.of / 2', '; return /zqS/', '; default /zqS/', '<!-- zqS', '-->', '\\',
+    '`', '"', "'", '/', '{', '}', '(', ')', ';', 'x = 1', '<p>zqS</p>', '<>zqS</>', '\u2028', 'const q = 3',
+  ]
+  const rng = createRng(20261008)
+  for (let n = 0; n < 4000; n += 1) {
+    const lines: string[] = []
+    const count = 1 + rng.int(4)
+    for (let l = 0; l < count; l += 1) {
+      const parts: string[] = []
+      for (let k = 0, m = 1 + rng.int(5); k < m; k += 1) parts.push(rng.pick(pieces))
+      lines.push(parts.join(' '))
+    }
+    const src = lines.join('\n')
+    const out = filterCode(src, 'standard')
+    if (/zq/.test(out)) throw new Error(`leak: ${JSON.stringify(src)} -> ${JSON.stringify(out)}`)
+    expect(out.split('\n').length).toBe(src.split('\n').length)
+  }
+})
+
+test('plain code shows as written; blanked lines keep their braces', async () => {
+  expect(isPlainLine('  const half = total / 2 / count')).toBe(true)
+  expect(isPlainLine('  return a / b')).toBe(true)
+  expect(isPlainLine('  return /x/.test(s)')).toBe(false)
+  expect(isPlainLine('  x = xs[0] / 2')).toBe(true)
+  expect(filterCode('function f(a: number) {\n  if (a === "x") {\n    return 1\n  }\n}', 'standard').split('\n')).toEqual([
+    'function f(a: number) {', '  …{', '    return 1', '  }', '}',
+  ])
+  // A one-line JSDoc comment is fine; code after a comment's end is not trusted.
+  expect(shownLines(['/** doc */', 'const a = 1'])).toEqual([false, true])
+  expect(shownLines(['/**', ' * text', ' */', 'const a = 1'])).toEqual([false, false, false, true])
+  expect(shownLines(['/* c', '*/ const a = 1', 'const b = 2'])).toEqual([false, false, false])
 })

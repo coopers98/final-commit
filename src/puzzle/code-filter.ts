@@ -165,15 +165,119 @@ export function stripLiterals(source: string): string {
 // eslint-disable-next-line no-control-regex
 export const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
 
-/** SPEC 8.3: code ready for a prompt and the pane. `off` sends it as written, as for epic text, less control characters. */
+/** Words after which a `/` may open a regular expression: a line with one is never shown. */
+const WORDS_BEFORE_REGEX = new Set((
+  'return typeof instanceof case do else in of new delete void throw yield await default extends as from get set ' +
+  'async let static satisfies keyof infer is asserts import export const var function class if while for switch'
+).split(' '))
+
+/**
+ * Whether every `/` on `line` is surely a division: right after a word
+ * that is not a keyword, a number or `]`, and not part of `//`, `/*` or `*` + `/`.
+ */
+function slashesAreDivision(line: string): boolean {
+  for (let k = line.indexOf('/'); k >= 0; k = line.indexOf('/', k + 1)) {
+    if (line[k + 1] === '/' || line[k + 1] === '*' || line[k - 1] === '*' || line[k - 1] === '/') return false
+    const before = line.slice(0, k).trimEnd()
+    const word = /[\w$]+$/.exec(before)?.[0]
+    if (word !== undefined) {
+      if (WORDS_BEFORE_REGEX.has(word)) return false
+      continue
+    }
+    if (!before.endsWith(']')) return false
+  }
+  return true
+}
+
+/**
+ * A line that can show as written: no quote, backtick or backslash (so no
+ * string, template or escape on it), no HTML-like comment, every slash a
+ * division (so no regular expression or comment), no line separator.
+ */
+export function isPlainLine(line: string): boolean {
+  return !/['"`\\\u2028\u2029]/.test(line) && !line.includes('<!--') && !line.includes('-->') && slashesAreDivision(line)
+}
+
+/**
+ * The line states, by a scan that only ever trusts what it can prove:
+ * `shown` lines are plain code outside any comment or literal; everything
+ * else is blanked. Once the scan cannot be sure where it is (a template
+ * that spans lines, or one with `${}` beside a quote or slash; an odd
+ * backtick; a backslash at a line's end; code after a comment's end), every
+ * line from there on is blanked.
+ */
+export function shownLines(lines: readonly string[]): boolean[] {
+  const shown: boolean[] = []
+  let state: 'code' | 'comment' | 'dead' = 'code'
+  for (const line of lines) {
+    if (state === 'dead') {
+      shown.push(false)
+      continue
+    }
+    if (state === 'comment') {
+      const end = line.indexOf('*/')
+      if (end >= 0) state = line.slice(end + 2).trim() === '' ? 'code' : 'dead'
+      shown.push(false)
+      continue
+    }
+    if (/\\\s*$/.test(line) || /[\u2028\u2029]/.test(line)) {
+      state = 'dead'
+      shown.push(false)
+      continue
+    }
+    const ticks = [...line].filter(c => c === '`').length
+    if (ticks > 0 && (ticks !== 2 || !isClosedTemplate(line))) {
+      state = 'dead'
+      shown.push(false)
+      continue
+    }
+    const open = line.lastIndexOf('/*')
+    if (open >= 0 && line.lastIndexOf('*/') < open + 2) state = 'comment'
+    shown.push(state === 'code' && ticks === 0 && open < 0 && isPlainLine(line))
+  }
+  return shown
+}
+
+/** A line's two backticks surely open and close one template: no `${}` beside a quote or slash, and every `${` closed before the second. */
+function isClosedTemplate(line: string): boolean {
+  const a = line.indexOf('`')
+  const b = line.indexOf('`', a + 1)
+  const inside = line.slice(a + 1, b)
+  if (!inside.includes('${')) return true
+  if (/['"\/\\]/.test(line)) return false
+  let depth = 0
+  for (let k = 0; k < inside.length; k += 1) {
+    if (inside[k] === '$' && inside[k + 1] === '{') {
+      depth += 1
+      k += 1
+    } else if (depth > 0 && inside[k] === '{') depth += 1
+    else if (depth > 0 && inside[k] === '}') depth -= 1
+  }
+  return depth === 0
+}
+
+/** A blanked line: its indent, `…`, and its braces in order (from the scanner's reading), so blocks still match. */
+function blankLine(original: string, scanned: string): string {
+  const indent = original.slice(0, original.length - original.trimStart().length)
+  const braces = scanned.replace(/[^{}]/g, '')
+  const lead = /^}*/.exec(braces)![0]
+  return `${indent}${lead}${BLANK}${braces.slice(lead.length)}`
+}
+
+/**
+ * SPEC 8.3: code ready for a prompt and the pane. A line shows as written
+ * (less value shapes) only when it is plain code outside any literal or
+ * comment (`shownLines`); every other line is blanked to its braces. `off`
+ * sends it as written, as for epic text, less control characters.
+ */
 export function filterCode(source: string, mode: PrivacyMode): string {
   // A CR before LF goes; a lone CR is a control character below. Either way the line count holds.
   const clean = source.replace(/\r(?=\n)/g, '')
   if (mode === 'off') return clean.split('\n').map(l => l.replace(CONTROL, '')).join('\n')
-  const { text, uncertain } = scanLiterals(clean)
-  // Line by line, so no value shape can swallow a line break.
-  return text
-    .split('\n')
-    .map((l, i) => (uncertain.has(i) ? `${l.slice(0, l.length - l.trimStart().length)}${BLANK}` : filterValues(l.replace(CONTROL, '')).text))
+  const lines = clean.split('\n')
+  const scanned = scanLiterals(clean).text.split('\n')
+  const shown = shownLines(lines)
+  return lines
+    .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, scanned[i] ?? '')))
     .join('\n')
 }
