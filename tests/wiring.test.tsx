@@ -53,7 +53,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
     return { value: undefined }
   })
   on('process.run', (_$, e) => {
-    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : e.argv[0] === 'git' && opts.git ? opts.git(e.argv) : e.argv[0] === 'node' && opts.node ? opts.node(e.argv, e.init) : undefined
+    const gh = e.argv[0] === 'gh' && opts.gh ? opts.gh(e.argv) : e.argv[0] === 'git' && opts.git ? opts.git(e.argv) : (e.argv[0] === 'node' || e.argv[0] === 'env') && opts.node ? opts.node(e.argv, e.init) : undefined
     const out = gh ? { stderr: '', ...gh } : { exitCode: 0, stdout: `${opts.branch ?? 'main'}\n`, stderr: '' }
     return { value: { ...out, isStdoutTruncated: false, isStderrTruncated: false } } as never
   })
@@ -1402,7 +1402,7 @@ const RARE_SEED = '38'
 /** node as the Trace harness would answer it: totalOf run on each input of the payload. */
 const harnessNode = (calls: { argv: readonly string[]; cwd?: string; stdin?: string }[]): Node => (argv, init) => {
   calls.push({ argv, ...(init?.cwd ? { cwd: init.cwd } : {}), ...(init?.stdin ? { stdin: init.stdin } : {}) })
-  if (argv[1] === '--version') return { exitCode: 0, stdout: 'v24.0.0\n' }
+  if (argv[1] === '-p') return { exitCode: 0, stdout: '/usr/bin/node\n' }
   const payload = JSON.parse(init!.stdin!) as { inputs: [number[], number][] }
   const totalOf = (items: number[], limit: number) => {
     let total = 0
@@ -1417,8 +1417,9 @@ test('a Rare encounter\'s puzzle is a Trace: node runs the filtered function in 
   const w = world(on, { git: missionGit, seed: RARE_SEED, node: harnessNode(calls), env: { TMPDIR: '/scratch/tmp' } })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
-  // Checked once, then one run with every candidate input in it, in TMPDIR.
-  expect(calls.map(c => c.argv[1])).toEqual(['--version', '--permission'])
+  // Checked once (its path), then one run with every candidate input in it, in TMPDIR, by that path with an empty environment.
+  expect(calls.map(c => c.argv[1])).toEqual(['-p', '-i'])
+  expect(calls[1]!.argv.slice(0, 4)).toEqual(['env', '-i', 'HOME=/nonexistent', '/usr/bin/node'])
   expect(calls.every(c => c.cwd === '/scratch/tmp')).toBe(true)
   expect(JSON.parse(calls[1]!.stdin!).code.startsWith('function totalOf(')).toBe(true)
   expect(w.prompts.filter(p => p.includes('totalOf'))).toEqual([])
@@ -1443,7 +1444,7 @@ test('with no node on the host, a Rare encounter falls back to Bug Hunt', { opti
   const w = world(on, { git: missionGit, seed: RARE_SEED, node: argv => (calls.push({ argv }), { exitCode: 127, stdout: '' }) })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
-  expect(calls.map(c => c.argv[1])).toEqual(['--version'])
+  expect(calls.map(c => c.argv[1])).toEqual(['-p'])
   await run($, 'contain')
   const pane = await $.ui.mount(PANE('fc-lattice', 100))
   expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')

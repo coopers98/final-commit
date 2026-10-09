@@ -34,6 +34,11 @@ export function regularFiles(raw: string): Set<string> {
   return out
 }
 
+/** Whether `text` holds JSX: a tag where an expression starts, a closing tag or a self-closing one. */
+export function hasJsx(text: string): boolean {
+  return /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<[A-Za-z>]/m.test(text) || /<\/[A-Za-z>]?|\/>/.test(text)
+}
+
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
 export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<Unit[]> {
   const before = await io.git(['rev-list', '-1', `--before=${new Date(startedAt).toISOString()}`, 'HEAD'])
@@ -61,6 +66,8 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     read += 1
     const text = await io.read(path)
     if (text === undefined || text.length > PUZZLE.maxFileBytes) continue
+    // JSX, read in the code as written: the filter blanks its tags, but not the prose between them.
+    if (hasJsx(text)) continue
     const filtered = filterCode(text, mode)
     // Line numbers from the diff must still point at the same lines.
     if (filtered.split('\n').length !== text.replace(/\r(?=\n)/g, '').split('\n').length) continue

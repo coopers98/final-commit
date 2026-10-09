@@ -1,5 +1,5 @@
 import { ALLOWED_GLOBALS } from './harness'
-import { BLANK } from './code-filter'
+import { BLANK, isPlainLine } from './code-filter'
 import { functionName, type Unit } from './units'
 
 // SPEC 8.3 rule 4 (D15): which units Trace may run. Static and fail-closed:
@@ -22,6 +22,8 @@ const DENIED = new Set([
   'debugger', 'arguments', 'random', 'fromCharCode', 'fromCodePoint', 'enum', 'namespace', 'declare', 'module', 'class', 'super',
   // Host objects by name: none is in the runner's context, and a reach for one is never self-contained.
   'console', 'Buffer', 'exports', 'document', 'navigator', 'Deno', 'Bun', 'Symbol', 'Promise', 'WeakRef', 'FinalizationRegistry',
+  // Ways to spell a word without a string: a regex's text, a type's name.
+  'source', 'flags', 'typeof', 'toString',
 ])
 
 /** What `new` may build. */
@@ -174,7 +176,8 @@ function declared(tokens: readonly Token[]): Set<string> {
  */
 export function runnable(unit: Unit): Runnable | undefined {
   const lines = unit.lines
-  if (lines.length < 2 || lines.some(l => l.includes(BLANK) || REDACTION.test(l))) return undefined
+  // Every line plain code (code-filter's own test), so no regex literal can spell a word, even with the filter off.
+  if (lines.length < 2 || lines.some(l => l.includes(BLANK) || REDACTION.test(l) || !isPlainLine(l))) return undefined
   const first = lines[0]!.replace(/^export\s+(?:default\s+)?/, '')
   if (/^\s*export\b/.test(first) || functionName(first) !== unit.name) return undefined
   // No generics, no `async`, no annotation on the const: the parameters are the list right after.
@@ -208,6 +211,14 @@ export function isSelfContained(tokens: readonly Token[], self: string): boolean
       // A call of a free name (`name(` or `name?.(`), not a member's, a keyword's or a declaration's.
       const isCall = next?.text === '(' || (next?.text === '?' && tokens[i + 2]?.text === '.' && tokens[i + 3]?.text === '(')
       if (isCall && !isMember && !KEYWORDS.has(t.text) && prev?.text !== 'function' && !allowed.has(t.text)) return false
+    }
+    // A computed member (`x[...]`) only by one name or number, or one plus or minus another.
+    if (t.text === '[' && prev && (prev.kind === 'name' || prev.text === ')' || prev.text === ']')) {
+      const close = tokens.findIndex((u, k) => k > i && u.text === ']')
+      const inner = tokens.slice(i + 1, close < 0 ? tokens.length : close)
+      const isSimple = inner.length > 0 && inner.length <= 3 && inner.every((u, k) => (k % 2 === 0 ? u.kind !== 'punct' : u.text === '+' || u.text === '-'))
+      // `[]` with nothing inside is a type (`number[]`), not an access.
+      if (close < 0 || (inner.length > 0 && !isSimple)) return false
     }
   }
   return true

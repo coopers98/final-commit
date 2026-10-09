@@ -120,8 +120,8 @@ export const PUZZLE = {
 // runner on generated inputs. A runner's command and limits; one now (node),
 // `python3`, `php` and `sqlite3` take their own rows when their adapters land.
 export type RunnerName = 'node'
-export const RUNNERS: Record<RunnerName, { binary: string; maxOldSpaceMb: number; timeoutMs: number; outputMaxChars: number }> = {
-  node: { binary: 'node', maxOldSpaceMb: 32, timeoutMs: 10_000, outputMaxChars: 65_536 },
+export const RUNNERS: Record<RunnerName, { binary: string; emptyHome: string; maxOldSpaceMb: number; timeoutMs: number; outputMaxChars: number }> = {
+  node: { binary: 'node', emptyHome: '/nonexistent', maxOldSpaceMb: 32, timeoutMs: 10_000, outputMaxChars: 65_536 },
 }
 export const TRACE = {
   /** Each call of the function, inside the runner; and all of them together. */

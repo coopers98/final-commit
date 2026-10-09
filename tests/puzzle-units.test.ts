@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { filterCode, isPlainLine, scanLiterals, shownLines, stripLiterals } from '../src/puzzle/code-filter'
 import { createRng } from '../src/rng'
-import { EMPTY_TREE, missionUnits, regularFiles } from '../src/puzzle/material'
+import { EMPTY_TREE, hasJsx, missionUnits, regularFiles } from '../src/puzzle/material'
 import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, TS_ADAPTER } from '../src/puzzle/units'
 
 // Invented code only (SPEC 15).
@@ -267,6 +267,12 @@ const COUNTEREXAMPLES = [
   "x = '/*'\nq = `\n/* a\n*/\nzqM\n`",
   '// see /*\nq = `\n*/\nzqN\n`',
   '#!node zqO words\nconst a = 1',
+  // Fifth review.
+  '// note\rb = `\nzqP plain\n`\n',
+  'a = 1 // note\rb = `start\nzqQ words here\n`\n',
+  'x = 1 // c\r/* x\nzqR words\n*/\n',
+  'x = 1 <!-- /* note\nv = `start */\nzqS2 words here\n`\n',
+  'x = 1\n--> /* note\nv = `start */\nzqT words here\n`\n',
 ]
 
 test('none of the reviews\' counterexamples leaks a sentinel, and line counts hold', async () => {
@@ -328,4 +334,11 @@ test('blanked lines carry only spaces, tabs, braces and the blank mark', async (
 test('a file with JSX gives no units, even outside .tsx and .jsx', async () => {
   const src = 'function Card(n: number) {\n  const a = n + 1\n  const b = a + 2\n  return (\n    <p>\n      Jane Roe was admitted\n    </p>\n  )\n}'
   expect(TS_ADAPTER.units(filterCode(src, 'standard'), new Set([2]))).toEqual([])
+})
+
+test('JSX is found in the code as written, quoted attributes and closing tags included', async () => {
+  expect(hasJsx('const el = (\n  <p title="card">\n    Jane Roe was admitted\n  </p>\n)')).toBe(true)
+  expect(hasJsx('return <>x</>')).toBe(true)
+  expect(hasJsx('const br = <br/>')).toBe(true)
+  expect(hasJsx('if (a < b && c > d) return a\nconst xs: Array<number> = []')).toBe(false)
 })

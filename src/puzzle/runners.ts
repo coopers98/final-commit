@@ -16,20 +16,26 @@ export type Run = (
 export type CallResult = { ok: true; value: unknown } | { ok: false }
 
 /** The command that runs Trace's harness with this runner. */
-export function runnerArgv(name: RunnerName): string[] {
+export function runnerArgv(name: RunnerName, binaryPath: string): string[] {
   const r = RUNNERS[name]
-  // Node's permission model: no file reads or writes, no child processes, workers or addons.
-  // No code from strings in this process either; the harness takes nothing from the environment.
-  return [r.binary, '--permission', `--max-old-space-size=${r.maxOldSpaceMb}`, '--disallow-code-generation-from-strings', '--no-warnings', '-e', HARNESS]
+  // `env -i`: an empty environment, so no token or setting of the session reaches the runner
+  // (the engine's `env` only sets variables over the session's own). Node's permission model:
+  // no file reads or writes, no child processes, workers or addons. No code from strings.
+  return ['env', '-i', `HOME=${r.emptyHome}`, binaryPath, '--permission', `--max-old-space-size=${r.maxOldSpaceMb}`, '--disallow-code-generation-from-strings', '--no-warnings', '-e', HARNESS]
 }
 
-/** Whether the runner's binary answers `--version`; any failure means no. Checked once per session by the glue. */
-export async function isRunnerAvailable(name: RunnerName, run: Run, cwd: string): Promise<boolean> {
+/**
+ * The runner's absolute path, or undefined when it does not answer; any
+ * failure means none. Checked once per session by the glue. The path is
+ * what runs, since the runner itself starts with no `PATH`.
+ */
+export async function runnerPath(name: RunnerName, run: Run, cwd: string): Promise<string | undefined> {
   try {
-    const r = await run([RUNNERS[name].binary, '--version'], { cwd, timeoutMs: TRACE.probeTimeoutMs })
-    return r.exitCode === 0
+    const r = await run([RUNNERS[name].binary, '-p', 'process.execPath'], { cwd, timeoutMs: TRACE.probeTimeoutMs })
+    const path = r.stdout.trim()
+    return r.exitCode === 0 && /^\/[\w./+-]+$/.test(path) ? path : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
@@ -66,15 +72,14 @@ export function parseResults(reply: { exitCode: number; stdout: string; isStdout
  * Undefined when the run fails in any way; a rejected run (it could not
  * start, or ran past its timeout) is a failure too.
  */
-export async function runCalls(req: { name: RunnerName; run: Run; cwd: string; code: string; fn: string; inputs: unknown[][] }): Promise<CallResult[] | undefined> {
+export async function runCalls(req: { name: RunnerName; path: string; run: Run; cwd: string; code: string; fn: string; inputs: unknown[][] }): Promise<CallResult[] | undefined> {
   const r = RUNNERS[req.name]
   const payload: HarnessPayload = {
     code: req.code, name: req.fn, inputs: req.inputs,
     callTimeoutMs: TRACE.callTimeoutMs, totalMs: TRACE.totalMs, maxDepth: TRACE.maxDepth, maxValueChars: TRACE.maxValueChars,
   }
   try {
-    // NODE_OPTIONS emptied: no flag or preload from the environment reaches the runner.
-    const reply = await req.run(runnerArgv(req.name), { cwd: req.cwd, stdin: JSON.stringify(payload), timeoutMs: r.timeoutMs, env: { NODE_OPTIONS: '' } })
+    const reply = await req.run(runnerArgv(req.name, req.path), { cwd: req.cwd, stdin: JSON.stringify(payload), timeoutMs: r.timeoutMs })
     return parseResults(reply, req.inputs.length, r.outputMaxChars)
   } catch {
     return undefined

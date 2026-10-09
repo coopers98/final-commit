@@ -15,7 +15,7 @@ import { appendLog, LOG_PROMPT, logLines, stardate } from '../src/bridge/log'
 import { CHARTING, COMPANION, GENERATION, GIT, GITHUB, PUZZLE, RED_ALERT, SYNC, type GenerationModel } from '../src/config'
 import { missionUnits } from '../src/puzzle/material'
 import { buildPuzzle } from '../src/puzzle/puzzle'
-import { isRunnerAvailable, runCalls, type Run } from '../src/puzzle/runners'
+import { runnerPath, runCalls, type Run } from '../src/puzzle/runners'
 import { buildTrace, type TraceCapability } from '../src/puzzle/trace'
 import { wireCalibration } from '../src/contain/calibrate'
 import { wireLattice } from '../src/contain/lattice'
@@ -393,8 +393,8 @@ async function preparePuzzle($: EngineInterface) {
   }
 }
 
-/** SPEC 8.3 rule 3: whether node answers, checked once per session (once per module load). */
-let nodeRunner: Promise<boolean> | undefined
+/** SPEC 8.3 rule 3: node's absolute path if it answers, checked once per session (once per module load). */
+let nodeRunner: Promise<string | undefined> | undefined
 
 /**
  * SPEC 8, Trace: runs a unit with node in the system's temporary folder
@@ -405,9 +405,10 @@ async function traceVia($: EngineInterface): Promise<TraceCapability | undefined
   const tmp = await $.env.get('TMPDIR')
   const cwd = tmp !== undefined && tmp.startsWith('/') ? tmp : '/tmp'
   const run: Run = (argv, init) => $.process.run(argv, init)
-  nodeRunner ??= isRunnerAvailable('node', run, cwd)
-  if (!(await nodeRunner)) return undefined
-  return (units, rng) => buildTrace(units, rng, (unit, inputs) => runCalls({ name: 'node', run, cwd, code: unit.code, fn: unit.name, inputs }))
+  nodeRunner ??= runnerPath('node', run, cwd)
+  const path = await nodeRunner
+  if (!path) return undefined
+  return (units, rng) => buildTrace(units, rng, (unit, inputs) => runCalls({ name: 'node', path, run, cwd, code: unit.code, fn: unit.name, inputs }))
 }
 
 /** Enter on the confirmation: complete the mission it asked about, if that one is still active. */

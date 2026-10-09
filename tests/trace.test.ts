@@ -3,7 +3,7 @@ import { PUZZLE, TRACE } from '../src/config'
 import { createRng } from '../src/rng'
 import { analyzeView } from '../src/puzzle/analyze'
 import { buildPuzzle, puzzleTypeFor } from '../src/puzzle/puzzle'
-import { isRunnerAvailable, parseResults, runCalls, runnerArgv, type CallResult, type Run } from '../src/puzzle/runners'
+import { parseResults, runCalls, runnerArgv, runnerPath, type CallResult, type Run } from '../src/puzzle/runners'
 import { buildTrace, candidateInputs, distractors, inputOf, questionOf, render, type Exec } from '../src/puzzle/trace'
 import { parseParams, runnable } from '../src/puzzle/trace-gate'
 import { filterCode } from '../src/puzzle/code-filter'
@@ -174,28 +174,44 @@ test('the runner reply parser takes only a clean, whole reply of the right shape
   expect(parseResults(reply('{"results":[[true]]}'), 1, 1000)).toBe(undefined)
 })
 
-test('the runner runs in the folder it is given, with the payload on stdin and no NODE_OPTIONS; a rejected or failed run is none', async () => {
+test('the runner runs node by its path in the folder it is given, with an empty environment and the payload on stdin; a rejected or failed run is none', async () => {
   const calls: { argv: readonly string[]; init: Parameters<Run>[1] }[] = []
   const run: Run = async (argv, init) => {
     calls.push({ argv, init })
     return { exitCode: 0, stdout: '{"results":[{"ok":true,"value":2}]}', isStdoutTruncated: false }
   }
-  const out = await runCalls({ name: 'node', run, cwd: '/tmp', code: 'function f(n) {\n  return n\n}', fn: 'f', inputs: [[2]] })
+  const out = await runCalls({ name: 'node', path: '/usr/bin/node', run, cwd: '/tmp', code: 'function f(n) {\n  return n\n}', fn: 'f', inputs: [[2]] })
   expect(out).toEqual([{ ok: true, value: 2 }])
   expect(calls[0]!.init.cwd).toBe('/tmp')
-  expect(calls[0]!.init.env).toEqual({ NODE_OPTIONS: '' })
-  expect(calls[0]!.argv).toEqual(runnerArgv('node'))
-  expect(runnerArgv('node')).toContain('--permission')
+  expect(calls[0]!.argv).toEqual(runnerArgv('node', '/usr/bin/node'))
+  // `env -i` first: none of the session's environment reaches node.
+  expect(calls[0]!.argv.slice(0, 2)).toEqual(['env', '-i'])
+  expect(calls[0]!.argv).toContain('/usr/bin/node')
+  expect(runnerArgv('node', '/usr/bin/node')).toContain('--permission')
   const payload = JSON.parse(calls[0]!.init.stdin!)
   expect(payload.inputs).toEqual([[2]])
   expect(payload.callTimeoutMs).toBe(TRACE.callTimeoutMs)
   const rejects: Run = async () => {
     throw new Error('timed out')
   }
-  expect(await runCalls({ name: 'node', run: rejects, cwd: '/tmp', code: '', fn: 'f', inputs: [[1]] })).toBe(undefined)
-  expect(await isRunnerAvailable('node', rejects, '/tmp')).toBe(false)
-  expect(await isRunnerAvailable('node', async () => ({ exitCode: 127, stdout: '', isStdoutTruncated: false }), '/tmp')).toBe(false)
-  expect(await isRunnerAvailable('node', run, '/tmp')).toBe(true)
+  expect(await runCalls({ name: 'node', path: '/usr/bin/node', run: rejects, cwd: '/tmp', code: '', fn: 'f', inputs: [[1]] })).toBe(undefined)
+  expect(await runnerPath('node', rejects, '/tmp')).toBe(undefined)
+  expect(await runnerPath('node', async () => ({ exitCode: 127, stdout: '', isStdoutTruncated: false }), '/tmp')).toBe(undefined)
+  expect(await runnerPath('node', async () => ({ exitCode: 0, stdout: 'node; rm -rf x\n', isStdoutTruncated: false }), '/tmp')).toBe(undefined)
+  expect(await runnerPath('node', async () => ({ exitCode: 0, stdout: '/usr/local/bin/node\n', isStdoutTruncated: false }), '/tmp')).toBe('/usr/local/bin/node')
+})
+
+test('the gate refuses regex literals, word-spelling members and computed access beyond a name or number', async () => {
+  const unit = (body: string[]): Unit => ({ lang: 'TypeScript', name: 'f', lines: ['function f(n: number) {', ...body, '}'] })
+  expect(runnable(unit(['  return n + 1']))).toBeDefined()
+  expect(runnable(unit(['  const xs = [n, n]', '  return xs[n - 1]']))).toBeDefined()
+  for (const body of [
+    ['  const r = /constr/', '  return n'],
+    ['  const k = (typeof n)', '  return n'],
+    ['  const xs = [n]', '  return xs[n * 2]'],
+    ['  const o = [n]', '  return o[o[0]]'],
+    ['  return n.toString'],
+  ]) expect(runnable(unit(body))).toBe(undefined)
 })
 
 /** A stand-in runner: computes countAbove itself, as the harness would reply. */

@@ -20,7 +20,7 @@ registerHooks({
   },
 })
 
-const { runCalls, runnerArgv, isRunnerAvailable } = await import('../src/puzzle/runners.ts')
+const { runCalls, runnerArgv, runnerPath } = await import('../src/puzzle/runners.ts')
 const { runnable } = await import('../src/puzzle/trace-gate.ts')
 const { TRACE } = await import('../src/config.ts')
 
@@ -45,11 +45,17 @@ function run(argv, init) {
 }
 
 const cwd = tmpdir()
-const calls = (code, fn, inputs) => runCalls({ name: 'node', run, cwd, code, fn, inputs })
+const path = await runnerPath('node', run, cwd)
+const calls = (code, fn, inputs) => runCalls({ name: 'node', path, run, cwd, code, fn, inputs })
 
 test('node is available and the runner sandboxes it', async () => {
-  assert.equal(await isRunnerAvailable('node', run, cwd), true)
-  assert.ok(runnerArgv('node').includes('--permission'))
+  assert.ok(path && path.startsWith('/'))
+  const argv = runnerArgv('node', path)
+  assert.ok(argv.includes('--permission'))
+  assert.deepEqual(argv.slice(0, 2), ['env', '-i'])
+  // What `env -i` leaves the runner: nothing of this process's environment.
+  const probe = await run([...argv.slice(0, argv.indexOf(path) + 1), '-p', 'JSON.stringify(process.env)'], { cwd, timeoutMs: 5_000 })
+  assert.deepEqual(JSON.parse(probe.stdout), { HOME: '/nonexistent' })
 })
 
 test('a small function runs on each input; TypeScript types are stripped', async () => {
@@ -108,6 +114,7 @@ test('a code that escapes the gate still finds no process, global or host in the
     'return Date.now()',
     'return console.log(n)',
     'return import("node:fs")',
+    'import("x").then(null, e => n)\n  return n',
   ]
   for (const body of escapes) {
     const code = `function f(n: number) {\n  ${body}\n}`
@@ -115,11 +122,17 @@ test('a code that escapes the gate still finds no process, global or host in the
     const out = await calls(code, 'f', [[1]])
     assert.ok(out === undefined || out[0].ok === false, body)
   }
-  assert.deepEqual(await calls('function f(n: number) {\n  return typeof process + typeof require + typeof globalThis + typeof Date\n}', 'f', [[1]]), [
-    { ok: true, value: 'undefinedundefinedundefinedundefined' },
+  assert.deepEqual(await calls('function f(n: number) {\n  return typeof process + typeof globalThis + typeof Date\n}', 'f', [[1]]), [
+    { ok: true, value: 'undefinedundefinedundefined' },
   ])
   // The built-ins are frozen: a change does not hold.
   assert.deepEqual(await calls('function f(n: number) {\n  Math.max = () => n\n  return Math.max(5, 6)\n}', 'f', [[1]]), [{ ok: true, value: 6 }])
+})
+
+test('the harness refuses any module loading itself, behind the gate', async () => {
+  // Security review: an import() once rejected with an error of the host process.
+  assert.equal(await calls('function f(n: number) {\n  const p = import("x")\n  return n\n}', 'f', [[1]]), undefined)
+  assert.equal(await calls('function f(n: number) {\n  return require\n}', 'f', [[1]]), undefined)
 })
 
 test('code that is not erasable TypeScript, or does not define the function, fails the run', async () => {

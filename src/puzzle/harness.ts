@@ -1,5 +1,6 @@
 // SPEC 8.3 rule 4 (D15): the script the node runner runs Trace's function
-// with, passed by `-e`; the payload comes on standard input. This file has no
+// with, passed by `-e`; the payload comes on standard input. Its process
+// starts with an empty environment (runners.ts). This file has no
 // imports, so a plain `node --test` can load it to run the real harness
 // (scripts/harness.test.mjs). Every limit comes in the payload, from config.
 //
@@ -106,8 +107,15 @@ export const HARNESS = [
   '  if (!nums.every(n => Number.isInteger(n) && n > 0)) process.exit(2);',
   '  let js;',
   '  try { js = stripTypeScriptTypes(p.code, { mode: "strip" }); } catch { process.exit(3); }',
-  '  const ctx = vm.createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false }, microtaskMode: "afterEvaluate" });',
-  '  const opts = { timeout: p.callTimeoutMs, breakOnSigint: false };',
+  '  // A second wall behind the gate: no module loading of any kind.',
+  '  if (/\\bimport\\b|\\brequire\\b/.test(js)) process.exit(3);',
+  '  const ctx = vm.createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false }, microtaskMode: "afterEvaluate", importModuleDynamically: refuseImport });',
+  '  // An import() rejects with an error made in the context, never one of this process.',
+  '  const contextError = vm.runInContext("Object.freeze(new TypeError(\\"no modules\\"))", ctx);',
+  '  function refuseImport() { throw contextError; }',
+  '  // This process\'s own prototypes, frozen: nothing reached from the context can change them.',
+  '  for (const o of [Object.prototype, Function.prototype, Array.prototype, Error.prototype, TypeError.prototype, Promise.prototype, String.prototype, Number.prototype, Boolean.prototype]) Object.freeze(o);',
+  '  const opts = { timeout: p.callTimeoutMs, breakOnSigint: false, importModuleDynamically: refuseImport };',
   '  try {',
   '    vm.runInContext(SETUP.replace("__FC_MAX__", String(p.maxValueChars)).replace("__FC_DEPTH__", String(p.maxDepth)), ctx, opts);',
   '    vm.runInContext(js + "\\n;", ctx, opts);',

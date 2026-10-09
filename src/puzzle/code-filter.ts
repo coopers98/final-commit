@@ -221,18 +221,19 @@ export function shownLines(lines: readonly string[]): boolean[] {
     }
     if (state === 'comment') {
       const end = line.indexOf('*/')
-      if (end >= 0) state = /['"`\\/]/.test(line.slice(end + 2)) ? 'dead' : 'code'
+      if (end >= 0) state = /['"`\\/]|<!--|-->/.test(line.slice(end + 2)) ? 'dead' : 'code'
       shown.push(false)
       continue
     }
-    if (/\\\s*$/.test(line) || /[\u2028\u2029]/.test(line)) {
+    // A lone CR, LS or PS is a line break to JavaScript that this scan, splitting at LF, would not see.
+    if (/\\\s*$/.test(line) || /[\r\u2028\u2029]/.test(line)) {
       state = 'dead'
       shown.push(false)
       continue
     }
     // `//` and `/*` always open a comment where the scan is in code, so one is sure when nothing
     // before it on the line (a quote, backtick, backslash or slash) could have left code.
-    const neutral = (text: string) => !/['"`\\/]/.test(text)
+    const neutral = (text: string) => !/['"`\\/]|<!--|-->/.test(text)
     const slash = line.indexOf('/')
     if (slash >= 0 && line[slash + 1] === '/' && neutral(line.slice(0, slash))) {
       shown.push(false)
