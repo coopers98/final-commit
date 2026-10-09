@@ -152,6 +152,26 @@ test('code runs in strict mode: assigning an undeclared name throws, so no globa
   assert.deepEqual(out, [{ ok: false }, { ok: false }])
 })
 
+test('work queued in a promise cannot outlive its call or delay the run', async () => {
+  // A promise job that spins: refused as text (async), and spelled without the word it still ends with its call.
+  assert.equal(await calls('async function f(n: number) {\n  return n\n}', 'f', [[1]]), undefined)
+  const at = Date.now()
+  const out = await calls('function f(n: number) {\n  const p = Promise\n  return n\n}', 'f', [[1], [2]])
+  assert.ok(Date.now() - at < 5_000)
+  assert.ok(out === undefined || out.every(r => !r.ok || typeof r.value === 'number'))
+  const spin = 'function f(n: number) {\n  Array.prototype.forEach.call([1], () => n)\n  Object.freeze([]).map(() => n)\n  let i = 0\n  while (i < 1) { i = i * 1 }\n  return n\n}'
+  const at2 = Date.now()
+  assert.deepEqual(await calls(spin, 'f', [[1], [2]]), [{ ok: false }, { ok: false }])
+  assert.ok(Date.now() - at2 < 5_000)
+})
+
+test('a huge string fails fast inside the heap limit, without holding the run past its kill', async () => {
+  const at = Date.now()
+  const out = await calls('function f(n: number) {\n  let s = String(n)\n  for (let i = 0; i < 40; i = i + 1) s = s + s\n  return s.length\n}', 'f', [[1]])
+  assert.ok(out === undefined || out[0].ok === false)
+  assert.ok(Date.now() - at < 12_000, `took ${Date.now() - at} ms`)
+})
+
 test('the harness refuses any module loading itself, behind the gate', async () => {
   // Security review: an import() once rejected with an error of the host process.
   assert.equal(await calls('function f(n: number) {\n  const p = import("x")\n  return n\n}', 'f', [[1]]), undefined)

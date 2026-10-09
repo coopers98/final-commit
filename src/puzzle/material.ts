@@ -34,9 +34,16 @@ export function regularFiles(raw: string): Set<string> {
   return out
 }
 
-/** Whether `text` holds JSX: a tag where an expression starts, a closing tag or a self-closing one. */
-export function hasJsx(text: string): boolean {
-  return /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<[A-Za-z>]/m.test(text) || /<\/[A-Za-z>]?|\/>/.test(text)
+/**
+ * Whether `text` may hold JSX. In JavaScript files (which may carry JSX)
+ * any `<` right before a letter or `>`, or a `<` and `/` with only space
+ * between, rules the file out: a formatter spaces comparisons, so little
+ * real code is lost. TypeScript files cannot hold JSX (`<T>` there is a
+ * type), so only the plain tag shapes count.
+ */
+export function hasJsx(text: string, path = ''): boolean {
+  if (/\.[cm]?js$/.test(path)) return /<[A-Za-z>]|<\s*\/|\/\s*>/.test(text)
+  return /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))\s*<[A-Za-z>]/m.test(text) || /<\s*\/|\/\s*>/.test(text)
 }
 
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
@@ -67,7 +74,7 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     const text = await io.read(path)
     if (text === undefined || text.length > PUZZLE.maxFileBytes) continue
     // JSX, read in the code as written: the filter blanks its tags, but not the prose between them.
-    if (hasJsx(text)) continue
+    if (hasJsx(text, path)) continue
     const filtered = filterCode(text, mode)
     // Line numbers from the diff must still point at the same lines.
     if (filtered.split('\n').length !== text.replace(/\r(?=\n)/g, '').split('\n').length) continue

@@ -1,3 +1,4 @@
+import { PUZZLE } from '../config'
 import { filterValues, type PrivacyMode } from './privacy-filter'
 
 // SPEC 5.3 and 8.3 rule 1: code reaches a prompt (and the puzzle pane) only
@@ -21,7 +22,7 @@ export const BLANK = '…'
 const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '&', '|', '?', '{', ';', '*', '%', '<', '>', '~', '^'])
 /** Characters after which it may start one or be a division. */
 const UNSURE_AFTER = new Set([')', '}', '!', '+', '-'])
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|case|do|else|in|of|new|delete|void|throw|yield|await)$/
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|instanceof|case|do|else|in|of|new|delete|void|throw|yield|await|default|extends)$/
 
 /** Whether a `/` here opens a regular expression, and whether that is sure. */
 function slashOpensRegex(out: string): { isRegex: boolean; isSure: boolean } {
@@ -210,8 +211,9 @@ export function shownLines(lines: readonly string[]): boolean[] {
   const shown: boolean[] = []
   let state: 'code' | 'comment' | 'dead' = 'code'
   for (const [index, line] of lines.entries()) {
-    // A hashbang is a comment.
+    // A hashbang is a comment, to the first line break of any kind.
     if (index === 0 && line.startsWith('#!')) {
+      if (/[\r\u2028\u2029]/.test(line)) state = 'dead'
       shown.push(false)
       continue
     }
@@ -299,9 +301,13 @@ export function filterCode(source: string, mode: PrivacyMode): string {
   const clean = source.replace(/\r(?=\n)/g, '')
   if (mode === 'off') return clean.split('\n').map(l => l.replace(CONTROL, '')).join('\n')
   const lines = clean.split('\n')
-  const scanned = scanLiterals(clean).text.split('\n')
+  // Minified code: every line blank, and no scan of it (the scan's cost grows with line length).
+  if (lines.some(l => l.length > PUZZLE.maxLineChars)) return lines.map(l => `${/^[ \t]*/.exec(l)![0].slice(0, PUZZLE.maxLineChars)}${BLANK}`).join('\n')
+  const { text, uncertain } = scanLiterals(clean)
+  const scanned = text.split('\n')
   const shown = shownLines(lines)
   return lines
-    .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, scanned[i] ?? '')))
+    // A line the scan was unsure of keeps no braces: they could be a literal's.
+    .map((l, i) => (shown[i] && !new RegExp(CONTROL.source).test(l) ? filterValues(l).text : blankLine(l, uncertain.has(i) ? '' : (scanned[i] ?? ''))))
     .join('\n')
 }

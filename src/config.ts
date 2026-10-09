@@ -99,6 +99,8 @@ export const PUZZLE = {
   maxUnits: 6,
   unitMinLines: 4,
   unitMaxLines: 40,
+  /** A file with a longer line (minified code) is blanked whole: the filter is not run over it. */
+  maxLineChars: 2_000,
   /** Changed files read for units, and the largest read. */
   maxFiles: 20,
   maxFileBytes: 262_144,

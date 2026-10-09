@@ -1,5 +1,7 @@
 // SPEC 8.3 rule 4 (D15): the script the node runner runs Trace's function
-// with, passed by `-e`; the payload comes on standard input. Its process
+// with, passed by `-e`; the payload comes on standard input. Besides the
+// allowlist, the context keeps `Error`, fixed, so stacks format as "" there
+// (the gate refuses the word). Its process
 // starts with an empty environment (runners.ts). This file has no
 // imports, so a plain `node --test` can load it to run the real harness
 // (scripts/harness.test.mjs). Every limit comes in the payload, from config.
@@ -114,7 +116,7 @@ export const HARNESS = [
   '  let js;',
   '  try { js = stripTypeScriptTypes(p.code, { mode: "strip" }); } catch { process.exit(3); }',
   '  // A second wall behind the gate: no module loading of any kind.',
-  '  if (/\\bimport\\b|\\brequire\\b/.test(js)) process.exit(3);',
+  '  if (/\\b(?:import|require|async|await|yield)\\b/.test(js)) process.exit(3);',
   '  const ctx = vm.createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false }, microtaskMode: "afterEvaluate", importModuleDynamically: refuseImport });',
   '  // An import() rejects with an error made in the context, never one of this process.',
   '  const contextError = vm.runInContext("Object.freeze(new TypeError(\\"no modules\\"))", ctx);',

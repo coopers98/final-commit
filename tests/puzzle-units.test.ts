@@ -273,6 +273,10 @@ const COUNTEREXAMPLES = [
   'x = 1 // c\r/* x\nzqR words\n*/\n',
   'x = 1 <!-- /* note\nv = `start */\nzqS2 words here\n`\n',
   'x = 1\n--> /* note\nv = `start */\nzqT words here\n`\n',
+  // Sixth review.
+  '#!/usr/bin/env node\r/*\nzqU patient words\n*/',
+  '#!/usr/bin/env node\rconst t = `\nzqV words\n`',
+  '#!/usr/bin/env node\u2028/*\nzqW\n*/',
 ]
 
 test('none of the reviews\' counterexamples leaks a sentinel, and line counts hold', async () => {
@@ -341,4 +345,25 @@ test('JSX is found in the code as written, quoted attributes and closing tags in
   expect(hasJsx('return <>x</>')).toBe(true)
   expect(hasJsx('const br = <br/>')).toBe(true)
   expect(hasJsx('if (a < b && c > d) return a\nconst xs: Array<number> = []')).toBe(false)
+})
+
+test('JSX in a .js file is found in any spelling: after an arrow, in brackets, with space before the slash', async () => {
+  expect(hasJsx('const el = () => <p>\n  Jane\n< /p>', 'src/card.js')).toBe(true)
+  expect(hasJsx('const xs = [<li>\n  Ann\n<\n/li>]', 'src/list.mjs')).toBe(true)
+  expect(hasJsx('if (a < b && c > d) return a', 'src/x.js')).toBe(false)
+  // In TypeScript, generics are types, not tags.
+  expect(hasJsx('const xs: Array<number> = []\nfunction f<T>(x: T) {}', 'src/x.ts')).toBe(false)
+})
+
+test('braces from inside a literal never show on a blanked line', async () => {
+  expect(filterCode("x = class extends /a'/.constructor { m() { return '{{{ secret }}}' } }", 'standard')).not.toContain('{{{')
+})
+
+test('a file with a minified line is blanked whole, fast', async () => {
+  const src = `const a = 1\n${'a/'.repeat(64_000)}\nconst b = 2`
+  const at = Date.now()
+  const out = filterCode(src, 'standard').split('\n')
+  expect(Date.now() - at < 1_000).toBe(true)
+  expect(out.every(l => l.trim() === '…')).toBe(true)
+  expect(out.length).toBe(3)
 })
