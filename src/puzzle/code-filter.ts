@@ -209,14 +209,19 @@ export function isPlainLine(line: string): boolean {
 export function shownLines(lines: readonly string[]): boolean[] {
   const shown: boolean[] = []
   let state: 'code' | 'comment' | 'dead' = 'code'
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    // A hashbang is a comment.
+    if (index === 0 && line.startsWith('#!')) {
+      shown.push(false)
+      continue
+    }
     if (state === 'dead') {
       shown.push(false)
       continue
     }
     if (state === 'comment') {
       const end = line.indexOf('*/')
-      if (end >= 0) state = line.slice(end + 2).trim() === '' ? 'code' : 'dead'
+      if (end >= 0) state = /['"`\\/]/.test(line.slice(end + 2)) ? 'dead' : 'code'
       shown.push(false)
       continue
     }
@@ -225,15 +230,32 @@ export function shownLines(lines: readonly string[]): boolean[] {
       shown.push(false)
       continue
     }
+    // `//` and `/*` always open a comment where the scan is in code, so one is sure when nothing
+    // before it on the line (a quote, backtick, backslash or slash) could have left code.
+    const neutral = (text: string) => !/['"`\\/]/.test(text)
+    const slash = line.indexOf('/')
+    if (slash >= 0 && line[slash + 1] === '/' && neutral(line.slice(0, slash))) {
+      shown.push(false)
+      continue
+    }
+    const open = line.indexOf('/*')
+    if (open >= 0 && open === slash && neutral(line.slice(0, open))) {
+      const close = line.indexOf('*/', open + 2)
+      // After a comment that ends on its line, only neutral text keeps the scan sure.
+      if (close < 0) state = 'comment'
+      else if (!neutral(line.slice(close + 2))) state = 'dead'
+      shown.push(false)
+      continue
+    }
+    // A backtick is trusted only on a line with no other quote, slash or backslash to hide it:
+    // one inside a string, regex or comment would pair with a real one.
     const ticks = [...line].filter(c => c === '`').length
-    if (ticks > 0 && (ticks !== 2 || !isClosedTemplate(line))) {
+    if (open >= 0 || (ticks > 0 && (ticks !== 2 || /['"\/\\]/.test(line) || !isClosedTemplate(line)))) {
       state = 'dead'
       shown.push(false)
       continue
     }
-    const open = line.lastIndexOf('/*')
-    if (open >= 0 && line.lastIndexOf('*/') < open + 2) state = 'comment'
-    shown.push(state === 'code' && ticks === 0 && open < 0 && isPlainLine(line))
+    shown.push(state === 'code' && ticks === 0 && isPlainLine(line))
   }
   return shown
 }
@@ -258,7 +280,8 @@ function isClosedTemplate(line: string): boolean {
 
 /** A blanked line: its indent, `…`, and its braces in order (from the scanner's reading), so blocks still match. */
 function blankLine(original: string, scanned: string): string {
-  const indent = original.slice(0, original.length - original.trimStart().length)
+  // Spaces and tabs only: other whitespace (vertical tab, form feed, line separators) is not passed on.
+  const indent = /^[ \t]*/.exec(original)![0]
   const braces = scanned.replace(/[^{}]/g, '')
   const lead = /^}*/.exec(braces)![0]
   return `${indent}${lead}${BLANK}${braces.slice(lead.length)}`

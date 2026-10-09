@@ -93,6 +93,8 @@ export const TS_ADAPTER: ContentAdapter = {
   claims: path => /\.[cm]?[jt]s$/.test(path) && !path.endsWith('.d.ts'),
   units(filtered, changed) {
     const lines = filtered.split('\n')
+    // JSX in a .js or .ts file: its text lines are prose the filter cannot tell from code.
+    if (lines.some(l => /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<[A-Za-z>]/.test(l))) return []
     const out: Unit[] = []
     let i = 0
     while (i < lines.length) {

@@ -258,6 +258,15 @@ const COUNTEREXAMPLES = [
   '/* open\nzqC\n*/ zqE()',
   'a = "x" /* still open\nzqF\n',
   'x = 1 /* c */ y = 2 /* zqG',
+  // Fourth review.
+  "a = '`'; b = `start\nzqH words\nend`",
+  'a = "`"; b = `s\nzqI\ne`',
+  'r = /`/; b = `s\nzqJ\ne`',
+  '/* ` */ b = `s\nzqK\ne`',
+  "const files = glob('src/**/*.sql')\nconst q = `\n  SELECT name FROM t /* idx hint\n  */\n  WHERE zqL = 1\n`",
+  "x = '/*'\nq = `\n/* a\n*/\nzqM\n`",
+  '// see /*\nq = `\n*/\nzqN\n`',
+  '#!node zqO words\nconst a = 1',
 ]
 
 test('none of the reviews\' counterexamples leaks a sentinel, and line counts hold', async () => {
@@ -304,5 +313,19 @@ test('plain code shows as written; blanked lines keep their braces', async () =>
   // A one-line JSDoc comment is fine; code after a comment's end is not trusted.
   expect(shownLines(['/** doc */', 'const a = 1'])).toEqual([false, true])
   expect(shownLines(['/**', ' * text', ' */', 'const a = 1'])).toEqual([false, false, false, true])
-  expect(shownLines(['/* c', '*/ const a = 1', 'const b = 2'])).toEqual([false, false, false])
+  expect(shownLines(['/* c', '*/ const a = 1', 'const b = 2'])).toEqual([false, false, true])
+  expect(shownLines(['/* c', "*/ x = 'a'", 'const b = 2'])).toEqual([false, false, false])
+  // Comments with quotes or backticks are just comments: the scan stays sure.
+  expect(shownLines(["/** The player's `cell` */", '// uses `x` and "y"', 'const c = 3'])).toEqual([false, false, true])
+  expect(shownLines(['x = a // `odd', 'const d = 4'])).toEqual([false, true])
+})
+
+test('blanked lines carry only spaces, tabs, braces and the blank mark', async () => {
+  const out = filterCode('\u000b\u000c\u2028x = "a" {\n\t y = \'b\' }', 'standard')
+  for (const line of out.split('\n')) expect(/^[ \t]*[{}]*…[{}]*$/.test(line)).toBe(true)
+})
+
+test('a file with JSX gives no units, even outside .tsx and .jsx', async () => {
+  const src = 'function Card(n: number) {\n  const a = n + 1\n  const b = a + 2\n  return (\n    <p>\n      Jane Roe was admitted\n    </p>\n  )\n}'
+  expect(TS_ADAPTER.units(filterCode(src, 'standard'), new Set([2]))).toEqual([])
 })
