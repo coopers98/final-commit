@@ -24,6 +24,8 @@ const DENIED = new Set([
   'console', 'Buffer', 'exports', 'document', 'navigator', 'Deno', 'Bun', 'Symbol', 'Promise', 'WeakRef', 'FinalizationRegistry',
   // Ways to spell a word without a string: a regex's text, a type's name.
   'source', 'flags', 'typeof', 'toString',
+  // Errors and their stacks: formatting a stack is node's own code.
+  'Error', 'TypeError', 'RangeError', 'prepareStackTrace', 'captureStackTrace', 'stackTraceLimit', 'stack', 'getOwnPropertySymbols',
 ])
 
 /** What `new` may build. */
@@ -191,13 +193,22 @@ export function runnable(unit: Unit): Runnable | undefined {
   if (!tokens) return undefined
   const params = parseParams(first, unit.name)
   if (!params) return undefined
-  if (!isSelfContained(tokens, unit.name)) return undefined
+  if (!isSelfContained(tokens, unit.name, paramNames(first, unit.name))) return undefined
   return { code, name: unit.name, params }
 }
 
+/** The parameter names on a unit's first line. */
+function paramNames(first: string, name: string): string[] {
+  const at = first.indexOf('(', first.indexOf(name) + name.length)
+  const list = at >= 0 ? inParens(first, at)?.inner : /=\s*([A-Za-z_$][\w$]*)\s*=>/.exec(first)?.[1]
+  if (list === undefined) return []
+  return splitTop(list).map(p => /^\s*([A-Za-z_$][\w$]*)/.exec(p)?.[1]).filter((p): p is string => p !== undefined)
+}
+
 /** The token checks of `runnable`, over the whole unit. */
-export function isSelfContained(tokens: readonly Token[], self: string): boolean {
-  const allowed = new Set([...ALLOWED_GLOBALS, self, ...declared(tokens)])
+export function isSelfContained(tokens: readonly Token[], self: string, params: readonly string[] = []): boolean {
+  const own = new Set([self, ...params, ...declared(tokens)])
+  const allowed = new Set([...ALLOWED_GLOBALS, ...own])
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!
     const prev = tokens[i - 1]
@@ -211,6 +222,11 @@ export function isSelfContained(tokens: readonly Token[], self: string): boolean
       // A call of a free name (`name(` or `name?.(`), not a member's, a keyword's or a declaration's.
       const isCall = next?.text === '(' || (next?.text === '?' && tokens[i + 2]?.text === '.' && tokens[i + 3]?.text === '(')
       if (isCall && !isMember && !KEYWORDS.has(t.text) && prev?.text !== 'function' && !allowed.has(t.text)) return false
+      // An assignment (`=`, `+=` and the like, `++`, `--`) only to a name it declares: never a global.
+      const after = tokens.slice(i + 1, i + 4).map(u => u.text).join('')
+      const before = tokens.slice(Math.max(0, i - 2), i).map(u => u.text).join('')
+      const isAssigned = /^(?:=(?![=>])|[-+*/%&|^]=|\*\*=|<<=|>>=|&&=|\|\|=|\?\?=|\+\+|--)/.test(after) || before === '++' || before === '--'
+      if (isAssigned && !isMember && !own.has(t.text)) return false
     }
     // A computed member (`x[...]`) only by one name or number, or one plus or minus another.
     if (t.text === '[' && prev && (prev.kind === 'name' || prev.text === ')' || prev.text === ']')) {

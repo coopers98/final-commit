@@ -125,8 +125,31 @@ test('a code that escapes the gate still finds no process, global or host in the
   assert.deepEqual(await calls('function f(n: number) {\n  return typeof process + typeof globalThis + typeof Date\n}', 'f', [[1]]), [
     { ok: true, value: 'undefinedundefinedundefined' },
   ])
-  // The built-ins are frozen: a change does not hold.
-  assert.deepEqual(await calls('function f(n: number) {\n  Math.max = () => n\n  return Math.max(5, 6)\n}', 'f', [[1]]), [{ ok: true, value: 6 }])
+  // The built-ins are frozen: in strict mode a change throws, and the next call sees them unchanged.
+  assert.deepEqual(await calls('function f(n: number) {\n  if (n === 1) Math.max = () => n\n  return Math.max(5, 6)\n}', 'f', [[1], [2]]), [{ ok: false }, { ok: true, value: 6 }])
+})
+
+test('a stack is never formatted by node: reading one, even with an odd name, throws nothing of the host', async () => {
+  // Security review: node's own stack formatting threw one of its errors into the context.
+  const code = [
+    'function f(n: number) {',
+    '  let err = null',
+    '  try { null.x } catch (e) { err = e }',
+    '  const sym = Object.getOwnPropertySymbols(Array.prototype)[0]',
+    '  try { err.name = sym } catch (e) { return 1 }',
+    '  try { const s = err.stack; return s === "" || s === undefined ? 2 : 3 } catch (x) {',
+    '    return Object.getPrototypeOf(Object.getPrototypeOf(x)) === Object.prototype ? 4 : 5',
+    '  }',
+    '}',
+  ].join('\n')
+  const out = await calls(code, 'f', [[1]])
+  assert.ok(out && out[0].ok, 'ran')
+  assert.ok([1, 2, 4].includes(out[0].value), `value ${out[0].value}`)
+})
+
+test('code runs in strict mode: assigning an undeclared name throws, so no global is made', async () => {
+  const out = await calls('function f(n: number) {\n  leaked = n\n  return 7\n}', 'f', [[1], [2]])
+  assert.deepEqual(out, [{ ok: false }, { ok: false }])
 })
 
 test('the harness refuses any module loading itself, behind the gate', async () => {

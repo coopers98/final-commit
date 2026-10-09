@@ -211,7 +211,13 @@ test('the gate refuses regex literals, word-spelling members and computed access
     ['  const xs = [n]', '  return xs[n * 2]'],
     ['  const o = [n]', '  return o[o[0]]'],
     ['  return n.toString'],
+    ['  leaked = n', '  return n'],
+    ['  total += n', '  return n'],
+    ['  Error.prepareStackTrace = n', '  return n'],
+    ['  const e = n', '  return e.stack'],
   ]) expect(runnable(unit(body))).toBe(undefined)
+  // Assigning its own names is fine.
+  expect(runnable(unit(['  let t = 0', '  t += n', '  n = n + 1', '  return t + n']))).toBeDefined()
 })
 
 /** A stand-in runner: computes countAbove itself, as the harness would reply. */
