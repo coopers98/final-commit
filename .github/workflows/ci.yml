@@ -80,3 +80,5 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code@2.1.291
       - run: claude plugin validate .
       - run: claude plugin test .
+      # Trace's harness run for real with node: the sandbox's own checks (SPEC 8.4).
+      - run: node --test scripts/harness-check.mjs
