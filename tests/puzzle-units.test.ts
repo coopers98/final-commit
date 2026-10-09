@@ -435,3 +435,14 @@ test('ninth review: a slash after a type\'s closing > is unsure; callbacks are n
   for (let k = 0; k < 900; k += 1) for (const head of ['static', 'a', 'const a = b :']) functionName(`${head}${' '.repeat(297 - head.length)}{`)
   expect(Date.now() - at < 1_000).toBe(true)
 })
+
+test('the function finder takes function-typed parameters and object return types, still not callbacks', async () => {
+  expect(functionName('  subscribe(fn: (s: Snap) => void): () => void {')).toBe('subscribe')
+  expect(functionName('const pick = async (test: (label: string) => boolean) => {')).toBe('pick')
+  expect(functionName('  async remove(a: Actor): Promise<{ ok: true }> {')).toBe('remove')
+  expect(functionName("test('x', async () => {")).toBe(undefined)
+  expect(functionName("describe('x', function () {")).toBe(undefined)
+  const at = Date.now()
+  for (let k = 0; k < 900; k += 1) functionName(`function${' '.repeat(290)}{`)
+  expect(Date.now() - at < 500).toBe(true)
+})

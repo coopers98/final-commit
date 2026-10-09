@@ -91,7 +91,7 @@ const NOT_A_NAME = new Set(['if', 'for', 'while', 'switch', 'catch', 'function',
 /** The function a line starts, by name; undefined for any other line. */
 export function functionName(line: string): string | undefined {
   if (line.length > PUZZLE.maxSignatureChars) return undefined
-  const decl = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*[<(]/.exec(line)
+  const decl = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*(?:\*\s*)?([A-Za-z_$][\w$]*)\s*[<(]/.exec(line)
   if (decl) return decl[1]
   // The rest only for a line that opens a block, and each by an anchored prefix plus plain checks:
   // patterns with several runs that can match the same spaces backtrack badly on long lines.
@@ -101,12 +101,15 @@ export function functionName(line: string): string | undefined {
   if (arrow) {
     // `= (params) =>` or `= param =>`, optionally async, generic or typed: not a call that takes a callback.
     const right = /^\s*(?::[^=]*)?=(.*)=>$/.exec(trimmed.slice(arrow[0].length, -1).trimEnd())?.[1]?.trim()
-    return right !== undefined && /^(?:async\s+)?(?:<[^>]*>\s*)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)(?::[^=()]*)?$/.test(right) ? arrow[1] : undefined
+    // Parameters may hold one level of parentheses (a function-typed parameter).
+    return right !== undefined && /^(?:async\s+)?(?:<[^>]*>\s*)?(?:\((?:[^()]|\([^()]*\))*\)|[A-Za-z_$][\w$]*)(?::[^=()]*)?$/.test(right) ? arrow[1] : undefined
   }
-  // A method: modifiers, a name, its parameters, an optional return type, then the block; never an arrow (a call taking a callback).
-  if (trimmed.includes('=>') || line.includes(';')) return undefined
+  // A method: modifiers, a name, its parameters, an optional return type, then the block. A line
+  // ending in `=> {`, or passing a `function`, is a call taking a callback; an arrow inside the
+  // parameters is a type.
+  if (/=>\s*\{$/.test(trimmed) || /\bfunction\b/.test(trimmed) || line.includes(';')) return undefined
   const method = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*(?:\*\s*)?([A-Za-z_$][\w$]*)\s*(?:<[^>]*>\s*)?\(/.exec(line)
-  if (method && !NOT_A_NAME.has(method[1]!) && /\)\s*(?::[^{]*)?\{$/.test(trimmed)) return method[1]
+  if (method && !NOT_A_NAME.has(method[1]!) && /\)\s*(?::.*)?\{$/.test(trimmed)) return method[1]
   return undefined
 }
 
