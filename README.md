@@ -18,7 +18,9 @@ current mission beside its sprite, with the game's status line below.*
 
 **Status: pre-alpha.** The first playable slice works: chart an epic, run
 missions, meet and contain Difflings, keep a companion. Plan documents can
-drive it, as can GitHub Issues and Jira Cloud. Puzzles come later. The design is in [docs/SPEC.md](docs/SPEC.md).
+drive it, as can GitHub Issues and Jira Cloud. Puzzles come later. How it
+plays is in the [Player's Guide](docs/GUIDE.md); the design is in
+[docs/SPEC.md](docs/SPEC.md).
 
 ## Install
 
@@ -26,6 +28,10 @@ There is no release yet. To play from a clone, see
 [Running the mod while developing](#running-the-mod-while-developing).
 
 ## How to play
+
+The commands are below. The [Player's Guide](docs/GUIDE.md) explains the
+rest: when encounters happen, your containment odds, cells, flora and
+crafting, the crew, and what each part of the screen means.
 
 | Command | What it does |
 |---|---|

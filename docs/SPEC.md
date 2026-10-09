@@ -588,6 +588,7 @@ Users' own work flows into model prompts. The README must state plainly:
 |---|---|
 | `LICENSE` | MIT (D9) |
 | `README.md` | Pitch, install, data handling disclosure, non-affiliation notice |
+| `docs/GUIDE.md` | Player's guide: how the game plays, its odds and rewards, for players rather than builders |
 | `SECURITY.md` | How to report vulnerabilities privately (GitHub private vulnerability reporting) |
 | `.gitignore` | Section 15.2 item 4 |
 | `.gitleaks.toml` | Custom rules |
