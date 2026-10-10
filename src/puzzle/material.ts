@@ -1,5 +1,4 @@
 import { PUZZLE } from '../config'
-import { filterCode } from './code-filter'
 import type { PrivacyMode } from './privacy-filter'
 import { ADAPTERS, changedLines, isSafePath, type Unit } from './units'
 
@@ -34,21 +33,7 @@ export function regularFiles(raw: string): Set<string> {
   return out
 }
 
-/**
- * Whether `text` may hold JSX. In JavaScript files (which may carry JSX)
- * any `<` right before a letter or `>`, or a `<` and `/` with only space
- * between, rules the file out: a formatter spaces comparisons, so little
- * real code is lost. TypeScript files cannot hold JSX (`<T>` there is a
- * type), so only the plain tag shapes count.
- */
-export function hasJsx(text: string, path = ''): boolean {
-  if (/\.[cm]?js$/.test(path)) return /<[A-Za-z>]|<\s*\/|\/\s*>/.test(text)
-  // Line by line, and spaces only: a multi-line `\s*` here backtracks across blank runs.
-  // A triple-slash directive (`/// <reference ... />`) is a comment, not a tag.
-  const lines = text.split('\n').filter(l => !/^\s*\/\/\//.test(l))
-  if (/<\s*\/|\/\s*>/.test(lines.join('\n'))) return true
-  return lines.some(l => /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))[ \t]*<[A-Za-z>]/.test(l))
-}
+export { hasJsx } from './units'
 
 /** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
 export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<Unit[]> {
@@ -77,9 +62,9 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     read += 1
     const text = await io.read(path)
     if (text === undefined || text.length > PUZZLE.maxFileBytes) continue
-    // JSX, read in the code as written: the filter blanks its tags, but not the prose between them.
-    if (hasJsx(text, path)) continue
-    const filtered = filterCode(text, mode)
+    // Judged on the code as written (TypeScript: JSX, whose tags the filter blanks but not the prose between them).
+    if (adapter.rejects?.(text, path)) continue
+    const filtered = adapter.filter(text, mode)
     // Line numbers from the diff must still point at the same lines.
     if (filtered.split('\n').length !== text.replace(/\r(?=\n)/g, '').split('\n').length) continue
     units.push(...adapter.units(filtered, changed))

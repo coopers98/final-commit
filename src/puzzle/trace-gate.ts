@@ -177,6 +177,8 @@ function declared(tokens: readonly Token[]): Set<string> {
  * calls either itself, a name it declares or an allowlisted global.
  */
 export function runnable(unit: Unit): Runnable | undefined {
+  // The node runner runs TypeScript only; Python waits for its own runner and sandbox.
+  if (unit.lang !== 'TypeScript') return undefined
   const lines = unit.lines
   // Every line plain code (code-filter's own test), so no regex literal can spell a word, even with the filter off.
   if (lines.length < 2 || lines.some(l => l.includes(BLANK) || REDACTION.test(l) || !isPlainLine(l))) return undefined

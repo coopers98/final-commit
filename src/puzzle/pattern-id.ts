@@ -21,7 +21,7 @@ const SYSTEM = 'You write short multiple-choice questions that test whether a de
 
 export function generatorPrompt(unit: Unit): string {
   return [
-    `Here is a ${unit.lang} function. String literals were replaced by … and comments removed.`,
+    `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`,
     '',
     '```',
     ...unit.lines,
@@ -37,7 +37,7 @@ export function generatorPrompt(unit: Unit): string {
 
 export function checkerPrompt(unit: Unit, question: string, choices: readonly string[]): string {
   return [
-    `Here is a ${unit.lang} function. String literals were replaced by … and comments removed.`,
+    `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`,
     '',
     '```',
     ...unit.lines,

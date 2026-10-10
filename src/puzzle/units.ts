@@ -1,4 +1,7 @@
 import { PUZZLE } from '../config'
+import { filterCode } from './code-filter'
+import { filterPython } from './python-filter'
+import type { PrivacyMode } from './privacy-filter'
 
 // SPEC 8.3 rule 1: the units worth a puzzle in a mission's changes. Pure:
 // the glue reads the diff and the files and hands them in.
@@ -10,6 +13,10 @@ export type Unit = { lang: string; name: string; lines: string[] }
 export type ContentAdapter = {
   lang: string
   claims(path: string): boolean
+  /** Its language's filter (SPEC 5.3): what the units are read from, line for line. */
+  filter(source: string, mode: PrivacyMode): string
+  /** A file it will not read at all, judged on the code as written (TypeScript: JSX). */
+  rejects?(source: string, path: string): boolean
   /** Units overlapping `changed` (1-based line numbers) in `filtered`, whose line count matches the file's. */
   units(filtered: string, changed: ReadonlySet<number>): Unit[]
 }
@@ -113,12 +120,30 @@ export function functionName(line: string): string | undefined {
   return undefined
 }
 
-/** SPEC 8.3 rule 2: TypeScript and JavaScript. */
+/**
+ * Whether `text` may hold JSX. In JavaScript files (which may carry JSX)
+ * any `<` right before a letter or `>`, or a `<` and `/` with only space
+ * between, rules the file out: a formatter spaces comparisons, so little
+ * real code is lost. TypeScript files cannot hold JSX (`<T>` there is a
+ * type), so only the plain tag shapes count.
+ */
+export function hasJsx(text: string, path = ''): boolean {
+  if (/\.[cm]?js$/.test(path)) return /<[A-Za-z>]|<\s*\/|\/\s*>/.test(text)
+  // Line by line, and spaces only: a multi-line `\s*` here backtracks across blank runs.
+  // A triple-slash directive (`/// <reference ... />`) is a comment, not a tag.
+  const lines = text.split('\n').filter(l => !/^\s*\/\/\//.test(l))
+  if (/<\s*\/|\/\s*>/.test(lines.join('\n'))) return true
+  return lines.some(l => /(?:^|[(=?:,{}[!]|=>|&&|\|\||\b(?:return|yield|await))[ \t]*<[A-Za-z>]/.test(l))
+}
+
+/** SPEC 8.3 rule 2: TypeScript. */
 export const TS_ADAPTER: ContentAdapter = {
   lang: 'TypeScript',
   // TypeScript only (SPEC 8.4): a JavaScript file may hold JSX, whose text is prose with no quotes
   // to blank and whose attribute strings have no escapes; TypeScript rejects JSX in .ts files.
   claims: path => /\.[cm]?ts$/.test(path) && !path.endsWith('.d.ts'),
+  filter: filterCode,
+  rejects: (source, path) => hasJsx(source, path),
   units(filtered, changed) {
     const lines = filtered.split('\n')
     const endOf = blockEnds(lines)
@@ -156,7 +181,51 @@ export const TS_ADAPTER: ContentAdapter = {
   },
 }
 
-export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER]
+/** A Python function's first line: `def name(...)` or `async def`, its signature on that one line. */
+export function pythonFunctionName(line: string): string | undefined {
+  if (line.length > PUZZLE.maxSignatureChars || !line.trimEnd().endsWith(':')) return undefined
+  return /^[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/.exec(line)?.[1]
+}
+
+const indentOf = (line: string) => /^[ \t]*/.exec(line)![0].length
+
+/** SPEC 8.3 rule 2: Python. Functions by `def`, their bodies by indentation. */
+export const PY_ADAPTER: ContentAdapter = {
+  lang: 'Python',
+  claims: path => /\.pyi?$/.test(path) && !path.endsWith('.pyi'),
+  filter: filterPython,
+  units(filtered, changed) {
+    const lines = filtered.split('\n')
+    const out: Unit[] = []
+    let i = 0
+    while (i < lines.length) {
+      const name = pythonFunctionName(lines[i]!)
+      if (name === undefined) {
+        i += 1
+        continue
+      }
+      // The body: every following line indented deeper, blank lines included, to the first that is not.
+      const base = indentOf(lines[i]!)
+      let end = i
+      for (let k = i + 1; k < lines.length; k += 1) {
+        const l = lines[k]!
+        if (l.trim() === '') continue
+        if (indentOf(l) <= base) break
+        end = k
+      }
+      const body = lines.slice(i, end + 1).filter(l => l.trim() !== '')
+      let isTouched = false
+      for (let n = i + 1; n <= end + 1 && !isTouched; n += 1) isTouched = changed.has(n)
+      if (end > i && isTouched && body.length >= PUZZLE.unitMinLines && body.length <= PUZZLE.unitMaxLines) {
+        out.push({ lang: this.lang, name, lines: dedent(body) })
+        i = end + 1
+      } else i += 1
+    }
+    return out
+  },
+}
+
+export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER]
 
 /**
  * A line a unit is never taken with: JSX, fragments included (its text is
