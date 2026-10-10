@@ -10,11 +10,12 @@ import { filterValues, type PrivacyMode } from './privacy-filter'
 // structure a unit needs).
 //
 // Python's literals: strings in single or double quotes, alone or tripled,
-// with any of the prefixes r, b, u, f (and pairs of them); comments from `#`
+// with a prefix (r, b, u, f, t and pairs; any prefix but r, b and u is read
+// as one with `{}` fields, like an f-string or 3.14's template strings); comments from `#`
 // to the line's end. Only a triple-quoted string spans lines (or any string,
 // after a backslash at a line's end), so the scan tracks one state: in code,
 // or in a triple-quoted string it opened at a place it can prove. Wherever
-// it cannot be sure (an f-string with a `{`, which may hold quotes or run on;
+// it cannot be sure (an f-string or t-string with a `{`, which may hold quotes or run on;
 // a string that reaches its line's end; a triple quote it cannot pair; a
 // backslash at a line's end; a backslash in a triple-quoted string; a lone
 // CR or other line break the split does not see), it blanks every line from
@@ -22,8 +23,15 @@ import { filterValues, type PrivacyMode } from './privacy-filter'
 
 const TRIPLE = /'''|"""/
 
-/** A string prefix: up to two letters among r, b, u, f, in either case. */
-const PREFIX = /[rRbBuUfF]{1,2}$/
+/** A string prefix: up to two letters right before a quote. */
+const PREFIX = /[A-Za-z]{1,2}$/
+
+/**
+ * Prefixes whose strings hold no fields: r, b, u and their pairs. Any other
+ * (f, t for 3.14's template strings, or one a later Python adds) is read as
+ * one whose `{}` fields may hold anything.
+ */
+const isPlainPrefix = (prefix: string) => /^[rRbBuU]{0,2}$/.test(prefix)
 
 /**
  * Where a line's code state ends: `code` when every string it opens closes
@@ -44,7 +52,7 @@ function singleQuotedLine(line: string): 'code' | 'dead' {
     const prefix = PREFIX.exec(line.slice(Math.max(0, i - 2), i))?.[0] ?? ''
     // A prefix only counts when it stands alone, not as the end of a longer name (`self` before a quote is not one).
     const isPrefix = prefix !== '' && !/[\w]/.test(line[i - prefix.length - 1] ?? '')
-    const isFormat = isPrefix && /[fF]/.test(prefix)
+    const isFormat = isPrefix && !isPlainPrefix(prefix)
     let j = i + 1
     while (j < line.length && line[j] !== c) {
       if (line[j] === '\\') {
@@ -102,7 +110,7 @@ export function shownPythonLines(lines: readonly string[]): boolean[] {
       const before = line.slice(0, at)
       const prefix = PREFIX.exec(before)?.[0] ?? ''
       const isPrefix = prefix !== '' && !/\w/.test(before[before.length - prefix.length - 1] ?? '')
-      const isSure = !/['"#\\]/.test(before) && !(isPrefix && /[fF]/.test(prefix)) && !line.includes('\\')
+      const isSure = !/['"#\\]/.test(before) && !(isPrefix && !isPlainPrefix(prefix)) && !line.includes('\\')
       if (!isSure) state = 'dead'
       else {
         closer = triple[0]

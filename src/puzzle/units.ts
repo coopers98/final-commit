@@ -196,28 +196,39 @@ export const PY_ADAPTER: ContentAdapter = {
   filter: filterPython,
   units(filtered, changed) {
     const lines = filtered.split('\n')
+    // One pass each, so a file of deeply nested defs is never rescanned per def:
+    // each def's last body line (its body is every deeper-indented line after it),
+    // and counts up to each line of non-blank and changed lines.
+    const endOf = new Array<number>(lines.length).fill(-1)
+    const open: { at: number; indent: number }[] = []
+    let lastFilled = -1
+    for (const [k, l] of lines.entries()) {
+      if (l.trim() === '') continue
+      const indent = indentOf(l)
+      while (open.length > 0 && open[open.length - 1]!.indent >= indent) endOf[open.pop()!.at] = lastFilled
+      if (pythonFunctionName(l) !== undefined) open.push({ at: k, indent })
+      lastFilled = k
+    }
+    for (const d of open) endOf[d.at] = lastFilled
+    const filled = [0]
+    const touched = [0]
+    for (const [k, l] of lines.entries()) {
+      filled.push(filled[k]! + (l.trim() !== '' ? 1 : 0))
+      touched.push(touched[k]! + (changed.has(k + 1) ? 1 : 0))
+    }
     const out: Unit[] = []
     let i = 0
     while (i < lines.length) {
-      const name = pythonFunctionName(lines[i]!)
-      if (name === undefined) {
+      const name = endOf[i]! >= 0 ? pythonFunctionName(lines[i]!) : undefined
+      const end = endOf[i]!
+      if (name === undefined || end <= i) {
         i += 1
         continue
       }
-      // The body: every following line indented deeper, blank lines included, to the first that is not.
-      const base = indentOf(lines[i]!)
-      let end = i
-      for (let k = i + 1; k < lines.length; k += 1) {
-        const l = lines[k]!
-        if (l.trim() === '') continue
-        if (indentOf(l) <= base) break
-        end = k
-      }
-      const body = lines.slice(i, end + 1).filter(l => l.trim() !== '')
-      let isTouched = false
-      for (let n = i + 1; n <= end + 1 && !isTouched; n += 1) isTouched = changed.has(n)
-      if (end > i && isTouched && body.length >= PUZZLE.unitMinLines && body.length <= PUZZLE.unitMaxLines) {
-        out.push({ lang: this.lang, name, lines: dedent(body) })
+      const size = filled[end + 1]! - filled[i]!
+      const isTouched = touched[end + 1]! - touched[i]! > 0
+      if (isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines) {
+        out.push({ lang: this.lang, name, lines: dedent(lines.slice(i, end + 1).filter(l => l.trim() !== '')) })
         i = end + 1
       } else i += 1
     }

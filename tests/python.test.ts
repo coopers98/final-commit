@@ -31,6 +31,13 @@ test('wherever the scan cannot be sure, the rest of the file is blanked', async 
     ['s = """doc""" + "x"', 'zqH = 2'],
     ["x = 'unterminated", 'zqI'],
     ['x = f"""', 'zqJ', '"""'],
+    // Security review: 3.14's template strings, and prefixes a later Python may add.
+    ['y = t"{x # "', '} zqK {x', '}"'],
+    ['y = T"{x # "', '}zqL{x', '}"'],
+    ['x=1', 'y = t"""{x # """', '} zqM', '"""'],
+    ['x = 1', 'y = t"""{', '"""', 'zqN', '"""}"""'],
+    ['y = rt"""{', '"""', 'zqO = 1', '"""}"""'],
+    ['y = q"{x # "', '} zqP {x', '}"'],
   ]
   for (const lines of unsure) {
     const out = filterPython(lines.join('\n'), 'standard')
@@ -129,4 +136,18 @@ test('mission material reads a changed .py file through the Python filter', asyn
   const units = await missionUnits(io, 0, 'strict')
   expect(units.map(u => [u.lang, u.name])).toEqual([['Python', 'score']])
   expect(units[0]!.lines.join('\n')).not.toContain('Jane')
+})
+
+test('unit reading stays fast on deeply nested defs', async () => {
+  const depth = 450
+  const nested = Array.from({ length: depth }, (_, k) => `${' '.repeat(k)}def a():`).join('\n') + '\n' + Array.from({ length: 200 }, () => `${' '.repeat(depth)}x = 1`).join('\n')
+  const at = Date.now()
+  PY_ADAPTER.units(nested, new Set([depth + 1]))
+  expect(Date.now() - at < 100).toBe(true)
+})
+
+test('a def inside a template string the scan cannot follow is never a unit', async () => {
+  const src = 'x = t"""{\n"""\ndef zq_secret(a):\n    b = a + 1\n    c = b + 1\n    return c\n"""}"""'
+  const units = PY_ADAPTER.units(filterPython(src, 'standard'), new Set([3, 4, 5, 6]))
+  expect(units.some(u => u.name.startsWith('zq'))).toBe(false)
 })
