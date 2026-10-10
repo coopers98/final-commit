@@ -51,7 +51,8 @@ function singleQuotedLine(line: string): 'code' | 'dead' {
     }
     const prefix = PREFIX.exec(line.slice(Math.max(0, i - 2), i))?.[0] ?? ''
     // A prefix only counts when it stands alone, not as the end of a longer name (`self` before a quote is not one).
-    const isPrefix = prefix !== '' && !/[\w]/.test(line[i - prefix.length - 1] ?? '')
+    // A digit before it does not join it: Python reads `1f"` as a number, then an f-string.
+    const isPrefix = prefix !== '' && !/[A-Za-z_]/.test(line[i - prefix.length - 1] ?? '')
     const isFormat = isPrefix && !isPlainPrefix(prefix)
     let j = i + 1
     while (j < line.length && line[j] !== c) {
@@ -109,7 +110,7 @@ export function shownPythonLines(lines: readonly string[]): boolean[] {
       const at = triple.index
       const before = line.slice(0, at)
       const prefix = PREFIX.exec(before)?.[0] ?? ''
-      const isPrefix = prefix !== '' && !/\w/.test(before[before.length - prefix.length - 1] ?? '')
+      const isPrefix = prefix !== '' && !/[A-Za-z_]/.test(before[before.length - prefix.length - 1] ?? '')
       const isSure = !/['"#\\]/.test(before) && !(isPrefix && !isPlainPrefix(prefix)) && !line.includes('\\')
       if (!isSure) state = 'dead'
       else {

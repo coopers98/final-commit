@@ -38,6 +38,11 @@ test('wherever the scan cannot be sure, the rest of the file is blanked', async 
     ['x = 1', 'y = t"""{', '"""', 'zqN', '"""}"""'],
     ['y = rt"""{', '"""', 'zqO = 1', '"""}"""'],
     ['y = q"{x # "', '} zqP {x', '}"'],
+    // Second review: a digit before the prefix does not join it (broken code, still filtered).
+    ['x = 1f"{a # "', '} zqQ {b', '}"'],
+    ['x = 1t"{a # "', '} zqR {b', '}"'],
+    ['x = 1f"""{', '"""', 'zqS = 1', '"""}"""'],
+    ['x = 1t"""{', '"""', 'zqT = 1', '"""}"""'],
   ]
   for (const lines of unsure) {
     const out = filterPython(lines.join('\n'), 'standard')
