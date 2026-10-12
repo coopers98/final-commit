@@ -46,6 +46,19 @@ function fuelColor(fuel: number): string | undefined {
   return fuel < COLORS.fuelBadBelow ? COLORS.bad : fuel < COLORS.fuelCautionBelow ? COLORS.caution : undefined
 }
 
+/**
+ * The band's gauges, beside the companion: hull, shields and fuel in a few
+ * cells each, colored as the Bridge colors them; `--` before any reading.
+ */
+export function bandGauges(g: Gauges, fuel: number | undefined): BridgeRow[] {
+  const t = g.tests
+  const hull: BridgeRow = t.runs > 0 ? { text: `Hull ${pct(t.passes / t.runs)}`, color: hullColor(t.passes / t.runs) } : { text: 'Hull --' }
+  const shields: BridgeRow = g.lint ? { text: `Shields ${g.lint === 'pass' ? 'up' : 'DOWN'}`, color: g.lint === 'pass' ? COLORS.good : COLORS.bad } : { text: 'Shields --' }
+  const color = fuel === undefined ? undefined : fuelColor(fuel)
+  const fuelRow: BridgeRow = fuel === undefined ? { text: 'Fuel --' } : { text: `Fuel ${Math.round(fuel)}%`, ...(color ? { color } : {}) }
+  return [hull, shields, fuelRow]
+}
+
 export function bridgeRows(d: BridgeData, width: number): BridgeRow[] {
   const rows: BridgeRow[] = []
   const add = (text: string, style: Omit<BridgeRow, 'text'> = {}) => rows.push({ text, ...style })

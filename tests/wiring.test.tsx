@@ -947,6 +947,42 @@ test('/bridge opens a pane with the system, mission, hull, shields and fuel', as
   await pane.unmount()
 })
 
+test('the band shows hull, shields and fuel left of the companion, and drops them first when room is short', { options: { devMode: true } }, async ($, on) => {
+  const w = world(on)
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, tokens: 50_000, percent: 25 }, rateLimits: {}, cost: { usd: 0 } } }) as never)
+  on('tool.call', (_$, e) => ({ result: { stdout: '' }, ...((e as { command?: string }).command === 'npm run lint' ? { isError: true } : {}) }) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await getCompanion($)
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm run lint' } as never)
+  // The band shows the same gauges, short, left of the companion.
+  const bandAt = async (bodyColumns: number, maxRows = 12) => {
+    const b = await $.ui.mount({
+      plugin: 'final-commit', surface: 'terminal' as const, component: 'AbovePrompt' as const,
+      props: { hasSurvey: false, isWorking: false, maxRows, bodyColumns } as never,
+    })
+    const t = (await b.findAll({ type: 'Text' })).map(x => x.text)
+    await b.unmount()
+    return t
+  }
+  const wide = await bandAt(80)
+  expect(wide.slice(1, 4)).toEqual(['Hull 100%', 'Shields DOWN', 'Fuel 75%'])
+  const oneLine = await bandAt(120, 4)
+  expect(oneLine.slice(1, 4)).toEqual(['Hull 100%', 'Shields DOWN', 'Fuel 75%'])
+  // Within 40 columns everything still fits; where the companion needs the room, the gauges go first.
+  for (const t of await bandAt(40)) expect([...t].length).toBeLessThanOrEqual(40 - 2)
+  const narrow = await bandAt(28)
+  expect(narrow.some(t => /idle|content|startled|asleep/.test(t))).toBe(true)
+  for (const t of narrow) expect(t).not.toMatch(/^(Hull|Shields|Fuel) /)
+  for (const t of await bandAt(40, 4)) expect(t).not.toMatch(/^(Hull|Shields|Fuel) /)
+})
+
 /** A crew officer spawned through the Agent tool, then its run finishing with `answer`. */
 async function crewRun($: any, role: string, agentId: string, answer: string, isAborted = false) {
   await $.agent.spawn({ prompt: 'review', description: 'review', subagentType: `final-commit:${role}` })
@@ -1126,7 +1162,10 @@ test('while the Bridge is open the companion draws in it, and returns to the ban
     await b.unmount()
     return t
   }
-  const name = (await bandTexts())[1]!
+  // Hull, shields and fuel come first, left of the companion's name.
+  const first = await bandTexts()
+  expect(first.slice(1, 4)).toEqual(['Hull --', 'Shields --', 'Fuel --'])
+  const name = first[4]!
   await run($, 'bridge')
   expect(await bandTexts()).toEqual(['engine band'])
   const pane = await $.ui.mount(PANE('fc-bridge', 60))

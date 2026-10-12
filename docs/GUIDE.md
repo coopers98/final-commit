@@ -332,6 +332,10 @@ an evolution stays).
 It also shows the crew's status, the latest captain's log, and your
 companion at the foot.
 
+The band above the prompt shows the same three gauges in short form
+(`Hull 100%`, `Shields up`, `Fuel 62%`) to the left of your companion,
+when the terminal is wide enough.
+
 **The crew** are three read-only subagents that you, or Claude, can
 dispatch. They never change files, commit or push.
 

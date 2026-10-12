@@ -3,6 +3,7 @@ import { STATUS } from '../src/config'
 import { bayRows, holdRows } from '../src/bridge/bay'
 import { besideLines, trimSprite } from '../src/bridge/band'
 import { chartingText, statusText } from '../src/bridge/status'
+import { bandGauges, NO_GAUGES } from '../src/bridge/bridge'
 import { orphanedCharts } from '../src/runtime'
 import type { StarSystem } from '../src/store/schema'
 
@@ -78,6 +79,16 @@ test('the band puts one fact per line beside the sprite, cut to the space left o
   expect(besideLines(v, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content', 'NOVA-142'])
   expect(besideLines(v, 8)).toEqual(['Glornaxi', 'uncommon', 'content', 'NOVA-142'])
   expect(besideLines({ ...v, mission: null }, 24)).toEqual(['Glornaxi Fernwhisker', 'uncommon', 'content'])
+})
+
+test('the band\'s gauges are short and colored as the Bridge colors them', async () => {
+  expect(bandGauges(NO_GAUGES, undefined)).toEqual([{ text: 'Hull --' }, { text: 'Shields --' }, { text: 'Fuel --' }])
+  expect(bandGauges({ tests: { runs: 4, passes: 3 }, lint: 'pass' }, 62.4)).toEqual([
+    { text: 'Hull 75%', color: 'warning' }, { text: 'Shields up', color: 'success' }, { text: 'Fuel 62%' },
+  ])
+  expect(bandGauges({ tests: { runs: 2, passes: 0 }, lint: 'fail' }, 8)).toEqual([
+    { text: 'Hull 0%', color: 'error' }, { text: 'Shields DOWN', color: 'error' }, { text: 'Fuel 8%', color: 'error' },
+  ])
 })
 
 test('the band trims a sprite to its drawing', async () => {
