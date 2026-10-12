@@ -3,6 +3,7 @@ import { BLANK, filterCode } from './code-filter'
 import { filterMarkdown } from './markdown-filter'
 import { filterPhp } from './php-filter'
 import { filterPython } from './python-filter'
+import { filterSql } from './sql-filter'
 import type { PrivacyMode } from './privacy-filter'
 
 // SPEC 8.3 rule 1: the units worth a puzzle in a mission's changes. Pure:
@@ -341,7 +342,57 @@ export const MD_ADAPTER: ContentAdapter = {
   },
 }
 
-export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER, PHP_ADAPTER, MD_ADAPTER]
+/** A query's first word (any case): the statements a query puzzle is made from. */
+const QUERY_START = /^[ \t]*(select|with|insert|update|delete|merge|replace|create(?:[ \t]+or[ \t]+replace)?(?:[ \t]+(?:temp|temporary|materialized|recursive))?[ \t]+view)\b/i
+
+/** A SQL statement's name: its verb and the first table or view it names on its first lines, as `select orders`. */
+export function sqlStatementName(lines: readonly string[]): string | undefined {
+  const verb = QUERY_START.exec(lines[0] ?? '')?.[1]
+  if (verb === undefined) return undefined
+  const kind = /view$/i.test(verb) ? 'view' : verb.split(/[ \t]/)[0]!.toLowerCase()
+  const text = lines.slice(0, 4).join(' ')
+  const target = (kind === 'view' ? /\bview[ \t]+(?:if[ \t]+not[ \t]+exists[ \t]+)?([A-Za-z_][\w.]*)/i : /\b(?:from|into|update|merge[ \t]+into)[ \t]+([A-Za-z_][\w.]*)/i).exec(text)?.[1]
+  return target === undefined || /^(?:select|only|lateral)$/i.test(target) ? kind : `${kind} ${target}`
+}
+
+/**
+ * SPEC 8.3 rule 2: SQL. A unit is a query statement (`SELECT`, `WITH`,
+ * `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `REPLACE`, `CREATE VIEW`) from its
+ * first line to the line holding the `;` that ends it (blanked lines keep
+ * theirs) or the file's end. Blank and `…` lines between statements (comments)
+ * start none.
+ */
+export const SQL_ADAPTER: ContentAdapter = {
+  lang: 'SQL',
+  claims: path => path.endsWith('.sql'),
+  filter: filterSql,
+  units(filtered, changed) {
+    const lines = filtered.split('\n')
+    const out: Unit[] = []
+    let start: number | undefined
+    const take = (end: number) => {
+      const from = start!
+      start = undefined
+      const body = lines.slice(from, end + 1).filter(l => l.trim() !== '')
+      const name = sqlStatementName(body)
+      const isTouched = lines.slice(from, end + 1).some((_, k) => changed.has(from + k + 1))
+      if (name === undefined || !isTouched || body.length < PUZZLE.unitMinLines || body.length > PUZZLE.unitMaxLines) return
+      // A fence could close the one around the query in a prompt.
+      if (!body.some(l => l.includes('```'))) out.push({ lang: this.lang, name, lines: dedent(body) })
+    }
+    for (const [k, l] of lines.entries()) {
+      const text = l.trim()
+      if (start === undefined && (text === '' || text.startsWith(BLANK))) continue
+      start ??= k
+      if (l.includes(';')) take(k)
+      if (out.length >= PUZZLE.maxUnits) break
+    }
+    if (start !== undefined) take(lines.length - 1)
+    return out
+  },
+}
+
+export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER, PHP_ADAPTER, SQL_ADAPTER, MD_ADAPTER]
 
 /**
  * A line a unit is never taken with: JSX, fragments included (its text is

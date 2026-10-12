@@ -11,27 +11,41 @@ import type { Unit } from './units'
 // the key, and only an agreed answer is kept (8.1 rule 3). The prompts are
 // working instructions (CLAUDE.md rule 1) and carry only filtered code.
 
-/** Categories the accuracy record groups by (SPEC 8.2); the model picks one. */
-export const PATTERN_CATEGORIES = [
+/** Categories by kind of unit: functions, document sections, SQL statements. */
+const CODE_CATEGORIES = [
   'hash map lookup', 'two pointers', 'sliding window', 'early return', 'guard clause', 'recursion', 'memoization',
   'map filter reduce', 'accumulator', 'state machine', 'builder', 'strategy', 'observer', 'dependency injection',
   'retry with backoff', 'pagination', 'batching', 'debounce', 'caching', 'validation', 'parsing',
-  'phased rollout', 'fallback', 'migration', 'trade-off', 'incremental delivery', 'feature flag', 'other',
+] as const
+const DOC_CATEGORIES = ['phased rollout', 'fallback', 'migration', 'trade-off', 'incremental delivery', 'feature flag'] as const
+const SQL_CATEGORIES = [
+  'aggregation', 'conditional aggregation', 'anti-join', 'semi-join', 'self join', 'window function', 'top-n per group',
+  'correlated subquery', 'common table expression', 'upsert', 'pagination',
 ] as const
 
+/** Categories the accuracy record groups by (SPEC 8.2); the model picks one. */
+export const PATTERN_CATEGORIES = [...new Set([...CODE_CATEGORIES, ...DOC_CATEGORIES, ...SQL_CATEGORIES, 'other'])]
+
 const SYSTEM = 'You write short multiple-choice questions that test whether a developer recognizes the programming pattern in a piece of code. Reply with JSON only.'
+const SQL_SYSTEM = 'You write short multiple-choice questions that test whether a developer recognizes the query pattern in a SQL statement. Reply with JSON only.'
 const DOC_SYSTEM = 'You write short multiple-choice questions that test whether a developer recognizes the approach a technical plan or design document takes. Reply with JSON only.'
 
 /** A section of a document (Markdown), not code: the prompts ask about its approach. */
 const isDocument = (unit: Unit) => unit.lang === 'Markdown'
 
-const systemFor = (unit: Unit) => (isDocument(unit) ? DOC_SYSTEM : SYSTEM)
+/** A SQL statement: the prompts ask about its query pattern. */
+const isQuery = (unit: Unit) => unit.lang === 'SQL'
+
+const systemFor = (unit: Unit) => (isDocument(unit) ? DOC_SYSTEM : isQuery(unit) ? SQL_SYSTEM : SYSTEM)
+
+/** The categories a unit's kind offers the model. */
+const categoriesFor = (unit: Unit): readonly string[] => (isDocument(unit) ? DOC_CATEGORIES : isQuery(unit) ? SQL_CATEGORIES : CODE_CATEGORIES)
 
 /** The prompt's opening: what the unit is, and what `…` means in it. */
 function intro(unit: Unit): string {
-  return isDocument(unit)
-    ? 'Here is a section of a Markdown document. Lines the privacy filter could not show (code, HTML, comments) read ….'
-    : `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`
+  if (isDocument(unit)) return 'Here is a section of a Markdown document. Lines the privacy filter could not show (code, HTML, comments) read ….'
+  if (isQuery(unit)) return 'Here is a SQL statement. Lines holding a string, a comment, or anything the privacy filter could not show read ….'
+  return `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`
 }
 
 export function generatorPrompt(unit: Unit): string {
@@ -43,12 +57,16 @@ export function generatorPrompt(unit: Unit): string {
     ...unit.lines,
     '```',
     '',
-    doc ? 'Write one question asking which approach or strategy this section mainly takes.' : 'Write one question asking which pattern or technique this function mainly uses.',
+    doc
+      ? 'Write one question asking which approach or strategy this section mainly takes.'
+      : isQuery(unit)
+        ? 'Write one question asking which query pattern this statement mainly uses.'
+        : 'Write one question asking which pattern or technique this function mainly uses.',
     doc
       ? `Give exactly ${PUZZLE.choices} choices, each a short approach name of at most ${PUZZLE.maxChoiceChars} characters: one clearly right, the others plausible but wrong for this section.`
       : `Give exactly ${PUZZLE.choices} choices, each a short pattern name of at most ${PUZZLE.maxChoiceChars} characters: one clearly right, the others plausible but wrong for this code.`,
     `Keep the question under ${PUZZLE.maxQuestionChars} characters and the explanation under ${PUZZLE.maxExplanationChars}.`,
-    `Pick the category from: ${PATTERN_CATEGORIES.join(', ')}.`,
+    `Pick the category from: ${[...categoriesFor(unit), 'other'].join(', ')}.`,
     `Reply with JSON: {"question": string, "choices": [${PUZZLE.choices} strings], "answer": 1 to ${PUZZLE.choices}, "explanation": string, "category": string}`,
   ].join('\n')
 }
@@ -86,7 +104,7 @@ export function parseGenerated(text: string): Generated | undefined {
   if (new Set(trimmed.map(c => c.toLowerCase())).size !== trimmed.length) return undefined
   if (typeof answer !== 'number' || !Number.isInteger(answer) || answer < 1 || answer > PUZZLE.choices) return undefined
   if ([question, explanation, ...trimmed].some(isBanned)) return undefined
-  const cat = typeof category === 'string' && (PATTERN_CATEGORIES as readonly string[]).includes(category) ? category : 'other'
+  const cat = typeof category === 'string' && PATTERN_CATEGORIES.includes(category) ? category : 'other'
   return { question: question.trim(), choices: trimmed, answer: answer - 1, explanation: explanation.trim(), category: cat }
 }
 

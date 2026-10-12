@@ -164,9 +164,17 @@ The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
-TypeScript, Python, PHP or Markdown yet (`.ts`, `.mts`, `.cts`, `.py`, `.php`,
-`.md` and `.markdown` files are read, Blade templates are not; JavaScript
-files may hold JSX, which the filter cannot make safe). A Markdown section (a heading to the next heading) is
+TypeScript, Python, PHP, SQL or Markdown yet (`.ts`, `.mts`, `.cts`, `.py`,
+`.php`, `.sql`, `.md` and `.markdown` files are read, Blade templates are
+not; JavaScript files may hold JSX, which the filter cannot make safe). A
+SQL query (a `SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or
+`CREATE VIEW` statement, to its `;`) shows with its strings and comments
+read as `…`; as a `.sql` file names no database, wherever two databases
+could read a line differently (a backslash, a `#`, a nested comment, a
+string running onto the next line) the rest of the file is blanked. Its
+Bug Hunt brings in a bad join or filter (`LEFT JOIN` for `INNER JOIN`,
+`IS NULL` for `IS NOT NULL`, `AND` for `OR`, `<` for `<=`), and its
+Pattern ID asks which query pattern it uses. A Markdown section (a heading to the next heading) is
 shown as filtered prose, with code blocks, comments, front matter and lines
 nested four spaces deep reading `…` (nest lists two spaces to keep them).
 Where the filter cannot be sure what a renderer would make of a line (an
@@ -379,8 +387,8 @@ by `·`:
 
 ## Coming later
 
-- **More puzzles:** Complexity Read, more languages (SQL), Trace for
-  Python, PHP and SQL and for plan documents, and puzzles that come up
+- **More puzzles:** Complexity Read, Trace for Python, PHP and SQL and
+  for plan documents, and puzzles that come up
   more often in the categories where you are weakest (the dossier shows them but does not
   yet change which puzzles you get).
 - **Companion perks** that change game odds (never your code).

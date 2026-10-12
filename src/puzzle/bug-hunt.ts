@@ -59,6 +59,44 @@ const PHP_MUTATIONS: readonly Mutation[] = [
   { from: ' - 1', to: ' + 1', category: 'off by one' },
 ]
 
+/** The same change in upper case and lower case, as SQL keywords are written either way. */
+const bothCases = (from: string, to: string, category: string, match: (from: string) => RegExp): Mutation[] => [
+  { from: from.toUpperCase(), to: to.toUpperCase(), category, match: match(from.toUpperCase()) },
+  { from: from.toLowerCase(), to: to.toLowerCase(), category, match: match(from.toLowerCase()) },
+]
+
+/** A keyword run as a whole word, its spaces any run of spaces or tabs. */
+const keyword = (k: string) => new RegExp(`(?<![\\w$])${k.replace(/ /g, '[ \\t]+')}(?![\\w$])`, 'g')
+
+/**
+ * SQL's injected bad join or filter: a comparison turned around (an `=` only
+ * after a filter keyword on its line, so never a `SET` or a default), a range
+ * bound moved by one, `AND` and `OR` swapped (never after `BETWEEN`), a null
+ * check or membership negated, a join made outer or inner.
+ */
+const SQL_MUTATIONS: readonly Mutation[] = [
+  { from: ' = ', to: ' <> ', category: 'comparison', match: /(?<=(?<![\w$])(?:WHERE|ON|AND|OR|HAVING|WHEN|where|on|and|or|having|when)(?![\w$]).*) = /g },
+  { from: ' <> ', to: ' = ', category: 'comparison' },
+  { from: ' != ', to: ' = ', category: 'comparison' },
+  { from: ' <= ', to: ' < ', category: 'off by one' },
+  { from: ' >= ', to: ' > ', category: 'off by one' },
+  { from: ' < ', to: ' <= ', category: 'off by one' },
+  { from: ' > ', to: ' >= ', category: 'off by one' },
+  { from: ' + 1', to: ' - 1', category: 'off by one' },
+  { from: ' - 1', to: ' + 1', category: 'off by one' },
+  { from: ' AND ', to: ' OR ', category: 'boolean logic', match: /(?<!(?<![\w$])BETWEEN(?![\w$]).*) AND /g },
+  { from: ' and ', to: ' or ', category: 'boolean logic', match: /(?<!(?<![\w$])between(?![\w$]).*) and /g },
+  { from: ' OR ', to: ' AND ', category: 'boolean logic' },
+  { from: ' or ', to: ' and ', category: 'boolean logic' },
+  ...bothCases('is null', 'is not null', 'null check', keyword),
+  ...bothCases('is not null', 'is null', 'null check', keyword),
+  ...bothCases(' in (', ' not in (', 'comparison', k => new RegExp(`(?<!(?<![\\w$])[Nn][Oo][Tt])${k.replace('(', '\\(')}`, 'g')),
+  ...bothCases(' not in (', ' in (', 'comparison', k => new RegExp(k.replace('(', '\\('), 'g')),
+  ...bothCases('left join', 'inner join', 'join type', keyword),
+  ...bothCases('inner join', 'left join', 'join type', keyword),
+  ...bothCases('join', 'left join', 'join type', k => new RegExp(`(?<![\\w$]|(?:left|right|inner|full|outer|cross|natural|LEFT|RIGHT|INNER|FULL|OUTER|CROSS|NATURAL)[ \\t]+)${k}(?![\\w$])`, 'g')),
+]
+
 /** A whole lowercase word (or words), not part of a longer word or a hyphenated one. */
 const word = (w: string, notBefore = '') => new RegExp(`(?<![\\w-])${w.replace(/ /g, '[ \\t]+')}(?![\\w-]${notBefore})`, 'g')
 
@@ -94,7 +132,7 @@ const MD_MUTATIONS: readonly Mutation[] = [
   ...flip('required', 'optional', 'scope'),
 ]
 
-const MUTATIONS_BY_LANG: Record<string, readonly Mutation[]> = { TypeScript: TS_MUTATIONS, Python: PY_MUTATIONS, PHP: PHP_MUTATIONS, Markdown: MD_MUTATIONS }
+const MUTATIONS_BY_LANG: Record<string, readonly Mutation[]> = { TypeScript: TS_MUTATIONS, Python: PY_MUTATIONS, PHP: PHP_MUTATIONS, SQL: SQL_MUTATIONS, Markdown: MD_MUTATIONS }
 
 /** Where `mutation` can apply in `line`: each place and the length of the text it replaces. */
 export function mutationSites(mutation: Mutation, line: string): { at: number; length: number }[] {
@@ -155,7 +193,12 @@ export function buildBugHunt(units: readonly Unit[], rng: Rng): Puzzle | undefin
   return {
     type: 'bug-hunt',
     category: mutation.category,
-    question: unit.lang === 'Markdown' ? 'One line was changed to contradict the document. Which one?' : 'One line was changed to bring in a bug. Which one?',
+    question:
+      unit.lang === 'Markdown'
+        ? 'One line was changed to contradict the document. Which one?'
+        : unit.lang === 'SQL'
+          ? 'One line of the query was changed to bring in a bad join or filter. Which one?'
+          : 'One line was changed to bring in a bug. Which one?',
     lang: unit.lang,
     code: unit.lines.map((l, i) => (i === target ? changed : l)),
     choices: picked.map(i => `Line ${i + 1}`),
