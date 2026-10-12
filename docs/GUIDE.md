@@ -164,9 +164,16 @@ The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
-TypeScript or Python yet (`.ts`, `.mts`, `.cts` and `.py` files are read;
-JavaScript files may hold JSX, which the filter cannot make safe). Trace
-runs TypeScript only. The `puzzles` setting in `/config` is `on`,
+TypeScript, Python or Markdown yet (`.ts`, `.mts`, `.cts`, `.py`, `.md` and
+`.markdown` files are read; JavaScript files may hold JSX, which the filter
+cannot make safe). A Markdown section (a heading to the next heading) is
+shown as filtered prose, with code blocks, comments, front matter and lines
+nested four spaces deep reading `…` (nest lists two spaces to keep them).
+Where the filter cannot be sure what a renderer would make of a line (an
+HTML block, a stray code fence), it blanks the rest of the file. Its Bug
+Hunt flips one word to contradict the document (`must` for `must not`,
+`before` for `after`, `add` for `remove`), and its Pattern ID asks which
+approach the section takes. Trace runs TypeScript only. The `puzzles` setting in `/config` is `on`,
 `local` (Trace and Bug Hunt, so no code is sent anywhere) or `off`. Pattern
 ID needs `privacyMode` set to `standard` or `off`: under the default
 `strict`, no code leaves your machine, so every puzzle is a Trace or a Bug
@@ -373,8 +380,8 @@ by `·`:
 ## Coming later
 
 - **More puzzles:** Complexity Read, more languages (PHP, Python, SQL,
-  Markdown, with Trace for each), and puzzles that come up more often in
-  the categories where you are weakest (the dossier shows them but does not
+  with Trace for each, and for plan documents), and puzzles that come up
+  more often in the categories where you are weakest (the dossier shows them but does not
   yet change which puzzles you get).
 - **Companion perks** that change game odds (never your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.

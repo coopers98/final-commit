@@ -5,7 +5,8 @@ import type { Puzzle } from './puzzle'
 import { CONTROL } from './code-filter'
 import type { Unit } from './units'
 
-// SPEC 8, Pattern ID: which pattern a function from the mission uses. One
+// SPEC 8, Pattern ID: which pattern a function from the mission uses (or
+// which approach a document's section takes). One
 // call writes the question; a second, independent call answers it without
 // the key, and only an agreed answer is kept (8.1 rule 3). The prompts are
 // working instructions (CLAUDE.md rule 1) and carry only filtered code.
@@ -14,21 +15,38 @@ import type { Unit } from './units'
 export const PATTERN_CATEGORIES = [
   'hash map lookup', 'two pointers', 'sliding window', 'early return', 'guard clause', 'recursion', 'memoization',
   'map filter reduce', 'accumulator', 'state machine', 'builder', 'strategy', 'observer', 'dependency injection',
-  'retry with backoff', 'pagination', 'batching', 'debounce', 'caching', 'validation', 'parsing', 'other',
+  'retry with backoff', 'pagination', 'batching', 'debounce', 'caching', 'validation', 'parsing',
+  'phased rollout', 'fallback', 'migration', 'trade-off', 'incremental delivery', 'feature flag', 'other',
 ] as const
 
 const SYSTEM = 'You write short multiple-choice questions that test whether a developer recognizes the programming pattern in a piece of code. Reply with JSON only.'
+const DOC_SYSTEM = 'You write short multiple-choice questions that test whether a developer recognizes the approach a technical plan or design document takes. Reply with JSON only.'
+
+/** A section of a document (Markdown), not code: the prompts ask about its approach. */
+const isDocument = (unit: Unit) => unit.lang === 'Markdown'
+
+const systemFor = (unit: Unit) => (isDocument(unit) ? DOC_SYSTEM : SYSTEM)
+
+/** The prompt's opening: what the unit is, and what `…` means in it. */
+function intro(unit: Unit): string {
+  return isDocument(unit)
+    ? 'Here is a section of a Markdown document. Lines the privacy filter could not show (code, HTML, comments) read ….'
+    : `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`
+}
 
 export function generatorPrompt(unit: Unit): string {
+  const doc = isDocument(unit)
   return [
-    `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`,
+    intro(unit),
     '',
     '```',
     ...unit.lines,
     '```',
     '',
-    'Write one question asking which pattern or technique this function mainly uses.',
-    `Give exactly ${PUZZLE.choices} choices, each a short pattern name of at most ${PUZZLE.maxChoiceChars} characters: one clearly right, the others plausible but wrong for this code.`,
+    doc ? 'Write one question asking which approach or strategy this section mainly takes.' : 'Write one question asking which pattern or technique this function mainly uses.',
+    doc
+      ? `Give exactly ${PUZZLE.choices} choices, each a short approach name of at most ${PUZZLE.maxChoiceChars} characters: one clearly right, the others plausible but wrong for this section.`
+      : `Give exactly ${PUZZLE.choices} choices, each a short pattern name of at most ${PUZZLE.maxChoiceChars} characters: one clearly right, the others plausible but wrong for this code.`,
     `Keep the question under ${PUZZLE.maxQuestionChars} characters and the explanation under ${PUZZLE.maxExplanationChars}.`,
     `Pick the category from: ${PATTERN_CATEGORIES.join(', ')}.`,
     `Reply with JSON: {"question": string, "choices": [${PUZZLE.choices} strings], "answer": 1 to ${PUZZLE.choices}, "explanation": string, "category": string}`,
@@ -37,7 +55,7 @@ export function generatorPrompt(unit: Unit): string {
 
 export function checkerPrompt(unit: Unit, question: string, choices: readonly string[]): string {
   return [
-    `Here is a ${unit.lang} function. Lines holding a string, a comment, or anything the privacy filter could not show read ….`,
+    intro(unit),
     '',
     '```',
     ...unit.lines,
@@ -87,7 +105,7 @@ function richest(units: readonly Unit[]): Unit {
 /** A Pattern ID from `units`, or undefined when a call fails, the reply does not hold, or the check disagrees. */
 export async function buildPatternId(units: readonly Unit[], rng: Rng, complete: Complete): Promise<Puzzle | undefined> {
   const unit = richest(units)
-  const made = await complete({ system: SYSTEM, prompt: generatorPrompt(unit) })
+  const made = await complete({ system: systemFor(unit), prompt: generatorPrompt(unit) })
   const g = made.ok ? parseGenerated(made.text) : undefined
   if (!g) return undefined
   // Shuffled here, so the right answer's place is the game's choice, not the model's habit.
@@ -98,7 +116,7 @@ export async function buildPatternId(units: readonly Unit[], rng: Rng, complete:
   }
   const choices = order.map(i => g.choices[i]!)
   const answer = order.indexOf(g.answer)
-  const checked = await complete({ system: SYSTEM, prompt: checkerPrompt(unit, g.question, choices) })
+  const checked = await complete({ system: systemFor(unit), prompt: checkerPrompt(unit, g.question, choices) })
   if (!checked.ok || parseCheck(checked.text) !== answer) return undefined
   return { type: 'pattern-id', category: g.category, question: g.question, lang: unit.lang, code: unit.lines, choices, answer, explanation: g.explanation }
 }

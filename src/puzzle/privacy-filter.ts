@@ -11,9 +11,12 @@ const MONTH = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|Jul
 
 const STANDARD: Rule[] = [
   { pattern: /\bhttps?:\/\/\S+/gi, token: '[url]' },
-  { pattern: /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g, token: '[email]' },
+  // Started only where the local part starts, so a long run of `a.a.a…@` is read once, not from every dot.
+  { pattern: /(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g, token: '[email]' },
   { pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, token: '[ip]' },
-  { pattern: /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:internal|local|lan|corp|intra|com|net|org|io|dev|cloud|health)\b/gi, token: '[host]' },
+  // Not started inside a label or right after `label.` (that match is the one from the label's start), so a
+  // long dotted run is tried once, not from every dot; a host after `...` is still found.
+  { pattern: /(?<![a-z0-9-])(?<![a-z0-9-]\.)[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:internal|local|lan|corp|intra|com|net|org|io|dev|cloud|health)\b/gi, token: '[host]' },
   // String literals (SPEC 5.3). A single quote opens a literal only where no letter precedes it, so "don't" survives.
   { pattern: /"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|(?<![\w])'[^'\n]{1,80}'(?![\w])/g, token: '[quoted]' },
   { pattern: /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g, token: '[key]' },

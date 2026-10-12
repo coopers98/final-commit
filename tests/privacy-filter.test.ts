@@ -89,3 +89,14 @@ test('empty and whitespace input', async () => {
   expect(filterProse('', 'strict')).toEqual({ text: '', redactions: 0 })
   expect(filterProse('   ', 'standard').redactions).toBe(0)
 })
+
+test('a host after an ellipsis and a long local part are still redacted whole; dotted runs are read in linear time', async () => {
+  expect(filterProse('connect to...db01.internal now', 'standard').text).toBe('connect to...[host] now')
+  expect(filterProse('node1..svc.cluster.local', 'standard').text).toBe('node1..[host]')
+  expect(filterProse(`jane.${'q'.repeat(60)}@clinic.org`, 'standard').text).toBe('[email]')
+  expect(filterProse(`${'j'.repeat(70)}@clinic.org`, 'standard').text).toBe('[email]')
+  const line = 'a.'.repeat(990) + '@'
+  const started = Date.now()
+  for (let i = 0; i < 130; i += 1) filterProse(line, 'standard')
+  expect(Date.now() - started).toBeLessThan(1_000)
+})

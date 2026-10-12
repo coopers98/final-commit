@@ -1,12 +1,13 @@
 import { PUZZLE } from '../config'
-import { filterCode } from './code-filter'
+import { BLANK, filterCode } from './code-filter'
+import { filterMarkdown } from './markdown-filter'
 import { filterPython } from './python-filter'
 import type { PrivacyMode } from './privacy-filter'
 
 // SPEC 8.3 rule 1: the units worth a puzzle in a mission's changes. Pure:
 // the glue reads the diff and the files and hands them in.
 
-/** A unit: a function the mission touched, already filtered, its lines without blank ones. */
+/** A unit: a function (or a document's section) the mission touched, already filtered, its lines without blank ones. */
 export type Unit = { lang: string; name: string; lines: string[] }
 
 /** One content adapter: which files it claims and how it finds units in filtered source. */
@@ -236,7 +237,52 @@ export const PY_ADAPTER: ContentAdapter = {
   },
 }
 
-export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER]
+/** An ATX heading's text, without its hashes or closing hashes; undefined for any other line. */
+export function headingName(line: string): string | undefined {
+  // One space or tab, then the rest: a `[ \t]+` before `.*` backtracks badly on a line that ends in a line separator.
+  const m = /^ {0,3}#{1,6}(?:[ \t](.*))?$/.exec(line)
+  if (!m) return undefined
+  // A closing run of hashes goes when space (or nothing) precedes it; read by hand to stay linear.
+  const text = (m[1] ?? '').trimEnd()
+  let at = text.length
+  while (at > 0 && text[at - 1] === '#') at -= 1
+  return (at === 0 || /[ \t]/.test(text[at - 1]!) ? text.slice(0, at) : text).trim()
+}
+
+/**
+ * SPEC 8.3 rule 2: Markdown. A section runs from an ATX heading to the next
+ * one of any level, or the file's end; prose before the first heading and
+ * setext headings give no unit.
+ */
+export const MD_ADAPTER: ContentAdapter = {
+  lang: 'Markdown',
+  claims: path => /\.(?:md|markdown)$/.test(path),
+  filter: filterMarkdown,
+  units(filtered, changed) {
+    const lines = filtered.split('\n')
+    const starts = lines.flatMap((l, k) => (headingName(l) !== undefined ? [k] : []))
+    const filled = [0]
+    const touched = [0]
+    for (const [k, l] of lines.entries()) {
+      filled.push(filled[k]! + (l.trim() !== '' ? 1 : 0))
+      touched.push(touched[k]! + (changed.has(k + 1) ? 1 : 0))
+    }
+    const out: Unit[] = []
+    for (const [n, i] of starts.entries()) {
+      const end = (starts[n + 1] ?? lines.length) - 1
+      const name = headingName(lines[i]!)!
+      if (name === '' || name === BLANK) continue
+      const size = filled[end + 1]! - filled[i]!
+      const isTouched = touched[end + 1]! - touched[i]! > 0
+      if (!isTouched || size < PUZZLE.unitMinLines || size > PUZZLE.unitMaxLines) continue
+      const body = lines.slice(i, end + 1).filter(l => l.trim() !== '')
+      if (!body.some(isUnsafeLine)) out.push({ lang: this.lang, name, lines: dedent(body) })
+    }
+    return out
+  },
+}
+
+export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER, MD_ADAPTER]
 
 /**
  * A line a unit is never taken with: JSX, fragments included (its text is
