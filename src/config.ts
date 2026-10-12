@@ -103,6 +103,8 @@ export const PUZZLE = {
   maxLineChars: 2_000,
   /** A longer line is never read as a function's first line (its patterns backtrack on long lines). */
   maxSignatureChars: 300,
+  /** PHP: lines a signature may run over before its body's `{` (PSR-12 puts it on its own line). */
+  maxSignatureLines: 12,
   /** Changed files read for units, and the largest read. */
   maxFiles: 20,
   maxFileBytes: 262_144,

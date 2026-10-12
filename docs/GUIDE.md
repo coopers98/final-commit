@@ -164,9 +164,9 @@ The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
-TypeScript, Python or Markdown yet (`.ts`, `.mts`, `.cts`, `.py`, `.md` and
-`.markdown` files are read; JavaScript files may hold JSX, which the filter
-cannot make safe). A Markdown section (a heading to the next heading) is
+TypeScript, Python, PHP or Markdown yet (`.ts`, `.mts`, `.cts`, `.py`, `.php`,
+`.md` and `.markdown` files are read, Blade templates are not; JavaScript
+files may hold JSX, which the filter cannot make safe). A Markdown section (a heading to the next heading) is
 shown as filtered prose, with code blocks, comments, front matter and lines
 nested four spaces deep reading `…` (nest lists two spaces to keep them).
 Where the filter cannot be sure what a renderer would make of a line (an
@@ -379,8 +379,8 @@ by `·`:
 
 ## Coming later
 
-- **More puzzles:** Complexity Read, more languages (PHP, Python, SQL,
-  with Trace for each, and for plan documents), and puzzles that come up
+- **More puzzles:** Complexity Read, more languages (SQL), Trace for
+  Python, PHP and SQL and for plan documents, and puzzles that come up
   more often in the categories where you are weakest (the dossier shows them but does not
   yet change which puzzles you get).
 - **Companion perks** that change game odds (never your code).

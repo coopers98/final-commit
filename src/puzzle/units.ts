@@ -1,6 +1,7 @@
 import { PUZZLE } from '../config'
 import { BLANK, filterCode } from './code-filter'
 import { filterMarkdown } from './markdown-filter'
+import { filterPhp } from './php-filter'
 import { filterPython } from './python-filter'
 import type { PrivacyMode } from './privacy-filter'
 
@@ -237,6 +238,64 @@ export const PY_ADAPTER: ContentAdapter = {
   },
 }
 
+/** A PHP function's or method's first line, by name: modifiers, `function`, a name and `(`. Closures have none. */
+export function phpFunctionName(line: string): string | undefined {
+  if (line.length > PUZZLE.maxSignatureChars) return undefined
+  return /^[ \t]*(?:(?:abstract|final|public|private|protected|static|readonly)[ \t]+)*function[ \t]+&?[ \t]*([A-Za-z_]\w*)[ \t]*\(/i.exec(line)?.[1]
+}
+
+/**
+ * The line a PHP function's body opens on: the first from `from` that ends
+ * in `{`, within `PUZZLE.maxSignatureLines`. None when a line before it may
+ * end the declaration or hide its end (a `;` for an abstract method, a `}`,
+ * a blanked line).
+ */
+function phpBodyStart(lines: readonly string[], from: number): number | undefined {
+  for (let k = from; k < lines.length && k < from + PUZZLE.maxSignatureLines; k += 1) {
+    const l = lines[k]!
+    if (l.includes(';') || l.includes('}') || l.includes(BLANK)) return undefined
+    if (l.trimEnd().endsWith('{')) return l.indexOf('{') === l.lastIndexOf('{') ? k : undefined
+  }
+  return undefined
+}
+
+/** SPEC 8.3 rule 2: PHP. Functions and methods by `function`, their bodies by braces (a body's `{` may open on a later line, as PSR-12 sets it). */
+export const PHP_ADAPTER: ContentAdapter = {
+  lang: 'PHP',
+  // Blade templates end in .php but are HTML.
+  claims: path => path.endsWith('.php') && !path.endsWith('.blade.php'),
+  filter: filterPhp,
+  units(filtered, changed) {
+    const lines = filtered.split('\n')
+    const endOf = blockEnds(lines)
+    const filled = [0]
+    const touched = [0]
+    for (const [k, l] of lines.entries()) {
+      filled.push(filled[k]! + (l.trim() !== '' ? 1 : 0))
+      touched.push(touched[k]! + (changed.has(k + 1) ? 1 : 0))
+    }
+    const out: Unit[] = []
+    let i = 0
+    while (i < lines.length) {
+      const name = phpFunctionName(lines[i]!)
+      const open = name === undefined ? undefined : phpBodyStart(lines, i)
+      const end = open === undefined ? undefined : endOf(open)
+      if (name === undefined || end === undefined) {
+        i += 1
+        continue
+      }
+      const size = filled[end + 1]! - filled[i]!
+      const isTouched = touched[end + 1]! - touched[i]! > 0
+      const body = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? lines.slice(i, end + 1).filter(l => l.trim() !== '') : []
+      if (body.length > 0 && !body.some(isUnsafeLine)) {
+        out.push({ lang: this.lang, name, lines: dedent(body) })
+        i = end + 1
+      } else i += 1
+    }
+    return out
+  },
+}
+
 /** An ATX heading's text, without its hashes or closing hashes; undefined for any other line. */
 export function headingName(line: string): string | undefined {
   // One space or tab, then the rest: a `[ \t]+` before `.*` backtracks badly on a line that ends in a line separator.
@@ -282,7 +341,7 @@ export const MD_ADAPTER: ContentAdapter = {
   },
 }
 
-export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER, MD_ADAPTER]
+export const ADAPTERS: readonly ContentAdapter[] = [TS_ADAPTER, PY_ADAPTER, PHP_ADAPTER, MD_ADAPTER]
 
 /**
  * A line a unit is never taken with: JSX, fragments included (its text is

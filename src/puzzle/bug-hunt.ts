@@ -43,6 +43,22 @@ const PY_MUTATIONS: readonly Mutation[] = [
   { from: ' - 1', to: ' + 1', category: 'off by one' },
 ]
 
+/** PHP's: strict and loose comparisons, boolean operators, off by one. */
+const PHP_MUTATIONS: readonly Mutation[] = [
+  { from: ' === ', to: ' !== ', category: 'comparison' },
+  { from: ' !== ', to: ' === ', category: 'comparison' },
+  { from: ' == ', to: ' != ', category: 'comparison' },
+  { from: ' != ', to: ' == ', category: 'comparison' },
+  { from: ' <= ', to: ' < ', category: 'off by one' },
+  { from: ' >= ', to: ' > ', category: 'off by one' },
+  { from: ' < ', to: ' <= ', category: 'off by one' },
+  { from: ' > ', to: ' >= ', category: 'off by one' },
+  { from: ' && ', to: ' || ', category: 'boolean logic' },
+  { from: ' || ', to: ' && ', category: 'boolean logic' },
+  { from: ' + 1', to: ' - 1', category: 'off by one' },
+  { from: ' - 1', to: ' + 1', category: 'off by one' },
+]
+
 /** A whole lowercase word (or words), not part of a longer word or a hyphenated one. */
 const word = (w: string, notBefore = '') => new RegExp(`(?<![\\w-])${w.replace(/ /g, '[ \\t]+')}(?![\\w-]${notBefore})`, 'g')
 
@@ -78,7 +94,7 @@ const MD_MUTATIONS: readonly Mutation[] = [
   ...flip('required', 'optional', 'scope'),
 ]
 
-const MUTATIONS_BY_LANG: Record<string, readonly Mutation[]> = { TypeScript: TS_MUTATIONS, Python: PY_MUTATIONS, Markdown: MD_MUTATIONS }
+const MUTATIONS_BY_LANG: Record<string, readonly Mutation[]> = { TypeScript: TS_MUTATIONS, Python: PY_MUTATIONS, PHP: PHP_MUTATIONS, Markdown: MD_MUTATIONS }
 
 /** Where `mutation` can apply in `line`: each place and the length of the text it replaces. */
 export function mutationSites(mutation: Mutation, line: string): { at: number; length: number }[] {
