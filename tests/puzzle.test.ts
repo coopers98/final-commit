@@ -115,7 +115,11 @@ test('a failed Pattern ID gives way to Bug Hunt; with no model, only Bug Hunt is
 test('the step shows numbered code and choices; keys pick a choice or skip; the result says why', async () => {
   const p = buildBugHunt([UNIT], createRng(2))!
   const v = analyzeView(p, '◆ Gnaw (Rare)', 'rare')
-  expect(v.code[0]).toBe(` 1| ${p.code[0]}`)
+  expect(v.code).toEqual(p.code)
+  expect(v.offset).toBe(null)
+  // Bug Hunt's choices name their lines: each marks its line with its own number.
+  expect(p.choices.map(c => v.marks[Number(c.slice(5)) - 1])).toEqual([0, 1, 2, 3])
+  expect(v.marks.filter(m => m !== null).length).toBe(4)
   expect(v.choices[0]).toBe(`1  ${p.choices[0]}`)
   expect(v.label).toBe('Analyze Specimen · Bug Hunt · TypeScript')
   expect(['1', '4', 's', 'S', '5', '0', ' '].map(c => analyzeKey(c, 4))).toEqual([0, 3, 'skip', 'skip', undefined, undefined, undefined])

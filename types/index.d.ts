@@ -22,9 +22,14 @@ export type AnalyzeView = {
   /** The puzzle's language and type, as shown. */
   label: string
   question: string
+  /** The unit's lines as shown, without numbers: the pane draws the gutter. */
   code: string[]
+  /** For each code line, the Bug Hunt choice (0-based) that names it, else null. */
+  marks: (number | null)[]
   choices: string[]
   result: { lines: string[] } | null
+  /** The first wrapped code row shown; null until the reader scrolls (the window opens on the first candidate). */
+  offset: number | null
 }
 
 export type BandView = {

@@ -3,8 +3,7 @@ import type { Tier } from '../config'
 import type { PendingEncounter } from '../store/schema'
 import type { Puzzle } from './puzzle'
 
-// SPEC 8: what the Analyze Specimen step shows. Pure; the pane wraps and
-// cuts to its width when it draws.
+// SPEC 8: what the Analyze Specimen step shows. Pure; the pane lays it out (src/puzzle/layout.ts).
 
 const TYPE_LABEL: Record<Puzzle['type'], string> = { 'pattern-id': 'Pattern ID', trace: 'Trace', 'bug-hunt': 'Bug Hunt' }
 
@@ -13,11 +12,28 @@ export function analyzeView(puzzle: Puzzle, heading: string, tier: Tier): Analyz
     heading, tier,
     label: `Analyze Specimen · ${TYPE_LABEL[puzzle.type]} · ${puzzle.lang}`,
     question: puzzle.question,
-    // Numbered from 1, as Bug Hunt's choices name them.
-    code: puzzle.code.map((l, i) => `${String(i + 1).padStart(2)}| ${l}`),
+    code: [...puzzle.code],
+    marks: marksOf(puzzle),
     choices: puzzle.choices.map((c, i) => `${i + 1}  ${c}`),
     result: null,
+    offset: null,
   }
+}
+
+/**
+ * Bug Hunt's candidate lines: for each code line, the choice that names it
+ * (`Line 8`), else null. Read from the choices, so a saved puzzle needs no
+ * new field; another type's choices (a model's) mark nothing.
+ */
+export function marksOf(puzzle: Pick<Puzzle, 'type' | 'code' | 'choices'>): (number | null)[] {
+  const marks: (number | null)[] = puzzle.code.map(() => null)
+  if (puzzle.type !== 'bug-hunt') return marks
+  for (const [i, c] of puzzle.choices.entries()) {
+    const n = /^Line (\d+)$/.exec(c)?.[1]
+    const at = n === undefined ? -1 : Number(n) - 1
+    if (at >= 0 && at < marks.length) marks[at] = i
+  }
+  return marks
 }
 
 /** SPEC 8.1 rule 4: added to the result once the puzzle is disputed. */
