@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { tierColor } from '../src/bridge/color'
-import { COLORS, STORE, SYNC } from '../src/config'
+import { COLORS, PUZZLE, STORE, SYNC } from '../src/config'
+import { dockColumns } from '../src/puzzle/layout'
 
 // Engine-level tests: the plugin loaded by the engine's own host, with the
 // clock, store, env, model and UI operations answered beneath it.
@@ -10,7 +11,7 @@ import { COLORS, STORE, SYNC } from '../src/config'
 const START = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const SEED = '42'
 
-type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; release: () => void }
+type World = { clock: ReturnType<typeof mock.clock>; logs: string[]; commands: string[]; agents: string[]; toasts: string[]; status: (string | undefined)[]; prompts: string[]; opened: string[]; closed: string[]; openedWith: { id: string; columns?: number; rows?: number }[]; release: () => void }
 
 /** `refuse`: pane ids that cannot be placed. `holdModel`: model calls wait for `w.release()`, so charting stays in flight. */
 /** `gh`: answers a `gh` command (the github work source); other commands answer as git on `branch`. */
@@ -23,7 +24,7 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
   mock.store(on, opts.store)
   mock.env(on, { TERM: 'xterm-256color', FINAL_COMMIT_SEED: opts.seed ?? SEED, ...opts.env })
   const held: (() => void)[] = []
-  const w: World = { clock, logs: [], commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], release: () => held.splice(0).forEach(r => r()) }
+  const w: World = { clock, logs: [], commands: [], agents: [], toasts: [], status: [], prompts: [], opened: [], closed: [], openedWith: [], release: () => held.splice(0).forEach(r => r()) }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('agent.register', (_$, e) => {
@@ -37,9 +38,13 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
   on('ui.open', (_$, e) => {
     if (opts.refuse?.includes(e.id)) return { value: { isPlaced: false, reason: 'no room' } }
     w.opened.push(e.id)
+    w.openedWith.push({ id: e.id, ...(e.columns !== undefined ? { columns: e.columns } : {}), ...(e.rows !== undefined ? { rows: e.rows } : {}) })
     return { value: { isPlaced: true } }
   })
-  on('ui.close', () => ({ value: undefined }))
+  on('ui.close', (_$, e) => {
+    w.closed.push(e.id)
+    return { value: undefined }
+  })
   on('ui.toast', (_$, e) => {
     w.toasts.push(e.text)
     return { value: undefined }
@@ -66,14 +71,43 @@ function world(on: On, opts: { branch?: string; seed?: string; env?: Record<stri
   return w
 }
 
+/** The terminal a command runs in, as the engine stamps it: the test kit passes the input whole. */
+const PRESENTATION = { isFullscreen: true, columns: 120 }
+
 async function run($: any, command: string, args = '') {
-  return (await $.command.run({ command, args })) as { text?: string }
+  return (await $.command.run({ command, args, presentation: PRESENTATION })) as { text?: string }
 }
 
 const PANE = (requestId: string, bodyColumns = 60) => ({
   plugin: 'final-commit', surface: 'terminal' as const, component: 'Pane' as const, requestId,
   props: { title: '', isFocused: true, bodyColumns, placement: 'inline' } as never,
 })
+
+/** A pane drawn in a body `bodyRows` tall, on a terminal of `viewport` size. */
+const SIZED = (requestId: string, bodyColumns: number, bodyRows: number, viewport?: { columns: number; rows: number }) => ({
+  ...PANE(requestId, bodyColumns),
+  props: { title: '', isFocused: true, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows } } as never,
+  ...(viewport ? { viewport } : {}),
+})
+
+/**
+ * The code lines of a drawn Analyze pane: [gutter, text]. The gutter is four cells (`   7`, `[2]>`), so a choice (`1  Line 4`) never reads as one.
+ * A line wrapped onto further rows (indented seven cells) is joined back; one whose first row is scrolled away is left out.
+ */
+const codeRows = (texts: string[]) => {
+  const out: [string, string][] = []
+  let isCode = false
+  for (const t of texts) {
+    const m = /^(\[\d\]>| {3}\d| {2}\d\d| \d{3}|\d{4}) (.*)$/.exec(t)
+    if (m) out.push([m[1]!.trim(), m[2]!])
+    else if (isCode && /^ {7}/.test(t) && out.length > 0) out[out.length - 1]![1] += t.slice(7)
+    isCode = m !== null || (isCode && /^ {7}/.test(t))
+  }
+  return out
+}
+
+/** A pane's text as one line: the panel wraps at its width, so a phrase can span rows. */
+const flat = (texts: string[]) => texts.join(' ').replace(/\s+/g, ' ')
 
 /** /epic KEY, then the title and description typed into the form pane. */
 async function chart($: any, w: World, key: string, title: string, description = '') {
@@ -1423,21 +1457,27 @@ test('with puzzles local, a mission\'s changed code becomes a Bug Hunt before co
   // Local: nothing was sent to a model.
   expect(w.prompts.filter(p => p.includes('function'))).toEqual([])
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
-  expect(texts).toContain('Analyze Specimen · Bug Hunt · TypeScript')
+  expect(flat(texts)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
   // The changed line is the one that differs from the file; its choice is the answer.
   const original = TOTAL_TS.split('\n')
-  const shown = texts.filter(t => /^ ?\d\| /.test(t)).map(t => t.slice(4))
+  const rows = codeRows(texts)
+  const shown = rows.map(([, text]) => text)
   const line = shown.findIndex((l, i) => l !== original[i]) + 1
+  // The candidates are marked in the gutter with their choice's number.
+  expect(rows.filter(([g]) => g.startsWith('[')).length).toBe(4)
   const choice = texts.filter(t => /^\d {2}Line /.test(t)).findIndex(t => t.endsWith(`Line ${line}`)) + 1
   expect(choice > 0).toBe(true)
   await pane.input({ key: 'analyze', text: String(choice), kind: 'change' })
-  const after = (await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')
+  const after = flat((await pane.findAll({ type: 'Text' })).map(t => t.text))
   expect(after).toContain('Right. Containment +')
   await pane.input({ key: 'analyzed', text: '', kind: 'submit' })
-  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
   await pane.unmount()
+  expect(w.opened.at(-1)).toBe('fc-lattice')
+  const lattice = await $.ui.mount(PANE('fc-lattice', 100))
+  expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
+  await lattice.unmount()
   // Answered once: the next /contain goes straight to the lattice.
   expect((await run($, 'contain')).text).toBe('Opened containment.')
 })
@@ -1447,7 +1487,7 @@ test('d on the result disputes the puzzle: kept for review, out of the record, a
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
   await run($, 'contain')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   await pane.input({ key: 'analyze', text: '1', kind: 'change' })
   const texts = async () => (await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')
   expect(await texts()).toContain('d: dispute this puzzle')
@@ -1458,8 +1498,11 @@ test('d on the result disputes the puzzle: kept for review, out of the record, a
   await pane.input({ key: 'analyzed', text: 'dd', kind: 'change' })
   expect((await texts()).split('Disputed:').length).toBe(2)
   await pane.input({ key: 'analyzed', text: '', kind: 'submit' })
-  expect(await texts()).toContain('Space: seal')
   await pane.unmount()
+  expect(w.opened.at(-1)).toBe('fc-lattice')
+  const lattice = await $.ui.mount(PANE('fc-lattice', 100))
+  expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
+  await lattice.unmount()
   expect((await run($, 'dossier')).text).toBe('Opened the dossier (0 answered, 1 disputed).')
 })
 
@@ -1468,7 +1511,7 @@ test('two keys at once (a repeat or a double tap) answer once and dispute once',
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
   await run($, 'contain')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   // Not awaited one by one: both saves start before either is written.
   await Promise.all([pane.input({ key: 'analyze', text: '1', kind: 'change' }), pane.input({ key: 'analyze', text: '12', kind: 'change' })])
   await Promise.all([pane.input({ key: 'analyzed', text: 'd', kind: 'change' }), pane.input({ key: 'analyzed', text: 'dd', kind: 'change' })])
@@ -1482,10 +1525,13 @@ test('s skips the puzzle straight to the lattice', { options: { puzzles: 'local'
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
   await missionWithCode($, on, w)
   await run($, 'contain')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   await pane.input({ key: 'analyze', text: 's', kind: 'change' })
-  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
   await pane.unmount()
+  expect(w.opened.at(-1)).toBe('fc-lattice')
+  const lattice = await $.ui.mount(PANE('fc-lattice', 100))
+  expect((await lattice.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain('Space: seal')
+  await lattice.unmount()
 })
 
 test('with puzzles off, containment opens with no puzzle and git is never asked for the diff', { options: { puzzles: 'off' } }, async ($, on) => {
@@ -1504,7 +1550,7 @@ test('with puzzles on and the standard filter, Pattern ID sends filtered code to
   const sent = w.prompts.filter(p => p.includes('totalOf'))
   expect(sent.length).toBe(1)
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
-  const pane = await $.ui.mount(PANE('fc-lattice'))
+  const pane = await $.ui.mount(PANE('fc-analyze'))
   expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
   await pane.unmount()
 })
@@ -1545,18 +1591,17 @@ test('a Rare encounter\'s puzzle is a Trace: node runs the filtered function in 
   expect(JSON.parse(calls[1]!.stdin!).code.startsWith('function totalOf(')).toBe(true)
   expect(w.prompts.filter(p => p.includes('totalOf'))).toEqual([])
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
   expect(texts.some(t => t.includes('(Rare)'))).toBe(true)
-  expect(texts).toContain('Analyze Specimen · Trace · TypeScript')
-  const question = texts.find(t => t.startsWith('What does totalOf('))!
-  const [items, limit] = JSON.parse(`[${/totalOf\((.*)\) return\?/.exec(question)![1]}]`) as [number[], number]
+  expect(flat(texts)).toContain('Analyze Specimen · Trace · TypeScript')
+  const [items, limit] = JSON.parse(`[${/What does totalOf\((.*?)\) return\?/.exec(flat(texts))![1]}]`) as [number[], number]
   let total = 0
   for (const n of items) if (n > 0 && total < limit) total = total + 1
   const choice = texts.filter(t => /^\d {2}/.test(t)).findIndex(t => t.slice(3) === String(total)) + 1
   expect(choice > 0).toBe(true)
   await pane.input({ key: 'analyze', text: String(choice), kind: 'change' })
-  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')).toContain(`Running it gives ${total}.`)
+  expect(flat((await pane.findAll({ type: 'Text' })).map(t => t.text))).toContain(`Running it gives ${total}.`)
   await pane.unmount()
 })
 
@@ -1567,8 +1612,8 @@ test('with no node on the host, a Rare encounter falls back to Bug Hunt', { opti
   await missionWithCode($, on, w)
   expect(calls.map(c => c.argv[1])).toEqual(['-p'])
   await run($, 'contain')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
-  expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
+  expect(flat((await pane.findAll({ type: 'Text' })).map(t => t.text))).toContain('Analyze Specimen · Bug Hunt · TypeScript')
   await pane.unmount()
 })
 
@@ -1604,7 +1649,112 @@ test('with the standard filter, Pattern ID is asked with spans quoted, and the p
   expect(w.prompts.some(p => p.includes('zqLocalOnly'))).toBe(false)
   // The model answered nothing, so the puzzle is a Bug Hunt from the local text.
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
-  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
   expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join('\n')).toContain('zqLocalOnly')
   await pane.unmount()
+})
+
+// Puzzle view spec, section 1.
+test('the puzzle opens in its own Analyze pane, asking for a wide dock', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+  const last = w.openedWith.at(-1)!
+  expect(last.id).toBe('fc-analyze')
+  expect(typeof last.columns).toBe('number')
+})
+
+test('"Contain now" from the report sizes the pane from the terminal the report was drawn on', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  const report = await $.ui.mount(SIZED('fc-report', 100, 30, { columns: 200, rows: 50 }))
+  await report.input({ key: 'report', text: '', kind: 'submit' })
+  await report.unmount()
+  const last = w.openedWith.at(-1)!
+  expect(last).toEqual({ id: 'fc-analyze', columns: dockColumns(200), rows: 7 + 4 + 8 })
+})
+
+test('j and k scroll the code window; the panel stays', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(SIZED('fc-analyze', 100, 4))
+  const texts = async () => (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  const first = codeRows(await texts()).map(([g]) => g)
+  expect(first.length).toBe(3)
+  expect((await texts()).some(t => t.includes('more'))).toBe(true)
+  await pane.input({ key: 'analyze', text: 'k', kind: 'change' })
+  await pane.input({ key: 'analyze', text: 'kk', kind: 'change' })
+  await pane.input({ key: 'analyze', text: 'kkk', kind: 'change' })
+  expect(codeRows(await texts())[0]![0]).toBe('1')
+  await pane.input({ key: 'analyze', text: 'kkkj', kind: 'change' })
+  expect(codeRows(await texts())[0]![0]).not.toBe('1')
+  // The question and the Input never scroll away.
+  expect((await texts()).some(t => t.startsWith('1  Line '))).toBe(true)
+  expect(await pane.find({ key: 'analyze' })).toBeDefined()
+  await pane.unmount()
+})
+
+test('the wheel over the code scrolls the code, not the body', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  // The engine beneath: the offset the body is moved to.
+  const offsets: number[] = []
+  on('ui.scroll', (_$, e) => {
+    offsets.push(e.offset)
+    return {}
+  })
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(SIZED('fc-analyze', 100, 4))
+  const top = codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]
+  const moved = await $.ui.scroll({ component: 'Pane', requestId: 'fc-analyze', offset: 1, by: 1, bodyRows: 4, contentRows: 4, origin: { kind: 'person' }, pointer: { column: 2, row: 1 } } as never)
+  expect(moved).toBeDefined()
+  // The body stays where it was drawn; the code moved instead.
+  expect(offsets).toEqual([0])
+  expect(codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]).not.toBe(top)
+  await pane.unmount()
+})
+
+test('/contain with a Containment pane still open closes it, so only Analyze shows', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  expect(w.closed).toContain('fc-lattice')
+})
+
+test('reopening the puzzle does not restart the fast-answer clock', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  await w.clock.advance(61_000)
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  const original = TOTAL_TS.split('\n')
+  const line = codeRows(texts).map(([, t]) => t).findIndex((l, i) => l !== original[i]) + 1
+  const choice = texts.filter(t => /^\d {2}Line /.test(t)).findIndex(t => t.endsWith(`Line ${line}`)) + 1
+  await pane.input({ key: 'analyze', text: String(choice), kind: 'change' })
+  const right = flat((await pane.findAll({ type: 'Text' })).map(t => t.text))
+  const pct = Number(/Containment \+(\d+)%/.exec(right)![1])
+  // No fast bonus: exactly a tier's base bonus.
+  expect(Object.values(PUZZLE.bonusByTier).map(b => Math.round(b * 100))).toContain(pct)
+  await pane.unmount()
+})
+
+test('when Containment cannot be placed after the answer, a toast says so and the encounter waits', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit, refuse: ['fc-lattice'] })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-analyze', 100))
+  await pane.input({ key: 'analyze', text: 's', kind: 'change' })
+  expect(w.toasts).toContain('Containment could not open here. The specimen is still here: /contain')
+  await pane.unmount()
+  expect((await run($, 'contain')).text).toBe('Containment could not open here; the encounter is still waiting.')
 })

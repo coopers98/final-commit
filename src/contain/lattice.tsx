@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
 import type { AnalyzeView, BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
-import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell, type Tier } from '../config'
+import { CELLS, LATTICE_SHARED, PUZZLE_VIEW, TIER_SPECS, type Cell, type Tier } from '../config'
 import { tierColor } from '../bridge/color'
 import { answerPuzzle, attemptContainment, disputePuzzle, CELL_KEYS, cellsOf, parseCell } from '../game'
 import { analyzeKey, analyzeView, DISPUTED_LINE, resultLines } from '../puzzle/analyze'
+import { clampOffset, isOverCode, paneSize, puzzleLayout, scrollKey, type PanelLine } from '../puzzle/layout'
 import type { Puzzle } from '../puzzle/puzzle'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
@@ -13,14 +14,18 @@ import { clientKey } from './calibrate-math'
 import { advance, createLattice, latticeBonus, press, renderBar, renderLocks, type LatticeState } from './lattice-model'
 import { wrap } from '../bridge/text'
 
-// Seal the Lattice (SPEC 7.3). /contain opens a focused pane whose Input takes
-// the keys (a Client only gets keys after a mouse click, so it cannot be used
-// over tmux); Space seals, Enter throws the cell, Esc pauses. The model is
-// advanced on the plugin's clock and judged at the time each key arrives.
+// Seal the Lattice (SPEC 7.3). A prepared puzzle is asked first, in the
+// Analyze pane (SPEC 8), which hands on to Containment. /contain opens a
+// focused pane whose Input takes the keys (a Client only gets keys after a
+// mouse click, so it cannot be used over tmux); Space seals, Enter throws the
+// cell, Esc pauses. The model is advanced on the plugin's clock and judged at
+// the time each key arrives.
 
 export const LATTICE_PANE = 'fc-lattice'
 /** Opened by hooks/register.tsx after a mission or survey; drawn here so Enter can open containment. */
 export const REPORT_PANE = 'fc-report'
+/** SPEC 8: the puzzle asked before containment, in a pane of its own (puzzle view spec, section 1). */
+export const ANALYZE_PANE = 'fc-analyze'
 const report = atom({ plugin: 'final-commit', key: 'report' } as const, null as ReportView | null)
 const view = atom({ plugin: 'final-commit', key: 'lattice' } as const, null as LatticeView | null)
 const analyze = atom({ plugin: 'final-commit', key: 'analyze' } as const, null as AnalyzeView | null)
@@ -50,6 +55,12 @@ let asking: { args: string; shownAt: number; typed: number } | undefined
 /** An answer or a dispute being saved: a second key (a repeat, a double tap) waits for none and does nothing. */
 let isSaving = false
 let actions = 0
+/** The terminal's size as the last drawing of these panes saw it: the report's "Contain now" has no command to read it from. */
+let terminal: { columns: number; rows: number } | undefined
+/** SPEC 8: when each encounter's puzzle was first shown this session, so closing and reopening does not restart the fast-answer clock. */
+const firstShown = new Map<string, number>()
+/** The Analyze pane's last drawing: what the scroll keys and the wheel move. */
+let shown: { offset: number; visible: number; total: number; codeRows: number; isColumns: boolean; bodyOffset: number } | undefined
 
 // The engine lets `$` reach only top-level functions of the same file, so
 // each wiring file has its own adapters.
@@ -111,6 +122,37 @@ function stop() {
   run = undefined
 }
 
+/** Remembers the terminal's size from a drawing (a remote surface's is not the terminal's). */
+function see(e: { surface: string; viewport?: { columns: number; rows: number } }) {
+  if (e.surface === 'terminal' && e.viewport) terminal = { columns: e.viewport.columns, rows: e.viewport.rows }
+}
+
+/** Closes one of these panes, open or not. A plugin's own close runs no ui.close hook of its own: the caller clears its state. */
+async function closePane($: EngineInterface, id: string) {
+  try {
+    await $.ui.close({ id })
+  } catch {
+    // Not open: nothing to close.
+  }
+}
+
+/** Moves the code window by `by` wrapped rows, within the code. */
+async function scrollCode($: EngineInterface, by: number) {
+  const s = shown
+  if (!s || by === 0) return
+  await update($, analyze, v => (v ? { ...v, offset: clampOffset(s.offset + by, s.total, s.visible) } : v))
+}
+
+/** Starts the lattice and opens its pane; false, with nothing left running, when it cannot be placed. */
+async function openLattice($: EngineInterface, args: string): Promise<boolean> {
+  await begin($, args)
+  const placed = await $.ui.open({ id: LATTICE_PANE, title: 'Containment', focus: true, closeOnEscape: true, holdToasts: true })
+  if (placed.isPlaced) return true
+  stop()
+  await update($, view, () => null)
+  return false
+}
+
 async function catchUp($: EngineInterface, r: Run) {
   const now = await $.clock.now()
   r.model = advance(r.model, now - r.last, r.rng)
@@ -164,7 +206,7 @@ async function onKeys($: EngineInterface, value: string) {
   else await update($, view, () => show(r))
 }
 
-async function open($: EngineInterface, args: string): Promise<string> {
+async function open($: EngineInterface, args: string, columns?: number): Promise<string> {
   if (!(await read($, ready))) return 'The Final Commit could not load its save; see the debug log (claude --debug).'
   const repo = repoOf($)
   const pending = await repo.pending()
@@ -173,21 +215,26 @@ async function open($: EngineInterface, args: string): Promise<string> {
   // SPEC 8: a prepared puzzle not yet answered comes first. One still being prepared is not waited for.
   const puzzle = pending.puzzle && !pending.analysis ? pending.puzzle : undefined
   if (puzzle) {
-    const species = (await repo.system(pending.systemId))?.species.find(s => s.id === pending.speciesId)
-    asking = { args, shownAt: await $.clock.now(), typed: 0 }
-    await update($, analyze, () => analyzeView(puzzle, headingOf(pending, species?.name), pending.tier))
-  } else {
-    await begin($, args)
-  }
-  const placed = await $.ui.open({ id: LATTICE_PANE, title: 'Containment', focus: true, closeOnEscape: true, holdToasts: true })
-  if (!placed.isPlaced) {
-    stop()
-    asking = undefined
+    // One pane at a time: a Containment pane left from an earlier attempt goes.
     await update($, view, () => null)
+    await closePane($, LATTICE_PANE)
+    const species = (await repo.system(pending.systemId))?.species.find(s => s.id === pending.speciesId)
+    const shownAt = firstShown.get(pending.id) ?? (await $.clock.now())
+    firstShown.set(pending.id, shownAt)
+    asking = { args, shownAt, typed: 0 }
+    const v = analyzeView(puzzle, headingOf(pending, species?.name), pending.tier)
+    await update($, analyze, () => v)
+    const size = paneSize(v, { columns: columns ?? terminal?.columns, rows: terminal?.rows })
+    const placed = await $.ui.open({ id: ANALYZE_PANE, title: 'Analyze', focus: true, closeOnEscape: true, holdToasts: true, ...size })
+    if (placed.isPlaced) return 'Opened containment, with a puzzle first.'
+    asking = undefined
     await update($, analyze, () => null)
     return 'Containment could not open here; the encounter is still waiting.'
   }
-  return puzzle ? 'Opened containment, with a puzzle first.' : 'Opened containment.'
+  asking = undefined
+  await update($, analyze, () => null)
+  await closePane($, ANALYZE_PANE)
+  return (await openLattice($, args)) ? 'Opened containment.' : 'Containment could not open here; the encounter is still waiting.'
 }
 
 const headingOf = (p: { tier: Tier; attachment?: { item: string } }, name: string | undefined) => {
@@ -234,9 +281,9 @@ async function begin($: EngineInterface, args: string) {
 }
 
 /**
- * SPEC 8: keys typed in the puzzle step. A choice answers; `s` skips,
- * straight on to the lattice. On the result, `d` disputes the puzzle
- * (SPEC 8.1 rule 4).
+ * Keys typed in the Analyze pane arrive as growth of its Input's value. A
+ * digit answers, `s` skips; on the result, `d` disputes; before and after,
+ * `j`/`k` scroll the code a row and space/`b` a page.
  */
 async function onAnalyzeKeys($: EngineInterface, value: string) {
   const a = asking
@@ -244,15 +291,20 @@ async function onAnalyzeKeys($: EngineInterface, value: string) {
   if (!a || !v) return
   const added = value.length > a.typed ? value.slice(a.typed) : ''
   a.typed = value.length
-  if (v.result) {
-    if ([...added].some(c => c.toLowerCase() === 'd')) await dispute($)
-    return
-  }
   for (const c of added) {
+    const move = scrollKey(c)
+    if (move !== undefined) {
+      const page = shown?.visible ?? 1
+      await scrollCode($, move === 'page' ? page : move === '-page' ? -page : move)
+      continue
+    }
+    if (v.result) {
+      if (c.toLowerCase() === 'd') return dispute($)
+      continue
+    }
     const key = analyzeKey(c, v.choices.length)
     if (key === undefined) continue
-    await answer($, key === 'skip' ? undefined : key)
-    return
+    return answer($, key === 'skip' ? undefined : key)
   }
 }
 
@@ -290,12 +342,15 @@ async function dispute($: EngineInterface) {
   if (isDisputed) await update($, analyze, v => (v?.result ? { ...v, result: { lines: [...v.result.lines, DISPUTED_LINE] } } : v))
 }
 
-/** From the answered puzzle on to the lattice, in the same pane. */
+/** From the answered (or skipped) puzzle on to the lattice: Analyze closes, then Containment opens. */
 async function proceed($: EngineInterface) {
   const args = asking?.args ?? ''
   asking = undefined
+  shown = undefined
+  // A plugin's own $.ui.close does not reach its own ui.close hook, so the view is cleared here.
   await update($, analyze, () => null)
-  await begin($, args)
+  await closePane($, ANALYZE_PANE)
+  if (!(await openLattice($, args))) $.ui.toast('Containment could not open here. The specimen is still here: /contain')
 }
 
 /** Enter on the report: close it, and go straight to containment when a creature is waiting. A cell's key (`r`, `s`, `x`) picks that cell. */
@@ -315,6 +370,7 @@ export function wireLattice(on: On): void {
   })
 
   on('ui.render', { component: 'Pane', requestId: REPORT_PANE }, async ($, e) => {
+    see(e)
     const elements = $.ui.resolve(e)
     const { Box, Text, Button } = elements
     const Input = 'Input' in elements ? elements.Input : undefined
@@ -354,68 +410,108 @@ export function wireLattice(on: On): void {
     )
   })
 
-  on('command.run', { command: 'contain' }, async ($, e) => ({ text: await open($, e.args) }))
+  on('command.run', { command: 'contain' }, async ($, e) => ({ text: await open($, e.args, e.presentation.columns) }))
 
   on('ui.close', { id: LATTICE_PANE }, async ($, e, next) => {
-    if (run || asking) {
+    if (run) {
       stop()
       $.ui.toast('Containment paused. The specimen is still here: /contain')
     }
-    asking = undefined
-    await update($, analyze, () => null)
     await update($, view, () => null)
     return next(e)
   })
 
+  on('ui.close', { id: ANALYZE_PANE }, async ($, e, next) => {
+    // Esc: the encounter and its puzzle keep waiting for /contain.
+    if (asking) $.ui.toast('Containment paused. The specimen is still here: /contain')
+    asking = undefined
+    shown = undefined
+    await update($, analyze, () => null)
+    return next(e)
+  })
+
+  on('ui.scroll', { component: 'Pane', requestId: ANALYZE_PANE }, async ($, e, next) => {
+    const s = shown
+    // The wheel over the code moves the code and the body stays put; anything else is the engine's.
+    if (!s || !e.pointer || !isOverCode({ ...s }, e.pointer)) return next(e)
+    await scrollCode($, e.by)
+    return next({ ...e, offset: s.bodyOffset })
+  })
+
+  on('ui.render', { component: 'Pane', requestId: ANALYZE_PANE }, async ($, e) => {
+    see(e)
+    const elements = $.ui.resolve(e)
+    const { Box, Text, Button } = elements
+    // Mobile has no Input; it falls back to buttons, and the code is drawn whole: nothing there scrolls a window.
+    const Input = 'Input' in elements ? elements.Input : undefined
+    const q = await read($, analyze)
+    if (!q) return <Text dimColor>Nothing to analyze.</Text>
+    const qColor = tierColor(q.tier, await $.clock.now())
+    const isDisputed = q.result?.lines.includes(DISPUTED_LINE) ?? false
+    const hints = [
+      ...(q.result ? ['Enter: on to containment', ...(isDisputed ? [] : ['d: dispute this puzzle'])] : [`1-${q.choices.length}: answer`, 's: skip', 'Esc: later']),
+      ...(Input ? ['j k space b: scroll code'] : []),
+    ]
+    const layout = puzzleLayout(q, hints, { columns: e.props.bodyColumns, rows: Input ? e.props.scroll?.bodyRows : undefined })
+    shown = {
+      offset: layout.code.offset, visible: layout.code.visible, total: layout.code.total,
+      codeRows: layout.code.rows.length + (layout.code.more ? 1 : 0),
+      isColumns: layout.isColumns, bodyOffset: e.props.scroll?.offset ?? 0,
+    }
+    const line = (l: PanelLine) =>
+      l.kind === 'heading' ? <Text bold color={qColor}>{l.text}</Text>
+        : l.kind === 'question' ? <Text bold>{l.text}</Text>
+          : l.kind === 'label' || l.kind === 'hint' ? <Text dimColor>{l.text}</Text>
+            : <Text>{l.text}</Text>
+    const code = (
+      <Box flexDirection="column" width={layout.codeWidth}>
+        {layout.code.rows.map(row => (
+          <Text>{row}</Text>
+        ))}
+        {layout.code.more !== undefined && <Text dimColor>{layout.code.more}</Text>}
+      </Box>
+    )
+    const panel = (
+      <Box flexDirection="column" width={layout.isColumns ? PUZZLE_VIEW.panelColumns : layout.codeWidth}>
+        {layout.panel.map(line)}
+        {Input ? (
+          <Input key={q.result ? 'analyzed' : 'analyze'} autoFocus label={q.result ? 'Enter' : 'Answer'} onInput={(value: string) => void onAnalyzeKeys($, value)} onSubmit={() => void (q.result ? proceed($) : undefined)} />
+        ) : q.result ? (
+          <Box>
+            <Button key="on" label="Contain" onPress={() => void proceed($)} />
+            {!isDisputed && <Button key="dispute" label="Dispute" onPress={() => void dispute($)} />}
+          </Box>
+        ) : (
+          <Box>
+            {q.choices.map((_, i) => (
+              <Button key={`c${i}`} label={String(i + 1)} onPress={() => void answer($, i)} />
+            ))}
+            <Button key="skip" label="Skip" onPress={() => void answer($, undefined)} />
+          </Box>
+        )}
+      </Box>
+    )
+    return layout.isColumns ? (
+      <Box flexDirection="row">
+        {code}
+        <Box width={1} />
+        {panel}
+      </Box>
+    ) : (
+      <Box flexDirection="column">
+        {code}
+        {panel}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'Pane', requestId: LATTICE_PANE }, async ($, e) => {
+    see(e)
     const elements = $.ui.resolve(e)
     const { Box, Text, Button } = elements
     // Mobile has no Input; it falls back to buttons.
     const Input = 'Input' in elements ? elements.Input : undefined
     const width = e.props.bodyColumns
-    const q = await read($, analyze)
-    if (q) {
-      const qColor = tierColor(q.tier, await $.clock.now())
-      const isDisputed = q.result?.lines.includes(DISPUTED_LINE) ?? false
-      const hints = q.result ? ['Enter: on to containment', ...(isDisputed ? [] : ['d: dispute this puzzle'])] : [`1-${q.choices.length}: answer`, 's: skip', 'Esc: later']
-      // The essentials last: a short terminal clips a pane from the top.
-      return (
-        <Box flexDirection="column">
-          <Text bold color={qColor}>{fit(q.heading, width)}</Text>
-          <Text dimColor>{fit(q.label, width)}</Text>
-          {q.code.map(line => (
-            <Text>{fit(line, width)}</Text>
-          ))}
-          {wrap(q.question, width).map(line => (
-            <Text bold>{line}</Text>
-          ))}
-          {q.choices.flatMap(c => wrap(c, width)).map(line => (
-            <Text>{line}</Text>
-          ))}
-          {q.result?.lines.flatMap(l => wrap(l, width)).map(line => (
-            <Text>{line}</Text>
-          ))}
-          {hintLines(hints, width).map(line => (
-            <Text dimColor>{line}</Text>
-          ))}
-          {Input ? (
-            <Input key={q.result ? 'analyzed' : 'analyze'} autoFocus label={q.result ? 'Enter' : 'Answer'} onInput={(value: string) => void onAnalyzeKeys($, value)} onSubmit={() => void (q.result ? proceed($) : undefined)} />
-          ) : q.result ? (
-            <Box>
-              <Button key="on" label="Contain" onPress={() => void proceed($)} />
-              {!isDisputed && <Button key="dispute" label="Dispute" onPress={() => void dispute($)} />}
-            </Box>
-          ) : (
-            <Box>
-              {q.choices.map((_, i) => (
-                <Button key={`c${i}`} label={String(i + 1)} onPress={() => void answer($, i)} />
-              ))}
-              <Button key="skip" label="Skip" onPress={() => void answer($, undefined)} />
-            </Box>
-          )}
-        </Box>
-      )
-    }
     const v = await read($, view)
     if (!v) return <Text dimColor>Nothing to contain.</Text>
     const color = tierColor(v.tier, await $.clock.now())
