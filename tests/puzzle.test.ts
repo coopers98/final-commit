@@ -55,7 +55,7 @@ test('Bug Hunt changes exactly one line, and its answer names that line', async 
     expect(p.choices[p.answer]).toBe(`Line ${diff[0]! + 1}`)
     // Never the signature or the closing brace.
     expect(p.choices.includes('Line 1') || p.choices.includes(`Line ${UNIT.lines.length}`)).toBe(false)
-    expect(p.explanation).toContain(UNIT.lines[diff[0]!]!.trim())
+    expect(p.explanation).toMatch(new RegExp(`^Line ${diff[0]! + 1}: \`[^\`]+\` became \`[^\`]+\`\\.$`))
   }
 })
 
@@ -194,4 +194,24 @@ test('Pattern ID is made from prompt units only; Bug Hunt from local units', asy
   // The model gave nothing: Bug Hunt, from the local unit.
   expect(p!.type).toBe('bug-hunt')
   expect(p!.code.join('\n')).toContain('limit')
+})
+
+test('Bug Hunt never changes a line that is mostly placeholders', async () => {
+  const soup: Unit = {
+    lang: 'TypeScript',
+    name: 'pick',
+    lines: [
+      'function pick(a: number, b: number): number {',
+      '  if ([quoted] === [quoted] && [name] === [id]) return 1',
+      '  const c = a + 1',
+      '  const d = b - 1',
+      '  return c < d ? c : d',
+      '}',
+    ],
+  }
+  for (let seed = 0; seed < 40; seed += 1) {
+    const p = buildBugHunt([soup], createRng(seed))
+    if (!p) continue
+    expect(p.code[1]).toBe(soup.lines[1])
+  }
 })

@@ -1,5 +1,6 @@
 import { PUZZLE } from '../config'
 import type { Rng } from '../rng'
+import { isReadableLine } from './readable'
 import type { Puzzle } from './puzzle'
 import type { Unit } from './units'
 
@@ -167,8 +168,24 @@ function bodyLines(unit: Unit): number[] {
   return unit.lines.map((_, i) => i).filter(i => i > 0 && (i < last || !hasCloser) && /[^\s{}();,…]/.test(unit.lines[i]!))
 }
 
-/** The mutations for `unit`'s language that can change `line`. */
-const mutationsOf = (unit: Unit, line: string) => (MUTATIONS_BY_LANG[unit.lang] ?? []).filter(m => (m.match ? mutationSites(m, line).length > 0 : line.includes(m.from)))
+/** A line's backtick spans, as [start, end) with the backticks: in a document they are code, and a flip there makes a bad puzzle. */
+function spanRanges(line: string): [number, number][] {
+  const out: [number, number][] = []
+  const re = /`[^`]*`/g
+  for (let m = re.exec(line); m; m = re.exec(line)) out.push([m.index, m.index + m[0].length])
+  return out
+}
+
+/** Where `mutation` can apply in `unit`'s `line`: outside backtick spans in a document. */
+function sitesIn(unit: Unit, mutation: Mutation, line: string): { at: number; length: number }[] {
+  const sites = mutationSites(mutation, line)
+  if (unit.lang !== 'Markdown') return sites
+  const spans = spanRanges(line)
+  return sites.filter(s => !spans.some(([a, b]) => s.at < b && s.at + s.length > a))
+}
+
+/** The mutations for `unit`'s language that can change `line`; none for a line that is not readable (mostly placeholders or blanked). */
+const mutationsOf = (unit: Unit, line: string) => (isReadableLine(line) ? (MUTATIONS_BY_LANG[unit.lang] ?? []).filter(m => sitesIn(unit, m, line).length > 0) : [])
 
 /**
  * A Bug Hunt from one of `units`, or undefined when none has a line to change
@@ -193,7 +210,7 @@ export function buildBugHunt(units: readonly Unit[], rng: Rng, weightOf?: (categ
   const mutation = rng.pick(ofCategory(unit, unit.lines[target]!))
   const original = unit.lines[target]!
   // One occurrence, chosen at random when the line has several.
-  const site = rng.pick(mutationSites(mutation, original))
+  const site = rng.pick(sitesIn(unit, mutation, original))
   const changed = original.slice(0, site.at) + mutation.to + original.slice(site.at + site.length)
 
   const others = lines.filter(i => i !== target)
@@ -216,6 +233,6 @@ export function buildBugHunt(units: readonly Unit[], rng: Rng, weightOf?: (categ
     code: unit.lines.map((l, i) => (i === target ? changed : l)),
     choices: picked.map(i => `Line ${i + 1}`),
     answer: picked.indexOf(target),
-    explanation: `Line ${target + 1} read \`${original.trim()}\`; \`${mutation.from.trim()}\` became \`${mutation.to.trim()}\`.`,
+    explanation: `Line ${target + 1}: \`${mutation.from.trim()}\` became \`${mutation.to.trim()}\`.`,
   }
 }

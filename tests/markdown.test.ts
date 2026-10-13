@@ -341,7 +341,7 @@ test('Bug Hunt on a section: one contradiction in one body line, the question sa
     // Never the heading, a blanked line or one without a letter.
     for (const c of ['Line 1', 'Line 3', 'Line 7']) expect(p.choices.includes(c)).toBe(false)
     expect(['negation', 'order', 'quantity', 'scope'].includes(p.category)).toBe(true)
-    expect(p.explanation).toContain(SECTION.lines[diff[0]!]!.trim())
+    expect(p.explanation).toMatch(new RegExp(`^Line ${diff[0]! + 1}: \`[^\`]+\` became \`[^\`]+\`\\.$`))
   }
   // Code keeps its own question.
   const ts: Unit = { lang: 'TypeScript', name: 'f', lines: ['function f(a: number) {', '  if (a === 1) a()', '  b()', '  c()', '  d()', '}'] }
@@ -428,4 +428,16 @@ test('locally, a private-use character in the source is dropped, and lines are k
 test('locally, under standard only the spans change', async () => {
   expect(local('- Keep `Alpha` and Beta.', 'standard')[0]).toBe('- Keep `Alpha` and Beta.')
   expect(filterMarkdown('- Keep `Alpha` and Beta.', 'standard')).toBe('- Keep [quoted] and Beta.')
+})
+
+test('a document Bug Hunt never flips a word inside a backtick span', async () => {
+  const unit = {
+    lang: 'Markdown',
+    name: 'Steps',
+    lines: ['## Steps', '- Run `git add` then `remove-cache` first.', '- Add more checks before a deploy.', '- Never remove the backup step.', '- Enable the alert once it is required.'],
+  }
+  for (let seed = 0; seed < 60; seed += 1) {
+    const p = buildBugHunt([unit], createRng(seed))!
+    expect(p.code[1]!.includes('`git add`') && p.code[1]!.includes('`remove-cache`')).toBe(true)
+  }
 })
