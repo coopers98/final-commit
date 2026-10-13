@@ -154,7 +154,12 @@ them. `/contain` asks it first:
   written by a model and checked by a second, independent call, so a
   question whose answer the two disagree on is thrown away.
 
-Press **1** to **4** to answer, **s** to skip, **Esc** to come back later.
+The puzzle opens in its own wide pane. The code is wrapped and numbered,
+and Bug Hunt marks the candidate lines `[1]>` to `[4]>` to match the
+choices. Scroll the code with **j**/**k** (a line), **space**/**b** (a
+page) or the mouse wheel. Press **1** to **4** to answer, **s** to skip,
+**Esc** to come back later. After the result, **Enter** goes on to
+containment.
 A right answer adds +10% (Common) up to +25% (Legendary), plus up to +5% for
 answering fast (none after a minute). A wrong answer costs nothing and
 explains why. The bonus counts for every attempt on that creature, and the
@@ -164,6 +169,10 @@ If a puzzle was wrong (a bad answer key, a question that makes no sense),
 press **d** on its result to dispute it. It is kept in your save for review,
 and your answer no longer counts in the dossier, right or wrong. A bonus you
 already earned stays.
+
+A puzzle shown only in the pane (Bug Hunt, Trace) shows a document's code
+spans as written, because it never leaves your machine; a Pattern ID
+question is always built from the filtered text.
 
 The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
