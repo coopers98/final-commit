@@ -147,8 +147,9 @@ Node's permission model does not itself block the network; the sandbox
 holds nothing that can reach it. Only a small, self-contained function is
 ever run; anything that could reach outside is refused before running.
 Its inputs are made up by the game. Nothing is sent to a model for Trace.
-Puzzles shown only in the pane (Bug Hunt, Trace) show Markdown code spans and
-capitalized words as written; the save keeps that text with the waiting
+Bug Hunt and Trace puzzles show Markdown code spans and capitalized words
+(value shapes and token shapes inside a span are still replaced; double-quoted
+text and value shapes outside spans are still filtered); the save keeps that text with the waiting
 encounter and the disputed puzzles. Nothing of it is sent to a model.
 `/captains-log` asks your session's own model to summarize the session it
 already holds; the mod adds only a fixed instruction, and the summary is

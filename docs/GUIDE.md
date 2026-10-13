@@ -170,11 +170,13 @@ press **d** on its result to dispute it. It is kept in your save for review,
 and your answer no longer counts in the dossier, right or wrong. A bonus you
 already earned stays.
 
-A puzzle shown only in the pane (Bug Hunt, Trace) shows a document's code
-spans as written, because it never leaves your machine; a Pattern ID
+A Bug Hunt or Trace puzzle shows a document's code
+spans, because it never leaves your machine (value shapes and secret-shaped
+tokens inside a span are still replaced, and quoted text outside spans is
+still filtered); a Pattern ID
 question is always built from the filtered text.
 
-The code is shown filtered, as the model sees it: only plain lines of
+Code sent to a model is filtered, and shown the way the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
 has no code of its own), and neither does a mission that changed no
