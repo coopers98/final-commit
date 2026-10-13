@@ -120,6 +120,15 @@ export const PUZZLE = {
   maxExplanationChars: 320,
   /** Bug Hunt: choices offered (lines), and the fewest candidate lines a unit needs. */
   choices: 4,
+  /**
+   * SPEC 8.2, D4: spaced repetition. Where the game picks a puzzle's category
+   * (Bug Hunt's defect), each category weighs 1, plus this much times its miss
+   * rate over the recent answers: one missed every time comes up 4 times as
+   * often as one never answered or always right.
+   */
+  weakWeight: 3,
+  /** SPEC 8.1 rule 4: disputed puzzles kept for review, newest last. */
+  maxDisputes: 50,
 } as const
 
 // SPEC 8.3 rules 3 and 4 (shape), DEFAULT (numbers). Trace: a unit run by a
@@ -240,7 +249,7 @@ export const COLORS = {
 } as const
 
 // SPEC 10
-export const STORE = { prefix: 'fc:', schemaVersion: 9 } as const
+export const STORE = { prefix: 'fc:', schemaVersion: 10 } as const
 
 // DEFAULT: companion band (SPEC 9.3) and pane timings
 export const COMPANION = { reactMs: 60_000, sleepAfterMs: 600_000, blinkEveryMs: 3_000, blinkMs: 200, spriteMinRows: 9, spriteGap: 2, besideMinColumns: 6 } as const

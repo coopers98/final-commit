@@ -3,8 +3,9 @@ import type { EngineInterface, On, Timer } from 'claude-code'
 import type { AnalyzeView, BandView, ChartingEntry, LatticeView, ReportView } from '../../types'
 import { CELLS, LATTICE_SHARED, TIER_SPECS, type Cell, type Tier } from '../config'
 import { tierColor } from '../bridge/color'
-import { answerPuzzle, attemptContainment, CELL_KEYS, cellsOf, parseCell } from '../game'
-import { analyzeKey, analyzeView, resultLines } from '../puzzle/analyze'
+import { answerPuzzle, attemptContainment, disputePuzzle, CELL_KEYS, cellsOf, parseCell } from '../game'
+import { analyzeKey, analyzeView, DISPUTED_LINE, resultLines } from '../puzzle/analyze'
+import type { Puzzle } from '../puzzle/puzzle'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
 import { createRepo, type Repo } from '../store/repo'
@@ -46,6 +47,8 @@ type Run = {
 let run: Run | undefined
 /** SPEC 8: the puzzle being asked before the run: the cell asked for, when it was shown, keys seen. */
 let asking: { args: string; shownAt: number; typed: number } | undefined
+/** An answer or a dispute being saved: a second key (a repeat, a double tap) waits for none and does nothing. */
+let isSaving = false
 let actions = 0
 
 // The engine lets `$` reach only top-level functions of the same file, so
@@ -230,13 +233,21 @@ async function begin($: EngineInterface, args: string) {
   await update($, view, () => show(r))
 }
 
-/** SPEC 8: keys typed in the puzzle step. A choice answers; `s` skips, straight on to the lattice. */
+/**
+ * SPEC 8: keys typed in the puzzle step. A choice answers; `s` skips,
+ * straight on to the lattice. On the result, `d` disputes the puzzle
+ * (SPEC 8.1 rule 4).
+ */
 async function onAnalyzeKeys($: EngineInterface, value: string) {
   const a = asking
   const v = await read($, analyze)
-  if (!a || !v || v.result) return
+  if (!a || !v) return
   const added = value.length > a.typed ? value.slice(a.typed) : ''
   a.typed = value.length
+  if (v.result) {
+    if ([...added].some(c => c.toLowerCase() === 'd')) await dispute($)
+    return
+  }
   for (const c of added) {
     const key = analyzeKey(c, v.choices.length)
     if (key === undefined) continue
@@ -247,14 +258,36 @@ async function onAnalyzeKeys($: EngineInterface, value: string) {
 
 async function answer($: EngineInterface, choice: number | undefined) {
   const a = asking
-  if (!a) return
-  const repo = repoOf($)
-  const now = await $.clock.now()
-  const puzzle = (await repo.pending())?.puzzle
-  const analysis = await answerPuzzle({ repo, now, rng: await rngOf($), choice, elapsedMs: now - a.shownAt })
+  if (!a || isSaving) return
+  isSaving = true
+  let puzzle: Puzzle | null | undefined
+  let analysis: Awaited<ReturnType<typeof answerPuzzle>>
+  try {
+    const repo = repoOf($)
+    const now = await $.clock.now()
+    puzzle = (await repo.pending())?.puzzle
+    analysis = await answerPuzzle({ repo, now, rng: await rngOf($), choice, elapsedMs: now - a.shownAt })
+  } finally {
+    isSaving = false
+  }
   if (!puzzle || !analysis) return
   if (analysis.isSkipped) return proceed($)
+  // The result's input is a new one, empty: keys are counted from its start.
+  a.typed = 0
   await update($, analyze, v => (v ? { ...v, result: { lines: resultLines(puzzle, analysis) } } : v))
+}
+
+/** SPEC 8.1 rule 4: logs the answered puzzle for review and says so on the result. */
+async function dispute($: EngineInterface) {
+  if (isSaving) return
+  isSaving = true
+  let isDisputed = false
+  try {
+    isDisputed = await disputePuzzle({ repo: repoOf($), now: await $.clock.now() })
+  } finally {
+    isSaving = false
+  }
+  if (isDisputed) await update($, analyze, v => (v?.result ? { ...v, result: { lines: [...v.result.lines, DISPUTED_LINE] } } : v))
 }
 
 /** From the answered puzzle on to the lattice, in the same pane. */
@@ -343,7 +376,8 @@ export function wireLattice(on: On): void {
     const q = await read($, analyze)
     if (q) {
       const qColor = tierColor(q.tier, await $.clock.now())
-      const hints = q.result ? ['Enter: on to containment'] : [`1-${q.choices.length}: answer`, 's: skip', 'Esc: later']
+      const isDisputed = q.result?.lines.includes(DISPUTED_LINE) ?? false
+      const hints = q.result ? ['Enter: on to containment', ...(isDisputed ? [] : ['d: dispute this puzzle'])] : [`1-${q.choices.length}: answer`, 's: skip', 'Esc: later']
       // The essentials last: a short terminal clips a pane from the top.
       return (
         <Box flexDirection="column">
@@ -367,7 +401,10 @@ export function wireLattice(on: On): void {
           {Input ? (
             <Input key={q.result ? 'analyzed' : 'analyze'} autoFocus label={q.result ? 'Enter' : 'Answer'} onInput={(value: string) => void onAnalyzeKeys($, value)} onSubmit={() => void (q.result ? proceed($) : undefined)} />
           ) : q.result ? (
-            <Button key="on" label="Contain" onPress={() => void proceed($)} />
+            <Box>
+              <Button key="on" label="Contain" onPress={() => void proceed($)} />
+              {!isDisputed && <Button key="dispute" label="Dispute" onPress={() => void dispute($)} />}
+            </Box>
           ) : (
             <Box>
               {q.choices.map((_, i) => (

@@ -1,5 +1,6 @@
 import { PUZZLE, type PuzzleType, type Tier } from '../config'
 import type { Rng } from '../rng'
+import type { PuzzleStat } from '../store/schema'
 import type { Complete } from '../world/generate'
 import { buildBugHunt } from './bug-hunt'
 import { buildPatternId } from './pattern-id'
@@ -35,6 +36,18 @@ export function puzzleTypeFor(tier: Tier, built: readonly PuzzleType[]): PuzzleT
   return order.find(t => built.includes(t as PuzzleType)) as PuzzleType | undefined
 }
 
+/**
+ * SPEC 8.2, D4: spaced repetition. A category of `type` weighs 1 (an even
+ * split), plus `PUZZLE.weakWeight` times its miss rate over its recent
+ * answers; one never answered weighs 1.
+ */
+export function categoryWeights(stats: readonly PuzzleStat[], type: PuzzleType): (category: string) => number {
+  return category => {
+    const recent = stats.find(s => s.type === type && s.category === category)?.recent ?? []
+    return 1 + (recent.length === 0 ? 0 : (PUZZLE.weakWeight * recent.filter(r => !r).length) / recent.length)
+  }
+}
+
 /** SPEC 8: a right answer's bonus by tier, plus up to `fastBonusMax` falling to none at `fastWithinMs`. */
 export function puzzleBonus(tier: Tier, isCorrect: boolean, elapsedMs: number): number {
   if (!isCorrect) return 0
@@ -50,13 +63,21 @@ export function puzzleBonus(tier: Tier, isCorrect: boolean, elapsedMs: number): 
  * from these units, or whose answer the check does not confirm, gives way to
  * the others.
  */
-export async function buildPuzzle(req: { units: readonly Unit[]; tier: Tier; rng: Rng; complete?: Complete; trace?: TraceCapability }): Promise<Puzzle | undefined> {
+export async function buildPuzzle(req: {
+  units: readonly Unit[]
+  tier: Tier
+  rng: Rng
+  complete?: Complete
+  trace?: TraceCapability
+  /** SPEC 8.2, D4: the accuracy record, so weak categories come up more often where the game picks one. */
+  stats?: readonly PuzzleStat[]
+}): Promise<Puzzle | undefined> {
   if (req.units.length === 0) return undefined
   const built: PuzzleType[] = [...(req.complete ? ['pattern-id' as const] : []), ...(req.trace ? ['trace' as const] : []), 'bug-hunt']
   const first = puzzleTypeFor(req.tier, built)
   for (const type of [first, ...built.filter(t => t !== first)]) {
     if (type === 'bug-hunt') {
-      const p = buildBugHunt(req.units, req.rng)
+      const p = buildBugHunt(req.units, req.rng, req.stats ? categoryWeights(req.stats, 'bug-hunt') : undefined)
       if (p) return p
     } else if (type === 'pattern-id' && req.complete) {
       const p = await buildPatternId(req.units, req.rng, req.complete)

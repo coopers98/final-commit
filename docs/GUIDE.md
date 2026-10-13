@@ -160,6 +160,11 @@ answering fast (none after a minute). A wrong answer costs nothing and
 explains why. The bonus counts for every attempt on that creature, and the
 question is asked once.
 
+If a puzzle was wrong (a bad answer key, a question that makes no sense),
+press **d** on its result to dispute it. It is kept in your save for review,
+and your answer no longer counts in the dossier, right or wrong. A bonus you
+already earned stays.
+
 The code is shown filtered, as the model sees it: only plain lines of
 code show, and any line with a string, comment or regular expression reads
 `…` (with its braces). A survey's creature has no puzzle (a survey
@@ -195,9 +200,15 @@ right (75%)`), then each category by puzzle type (Pattern ID, Bug Hunt,
 Trace) as `category  right/answered  pct%  trend`, weakest first. The trend
 (`up`, `down` or `steady`) compares your last 10 answers in that category
 with your whole record, and shows once you have 5. The one weakest category
-with at least 5 answers and a miss is marked `weakest`. The dossier only
-shows this: it does not change which puzzles you get. Esc closes it (a Close
-button on mobile).
+with at least 5 answers and a miss is marked `weakest`. A line under the
+totals counts the puzzles you disputed. Esc closes it (a Close button on
+mobile).
+
+Your weak spots come back more often. A Bug Hunt picks the kind of defect it
+injects (an off-by-one, a comparison, a join) by your record: each kind
+starts even, and one you missed every time lately comes up four times as
+often as one you always get right. Pattern ID's and Trace's categories are
+set by the code itself, so they are not weighted.
 
 ### Seal the Lattice
 
@@ -387,10 +398,8 @@ by `·`:
 
 ## Coming later
 
-- **More puzzles:** Complexity Read, Trace for Python, PHP and SQL and
-  for plan documents, and puzzles that come up
-  more often in the categories where you are weakest (the dossier shows them but does not
-  yet change which puzzles you get).
+- **More puzzles:** Complexity Read, and Trace for Python, PHP and SQL and
+  for plan documents.
 - **Companion perks** that change game odds (never your code).
 - **Design Probe and Deep Expedition** puzzles for the rarest creatures.
 

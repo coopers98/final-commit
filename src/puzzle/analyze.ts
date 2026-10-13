@@ -20,6 +20,9 @@ export function analyzeView(puzzle: Puzzle, heading: string, tier: Tier): Analyz
   }
 }
 
+/** SPEC 8.1 rule 4: added to the result once the puzzle is disputed. */
+export const DISPUTED_LINE = 'Disputed: kept for review, and this answer no longer counts in the dossier.'
+
 /** The lines after an answer: right or not, the bonus, and why. */
 export function resultLines(puzzle: Puzzle, analysis: NonNullable<PendingEncounter['analysis']>): string[] {
   if (analysis.isSkipped) return ['Skipped.']

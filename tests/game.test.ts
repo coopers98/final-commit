@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { GENERATION } from '../src/config'
 import {
-  answerPuzzle, attemptContainment, cellsOf, completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCell, parseCraftCell, parseEpicKey,
+  answerPuzzle, attemptContainment, disputePuzzle, cellsOf, completeEpic, completeMission, craftCell, forceEncounter, onBranch, openItems, parseCell, parseCraftCell, parseEpicKey,
   queueTarget, recordBash, recordClosure, recordTactical, reopenMission, setCompanion, startEpic, startMission,
 } from '../src/game'
 import { classifyBash } from '../src/detect/git'
@@ -11,7 +11,7 @@ import { createRng } from '../src/rng'
 import { migrate } from '../src/store/migrate'
 import { createMemoryStore, createRepo } from '../src/store/repo'
 import type { Complete } from '../src/world/generate'
-import { DOSSIER, ENCOUNTER } from '../src/config'
+import { DOSSIER, ENCOUNTER, PUZZLE } from '../src/config'
 
 const offline: Complete = async () => ({ ok: false, reason: 'offline' })
 
@@ -542,6 +542,47 @@ test('a puzzle answer is kept with the encounter once, counts in the accuracy re
   // A second answer changes nothing.
   expect(await answerPuzzle({ ...deps, choice: 0, elapsedMs: 0 })).toEqual(first)
   expect(await repo.puzzleStats()).toEqual([{ category: 'off by one', type: 'bug-hunt', attempts: 1, correct: 1, lastSeen: 0, recent: [true] }])
+})
+
+test('a disputed puzzle is kept for review, its answer leaves the accuracy record, and its bonus stays', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  // Not before it is answered, nor once skipped.
+  await repo.savePending({ ...(await repo.pending())!, puzzle: PUZZLE_FIXTURE })
+  expect(await disputePuzzle({ ...deps, now: 5 })).toBe(false)
+  // Two earlier answers in the category, then this one, right.
+  await repo.savePuzzleStats([{ category: 'off by one', type: 'bug-hunt', attempts: 2, correct: 0, lastSeen: 0, recent: [false, false] }])
+  const analysis = await answerPuzzle({ ...deps, choice: 2, elapsedMs: 0 })
+  expect(await disputePuzzle({ ...deps, now: 5 })).toBe(true)
+  expect(await repo.puzzleStats()).toEqual([{ category: 'off by one', type: 'bug-hunt', attempts: 2, correct: 0, lastSeen: 0, recent: [false, false] }])
+  const pending = (await repo.pending())!
+  expect(pending.analysis).toEqual({ ...analysis!, isDisputed: true })
+  const [kept] = await repo.puzzleDisputes()
+  expect(kept).toEqual({ ...PUZZLE_FIXTURE, at: 5, wasCorrect: true })
+  // Once per puzzle.
+  expect(await disputePuzzle({ ...deps, now: 6 })).toBe(false)
+  expect((await repo.puzzleDisputes()).length).toBe(1)
+})
+
+test('a dispute of a category\'s only answer removes the category; a skipped puzzle cannot be disputed; the review list is capped', async () => {
+  const { repo, deps } = await withEpic()
+  await forceEncounter(deps)
+  await repo.savePending({ ...(await repo.pending())!, puzzle: PUZZLE_FIXTURE })
+  await answerPuzzle({ ...deps, choice: 0, elapsedMs: 0 })
+  expect(await disputePuzzle(deps)).toBe(true)
+  expect(await repo.puzzleStats()).toEqual([])
+  await repo.savePending({ ...(await repo.pending())!, analysis: undefined })
+  await answerPuzzle({ ...deps, choice: undefined, elapsedMs: 0 })
+  expect(await disputePuzzle(deps)).toBe(false)
+  const old = Array.from({ length: PUZZLE.maxDisputes }, (_, i) => ({ ...PUZZLE_FIXTURE, at: i, wasCorrect: false }))
+  await repo.savePuzzleDisputes(old)
+  await repo.savePending({ ...(await repo.pending())!, analysis: undefined })
+  await answerPuzzle({ ...deps, choice: 2, elapsedMs: 0 })
+  await disputePuzzle({ ...deps, now: 999 })
+  const list = await repo.puzzleDisputes()
+  expect(list.length).toBe(PUZZLE.maxDisputes)
+  expect(list[0]!.at).toBe(1)
+  expect(list.at(-1)!.at).toBe(999)
 })
 
 test('the accuracy record keeps the last answers per category, newest last, up to the window', async () => {

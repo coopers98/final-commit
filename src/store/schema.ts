@@ -94,12 +94,15 @@ export type PendingEncounter = {
   missionKey?: string
   /** SPEC 8: its Analyze Specimen puzzle once prepared; null when none could be made. */
   puzzle?: Puzzle | null
-  /** The puzzle's outcome, kept for every attempt on this creature. */
-  analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number }
+  /** The puzzle's outcome, kept for every attempt on this creature; `isDisputed` once the player disputed it (SPEC 8.1 rule 4). */
+  analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number; isDisputed?: boolean }
 }
 
 /** SPEC 8.2: accuracy per puzzle category. `lastSeen` is epoch milliseconds; `recent` is the last answers, newest last (right is true). */
 export type PuzzleStat = { category: string; type: string; attempts: number; correct: number; lastSeen: number; recent: boolean[] }
+
+/** SPEC 8.1 rule 4: a puzzle the player disputed, kept for review (its code is the filtered code it showed; no mission key, which is work content). */
+export type PuzzleDispute = Puzzle & { at: number; wasCorrect: boolean }
 
 export type Inventory = Record<Exclude<Cell, 'standard'>, number> & { flora: Record<string, number> }
 

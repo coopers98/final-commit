@@ -170,14 +170,27 @@ function bodyLines(unit: Unit): number[] {
 /** The mutations for `unit`'s language that can change `line`. */
 const mutationsOf = (unit: Unit, line: string) => (MUTATIONS_BY_LANG[unit.lang] ?? []).filter(m => (m.match ? mutationSites(m, line).length > 0 : line.includes(m.from)))
 
-/** A Bug Hunt from one of `units`, or undefined when none has a line to change and enough lines to choose from. */
-export function buildBugHunt(units: readonly Unit[], rng: Rng): Puzzle | undefined {
+/**
+ * A Bug Hunt from one of `units`, or undefined when none has a line to change
+ * and enough lines to choose from. With `weightOf` (SPEC 8.2, D4: a
+ * category's weight, from the accuracy record) the defect's category is
+ * picked first, in proportion to its weight among those these units can
+ * take; without it, a unit, a line and a defect are picked evenly.
+ */
+export function buildBugHunt(units: readonly Unit[], rng: Rng, weightOf?: (category: string) => number): Puzzle | undefined {
   const fit = units.filter(u => bodyLines(u).length >= PUZZLE.choices && bodyLines(u).some(i => mutationsOf(u, u.lines[i]!).length > 0))
   if (fit.length === 0) return undefined
-  const unit = rng.pick(fit)
+  let category: string | undefined
+  if (weightOf) {
+    const weights: Record<string, number> = {}
+    for (const u of fit) for (const i of bodyLines(u)) for (const m of mutationsOf(u, u.lines[i]!)) weights[m.category] ??= Math.max(0, weightOf(m.category))
+    if (Object.values(weights).some(w => w > 0)) category = rng.weighted(weights)
+  }
+  const ofCategory = (u: Unit, line: string) => mutationsOf(u, line).filter(m => category === undefined || m.category === category)
+  const unit = rng.pick(fit.filter(u => bodyLines(u).some(i => ofCategory(u, u.lines[i]!).length > 0)))
   const lines = bodyLines(unit)
-  const target = rng.pick(lines.filter(i => mutationsOf(unit, unit.lines[i]!).length > 0))
-  const mutation = rng.pick(mutationsOf(unit, unit.lines[target]!))
+  const target = rng.pick(lines.filter(i => ofCategory(unit, unit.lines[i]!).length > 0))
+  const mutation = rng.pick(ofCategory(unit, unit.lines[target]!))
   const original = unit.lines[target]!
   // One occurrence, chosen at random when the line has several.
   const site = rng.pick(mutationSites(mutation, original))

@@ -319,12 +319,12 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 1. **Trace:** run the snippet with the language's runner (8.3) via `$.process`; the displayed answer must match the real output. Where no runner can, the type falls back (above).
 2. **Bug Hunt:** the injected bug is a known diff; the answer key is mechanical.
 3. **Pattern ID / Design Probe:** second independent model call must agree; disagreement discards the puzzle.
-4. **Dispute key** logs bad puzzles to the store for review.
+4. **Dispute key** logs bad puzzles to the store for review. Built (8.4).
 
 ### 8.2 Training layer
 
 - Accuracy tracked per category (sliding window, heaps, two pointers, N+1, etc.).
-- Weak categories resurface more often (spaced repetition). Not built: `/dossier` shows the weak spots, but which puzzles are generated is unchanged (8.4 "Not yet", D4).
+- Weak categories resurface more often (spaced repetition). Built for Bug Hunt, the one type whose category the game picks (8.4, D4).
 - `/dossier` pane shows accuracy by category and trend. Built (8.4).
 
 ### 8.3 Adapters
@@ -351,10 +351,12 @@ A tier whose type the adapter cannot make falls back to the nearest type below i
 - **Settings:** `puzzles` is `on` (default), `local` (Trace and Bug Hunt: nothing is sent to a model) or `off`; `puzzleModel` is the model for Pattern ID, Sonnet by default, two calls per puzzle. Code is sent only with `puzzles` on **and** `privacyMode` other than `strict` (`sendsCode`, `src/runtime.ts`): the code filter keeps identifiers and type names, which strict mode exists to keep back, so under strict (the default) puzzles are local (Trace and Bug Hunt).
 - **Safety (security review of FC-15):** paths come only from a diff's file headers, must be relative with no `..`, and must be regular files in `git diff --raw` (no symlinks or submodules); git's output format is pinned (`--no-textconv`, plain prefixes, no renames). The code filter shows only lines it can prove are plain code (5.3), after three security reviews found the earlier literal-blanking scanner could be desynced; every reported counterexample and a seeded fuzz are tests. A file whose filtered line count differs is skipped; git runs with `core.fsmonitor=false` (a `clean` filter assigned in `.gitattributes` still runs on `git diff`, as it would for any git command there); control characters are removed from code, and model text with control characters or line breaks is refused; units with JSX or a code fence are skipped; the check call is told the question is data.
 - **Accuracy:** each answer (not a skip) counts in `fc:puzzle-stats` by category and type, and the last 10 answers per category are kept (`recent`, newest last).
+- **Spaced repetition (D4):** the puzzle being prepared is handed the accuracy record. Bug Hunt picks its defect's category first, in proportion to its weight among the categories the units can take: 1 (an even split), plus `PUZZLE.weakWeight` (3) times the category's miss rate over its recent Bug Hunt answers, so one missed every time lately comes up 4 times as often as one never answered or always right; then a unit, a line and a defect of that category, evenly. With no weight anywhere (no record handed in), the pick is even by unit, line and defect, as before. Pattern ID's category is the model's, and Trace has one, so neither is weighted.
+- **Dispute key (8.1 rule 4):** on an answered puzzle's result, `d` (a Dispute button on mobile) disputes it, once, and adds `Disputed: kept for review, and this answer no longer counts in the dossier.` The puzzle as shown (its filtered code, question, choices, key and explanation), the time and whether the answer was right go into `fc:puzzle-disputes` (the last 50, `PUZZLE.maxDisputes`; not the mission's key, which is work content); the answer is taken back out of `fc:puzzle-stats` (attempts, right and its newest `recent` entry; a category left with none is removed; when the window was full, the oldest answer that recording it dropped is not restored, nor `lastSeen`), so it neither counts against the category nor weights it; a bonus earned stays; the encounter's analysis is marked `isDisputed`. A skipped puzzle cannot be disputed. A second key while an answer or a dispute is being saved (a repeat, a double tap) does nothing, and disputing draws no roll. Any answer can be disputed, so a player can keep misses out of the record; it is their own dossier. The dossier counts them under the totals (`3 disputed, kept for review`), and `/dossier`'s text adds `, 3 disputed`.
 - **Dossier (FC-21):** `/dossier` opens a pane "Dossier" (`src/bridge/dossier.ts`, `dossier-pane.tsx`). First a totals line (`12 answered, 9 right (75%)`), then a group per puzzle type (Pattern ID, Bug Hunt, Trace), each category as `category  right/answered  pct%  trend`. Within a group the lowest accuracy comes first, ties by more answers then name. The trend reads `up`, `down` or `steady` by comparing the accuracy of the last answers with the overall accuracy (a gap of at least 10 points; at least 5 recent answers, else none). The one weakest category pane-wide, with at least 5 answers and a miss, is marked `weakest`. Rows are cut to the pane's width on the category, so the numbers stay whole at 40 columns; the empty state wraps (`No puzzles answered yet. They come before containment.`). Esc closes (the state is cleared with it); mobile has a Close button. The command's text, which the model reads, is only `Opened the dossier (12 answered).`
-- **Not yet:** Complexity Read, the other runners (`python3`, `php`, `sqlite3`), a JavaScript adapter, Trace for Python, PHP, SQL and plan documents (a decision followed through the document), a fresh temporary folder per run (the system one is used; node's permission model denies file access anyway), theming on the epic, the dispute key, and spaced repetition in picking puzzles: `/dossier` only shows the weakest categories, and which puzzle a creature gets is not weighted by them (D4 stays open).
+- **Not yet:** Complexity Read, the other runners (`python3`, `php`, `sqlite3`), a JavaScript adapter, Trace for Python, PHP, SQL and plan documents (a decision followed through the document), a fresh temporary folder per run (the system one is used; node's permission model denies file access anyway), theming on the epic, and weighting by category for Pattern ID (the model names its category) and Trace (one category).
 
-**Open decisions:** D4 puzzle balance (weak spots vs strengths vs even); D5 Deep Expedition on demand via `/expedition` or Anomaly-only.
+**Open decisions:** D5 Deep Expedition on demand via `/expedition` or Anomaly-only.
 
 ---
 
@@ -449,13 +451,14 @@ type PendingEncounter = { id: string; systemId: string; speciesId: string; tier:
                       quality: number; attempts: number; createdAt: number;
                       missionKey?: string /* the mission that rolled it */;
                       puzzle?: Puzzle | null /* 8; null when none could be made */;
-                      analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number } }
+                      analysis?: { isSkipped: boolean; isCorrect: boolean; bonus: number; isDisputed?: boolean } }
+type PuzzleDispute = Puzzle & { at: number; wasCorrect: boolean }  // fc:puzzle-disputes, newest last, at most 50 (8.1 rule 4)
 type PuzzleStat   = { category: string; type: string; attempts: number; correct: number; lastSeen: number; recent: boolean[] }  // recent: last answers, newest last, at most 10  // fc:puzzle-stats
 ```
 
 **Budget:** ~10 to 20 KB per system. Archive policy: surveyed systems older than 12 months compact to catalog-only (art dropped except contained species).
 
-**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle. Schema 8 adds companion XP (9.3): a reward may record `companionXp`, which older rewards lack (no completion gave XP before); each specimen's `level` is set from its `xp`, and its `stage` raised to that level's stage if lower (every specimen was level 1, XP 0, stage 0 before, which stays valid). Schema 9 adds `PuzzleStat.recent` (8.4); older stats start with none, so they show no trend until answers come in.
+**Migrations:** `schemaVersion` bump runs a migration in `session.start` before anything reads. Schema 2 added `Mission.lint` (null on older missions) and restamped every value. Schema 3 keeps sync state per work source (`fc:sync:<name>`). It drops the single `fc:sync` record, which no source owned, and restamps every value. Schema 4 records what each completed mission gave (`Mission.reward`) for `/mission reopen`; older log entries get it by the rules that applied (an administrative closure, with no time and no work, gave nothing; any other completion counted, with a Reinforced Cell when its tests were green). This is a guess for one kind: a tracker's Done on the active mission with no work attached (4.3) gave nothing but is read as counted. Tracker sync shipped days before schema 4 and before any release, so few saves can hold one. Schema 5 adds the Stasis Cells and flora a completion gave to `Mission.reward` (none on older entries: no mission gave either before). Schema 6 gives each sync record a `waiting` list, empty at first: a record held back at an older `lastSync` reads its waiting changes again at its next sync. Schema 7 lets a waiting encounter carry its puzzle (`missionKey`, `puzzle`, `analysis`, all optional) and adds the puzzle accuracy record; it only restamps, so an encounter waiting from before gets no puzzle. Schema 8 adds companion XP (9.3): a reward may record `companionXp`, which older rewards lack (no completion gave XP before); each specimen's `level` is set from its `xp`, and its `stage` raised to that level's stage if lower (every specimen was level 1, XP 0, stage 0 before, which stays valid). Schema 9 adds `PuzzleStat.recent` (8.4); older stats start with none, so they show no trend until answers come in. Schema 10 (FC-23) adds `fc:puzzle-disputes` and the optional `analysis.isDisputed`; nothing stored changes shape, so values are only restamped.
 
 ---
 
@@ -527,8 +530,8 @@ The "First Diffling" slice is implemented, with flora harvesting, all four cells
 ### v3: Puzzles
 - Content adapters and runners (8.3): PHP, TypeScript/JavaScript, Python, SQL, Markdown
 - Pattern ID, Complexity Read, Trace, Bug Hunt
-- Answer verification, dispute key
-- Dossier pane (built, 8.4); spaced repetition (not built)
+- Answer verification, dispute key (built, 8.4)
+- Dossier pane and spaced repetition (built, 8.4)
 
 ### v4: Depth
 - Companion XP, levels and evolution (done early, 9.3); companion perks
@@ -544,7 +547,7 @@ The "First Diffling" slice is implemented, with flora harvesting, all four cells
 | D1 | Closed systems: revisitable or locked? | Revisitable at 25% rate |
 | D2 | Several work sources: one save or separate saves? | Decided: one save; several sources at once, keys namespaced per source (4.4) |
 | D3 | Atlassian MCP connector or API token? | Decided: both; MCP when a connector is attached, REST otherwise |
-| D4 | Puzzle balance | Even split, weighted toward weakest categories by spaced repetition |
+| D4 | Puzzle balance | Decided: even split, weighted toward weakest categories by spaced repetition (8.4) |
 | D5 | Deep Expedition: on demand or Anomaly-only? | Both: `/expedition` on demand, plus Anomaly trigger |
 | D6 | Epics contributed to but not owned: chart a system? | Yes, if you have at least one completed child issue |
 | D7 | Audio on headless hosts | Assume none: visual alerts are primary |

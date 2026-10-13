@@ -151,7 +151,7 @@ test('schema 8 to 9: puzzle stats gain an empty recent list, everything is resta
   const repo = createRepo(store)
   expect(await repo.puzzleStats()).toEqual([{ ...old, recent: [] }, { ...old, category: 'loops', recent: [true] }])
   expect((await repo.inventory()).reinforced).toBe(1)
-  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(9)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })
 
 test('schema 5 to 6: sync records gain an empty waiting list and keep where they left off', async () => {
@@ -179,5 +179,19 @@ test('schema 4 to 5: logged rewards gain no Stasis Cells and no flora; the activ
   expect((await repo.activeMission())?.issueKey).toBe('NOVA-3')
   expect((await repo.activeMission())?.reward).toBe(undefined)
   expect((await repo.inventory()).reinforced).toBe(2)
+  for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
+})
+
+test('schema 9 to 10: values are restamped, and a waiting encounter\'s answered puzzle keeps its analysis', async () => {
+  const store = createMemoryStore()
+  await store.set(KEYS.meta, { schemaVersion: 9, createdAt: 1, firstTrackedAt: 1, lastEncounterAt: 1, completedMissions: 1, activeEpicKey: null, companionId: null, encountersToday: { day: '', count: 0 } })
+  const pending = { id: 'e', systemId: 's', speciesId: 'x', tier: 'rare', quality: 0.5, attempts: 0, createdAt: 1, analysis: { isSkipped: false, isCorrect: true, bonus: 0.2 } }
+  await store.set(KEYS.pending, { schemaVersion: 9, ...pending })
+  await store.set(KEYS.puzzleStats, { schemaVersion: 9, items: [{ category: 'loops', type: 'bug-hunt', attempts: 1, correct: 1, lastSeen: 0, recent: [true] }] })
+  await migrate(store, 9)
+  const repo = createRepo(store)
+  expect(await repo.pending()).toEqual(pending as never)
+  expect((await repo.puzzleStats()).length).toBe(1)
+  expect(await repo.puzzleDisputes()).toEqual([])
   for (const value of Object.values(store.dump())) expect((value as { schemaVersion: number }).schemaVersion).toBe(STORE.schemaVersion)
 })

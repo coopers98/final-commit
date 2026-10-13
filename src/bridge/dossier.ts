@@ -45,14 +45,18 @@ const cut = (text: string, width: number) => {
 const WEAKEST = 'weakest'
 const GAP = '  '
 
+/** SPEC 8.1 rule 4: how many puzzles were disputed, under the totals. */
+export const disputedLine = (n: number) => `${n} disputed, kept for review`
+
 /**
  * The rows for `width` columns: totals, then a group per puzzle type, each
  * category weakest first as `category  right/answered  pct%  trend`. The
  * category is the part cut to fit; the numbers stay whole (40 columns minimum).
  */
-export function dossierRows(stats: readonly DossierStat[], width: number): DossierRow[] {
+export function dossierRows(stats: readonly DossierStat[], width: number, disputed = 0): DossierRow[] {
   const used = stats.filter(s => s.attempts > 0)
-  if (used.length === 0) return wrap(EMPTY_DOSSIER, width).map(text => ({ text }))
+  const disputes = disputed > 0 ? wrap(disputedLine(disputed), width).map(text => ({ text })) : []
+  if (used.length === 0) return [...wrap(EMPTY_DOSSIER, width).map(text => ({ text })), ...disputes]
   const weakest = weakestOf(used)
   const countW = Math.max(...used.map(s => `${s.correct}/${s.attempts}`.length))
   const trendW = Math.max(...used.map(s => trendOf(s)?.length ?? 0))
@@ -67,7 +71,7 @@ export function dossierRows(stats: readonly DossierStat[], width: number): Dossi
     const ib = DOSSIER.typeOrder.indexOf(b)
     return (ia < 0 ? Infinity : ia) - (ib < 0 ? Infinity : ib) || a.localeCompare(b)
   })
-  const rows: DossierRow[] = [{ text: cut(totalsLine(used), width), style: 'bold' }]
+  const rows: DossierRow[] = [{ text: cut(totalsLine(used), width), style: 'bold' }, ...disputes]
   for (const type of types) {
     rows.push({ text: '' }, { text: cut(DOSSIER.typeLabels[type] ?? type, width), style: 'bold' })
     for (const s of used.filter(u => u.type === type).sort(weakestFirst)) {

@@ -124,6 +124,17 @@ const MIGRATIONS: Record<number, (store: StoreLike) => Promise<void>> = {
     }
     await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 9 })
   },
+  // 9 -> 10: disputed puzzles (`fc:puzzle-disputes`, SPEC 8.1 rule 4) and
+  // `analysis.isDisputed` are new and optional, so nothing stored changes
+  // shape: values are only restamped.
+  9: async store => {
+    for (const key of await store.keys()) {
+      if (!key.startsWith(STORE.prefix) || key === KEYS.meta) continue
+      const value = await store.get(key)
+      if (isObject(value) && value.schemaVersion === 9) await store.set(key, { ...value, schemaVersion: 10 })
+    }
+    await store.set(KEYS.meta, { ...((await store.get(KEYS.meta)) as object), schemaVersion: 10 })
+  },
 }
 
 /** A specimen's level from its XP, and a stage at least the one that level reached. */

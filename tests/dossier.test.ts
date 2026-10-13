@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { DOSSIER } from '../src/config'
-import { EMPTY_DOSSIER, dossierRows, totalsLine, trendOf, weakestOf } from '../src/bridge/dossier'
+import { EMPTY_DOSSIER, disputedLine, dossierRows, totalsLine, trendOf, weakestOf } from '../src/bridge/dossier'
 import type { DossierStat } from '../types'
 
 const stat = (category: string, type: string, correct: number, attempts: number, recent: boolean[] = []): DossierStat => ({ category, type, attempts, correct, recent })
@@ -80,4 +80,10 @@ test('at 40 columns every row fits, the category is cut and the numbers stay who
   expect(row).toContain('…')
   expect(row).toMatch(/3\/12 +25% +up +weakest$/)
   expect(rows.find(r => r.startsWith('short'))).toMatch(/9\/10 +90%/)
+})
+
+test('disputed puzzles are counted under the totals, and with an empty record too', () => {
+  expect(text(dossierRows([stat('a', 'trace', 1, 2)], 80, 3)).slice(0, 2)).toEqual(['2 answered, 1 right (50%)', disputedLine(3)])
+  expect(text(dossierRows([], 80, 1))).toEqual([EMPTY_DOSSIER, '1 disputed, kept for review'])
+  expect(text(dossierRows([], 80, 0))).toEqual([EMPTY_DOSSIER])
 })

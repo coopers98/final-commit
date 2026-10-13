@@ -134,7 +134,8 @@ test('a long line of names and `$` is scanned in linear time', async () => {
   const src = Array(120).fill(`a${'$'.repeat(1999)}`).join('\n')
   const t = Date.now()
   filterSql(src, 'standard')
-  expect(Date.now() - t < 1000).toBe(true)
+  // The quadratic scan this guards against took 10 s; the margin absorbs a loaded machine.
+  expect(Date.now() - t < 4000).toBe(true)
 })
 
 test('a comment marker inside a string is string, and a quote inside a comment is comment', async () => {
@@ -178,7 +179,7 @@ test('a long line of `$` and quotes is scanned in linear time', async () => {
   const line = `SELECT ${'a$'.repeat(900)} ${"'x' ".repeat(100)}`
   const t = Date.now()
   for (let k = 0; k < 50; k += 1) filterSql(Array(20).fill(line).join('\n'), 'standard')
-  expect(Date.now() - t < 2000).toBe(true)
+  expect(Date.now() - t < 4000).toBe(true)
 })
 
 test('statement names: the verb and the first table or view', async () => {

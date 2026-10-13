@@ -1,7 +1,7 @@
 import type { CellCounts, ReportView } from '../types'
 import { unresolvedSignals } from './bridge/scan'
 import { grantXp, missionXp, takeXp } from './companion'
-import { CELLS, COMPANION_XP, CRAFT, DOSSIER, ENCOUNTER, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
+import { CELLS, COMPANION_XP, CRAFT, DOSSIER, ENCOUNTER, PUZZLE, REWARDS, SINGULARITY_ACTIVATION, TIER_SPECS, type Cell, type Tier } from './config'
 import { resolveAttempt, type AttemptOutcome } from './contain/resolve'
 import { puzzleBonus } from './puzzle/puzzle'
 import { lintVerdict, testRunPassed, type BashSignals } from './detect/git'
@@ -650,6 +650,34 @@ export async function answerPuzzle(deps: GameDeps & { choice: number | undefined
     await repo.savePuzzleStats([...stats.filter(s => s !== was), next])
   }
   return analysis
+}
+
+/**
+ * SPEC 8.1 rule 4: the player disputes the answered puzzle of the waiting
+ * encounter. It is kept for review (the last `PUZZLE.maxDisputes`), and its
+ * answer is taken back out of the accuracy record, so a bad puzzle neither
+ * counts against a category nor makes it come up more often. The bonus a
+ * right answer earned stays. Once per puzzle; a skipped one cannot be.
+ */
+export async function disputePuzzle(deps: Pick<GameDeps, 'repo' | 'now'>): Promise<boolean> {
+  const { repo, now } = deps
+  const pending = await repo.pending()
+  const puzzle = pending?.puzzle
+  const analysis = pending?.analysis
+  if (!pending || !puzzle || !analysis || analysis.isSkipped || analysis.isDisputed) return false
+  await repo.savePending({ ...pending, analysis: { ...analysis, isDisputed: true } })
+  const disputes = await repo.puzzleDisputes()
+  const entry = { ...puzzle, at: now, wasCorrect: analysis.isCorrect }
+  await repo.savePuzzleDisputes([...disputes, entry].slice(-PUZZLE.maxDisputes))
+  const stats = await repo.puzzleStats()
+  const was = stats.find(s => s.category === puzzle.category && s.type === puzzle.type)
+  if (was) {
+    // The answer being taken back is the category's newest: it was recorded as this puzzle was answered.
+    // When the window was full, recording it dropped the oldest, which is not restored (nor `lastSeen`).
+    const next = { ...was, attempts: was.attempts - 1, correct: was.correct - (analysis.isCorrect ? 1 : 0), recent: was.recent.slice(0, -1) }
+    await repo.savePuzzleStats(next.attempts > 0 ? stats.map(s => (s === was ? next : s)) : stats.filter(s => s !== was))
+  }
+  return true
 }
 
 export async function setCompanion(deps: GameDeps & { specimenId: string }): Promise<Outcome> {

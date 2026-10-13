@@ -145,6 +145,8 @@ declare module 'claude-code' {
       bay: BayRow[]
       /** The Dossier pane's stats while it is open; null when closed. */
       dossier: DossierStat[] | null
+      /** SPEC 8.1 rule 4: puzzles disputed, shown in the Dossier pane while it is open. */
+      dossierDisputed: number
     }
   }
 }

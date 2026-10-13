@@ -1,6 +1,6 @@
 import { STORE, TIERS, type Tier } from '../config'
 import type {
-  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, PlansState, PuzzleStat, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
+  CatalogEntry, Calibration, CrewReport, Inventory, LogEntry, Mission, PendingEncounter, PlansState, PuzzleDispute, PuzzleStat, SaveMeta, Specimen, StarSystem, SyncState, Versioned,
 } from './schema'
 
 export type StoreLike = {
@@ -31,6 +31,7 @@ export const KEYS = {
   crewReports: `${p}crew-reports`,
   resolved: `${p}resolved`,
   puzzleStats: `${p}puzzle-stats`,
+  puzzleDisputes: `${p}puzzle-disputes`,
 } as const
 
 export function createMemoryStore(): StoreLike & { dump(): Record<string, unknown> } {
@@ -135,6 +136,9 @@ export function createRepo(store: StoreLike, log: (line: string) => void = () =>
     /** SPEC 8.2: puzzle accuracy per category. */
     puzzleStats: () => readList<PuzzleStat>(KEYS.puzzleStats, v => isObject(v) && typeof v.category === 'string' && typeof v.attempts === 'number'),
     savePuzzleStats: (stats: PuzzleStat[]) => writeList(KEYS.puzzleStats, stats),
+    /** SPEC 8.1 rule 4: disputed puzzles, newest last. */
+    puzzleDisputes: () => readList<PuzzleDispute>(KEYS.puzzleDisputes, v => isObject(v) && typeof v.question === 'string' && typeof v.at === 'number'),
+    savePuzzleDisputes: (items: PuzzleDispute[]) => writeList(KEYS.puzzleDisputes, items),
 
     pending: () => readOptional<PendingEncounter>(KEYS.pending, v => typeof v.id === 'string' && typeof v.speciesId === 'string' && isTier(v.tier)),
     savePending: (e: PendingEncounter) => store.set(KEYS.pending, stamp(e)),

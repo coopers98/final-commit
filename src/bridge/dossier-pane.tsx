@@ -6,6 +6,7 @@ import { dossierRows } from './dossier'
 
 export const DOSSIER_PANE = 'fc-dossier'
 const stats = atom({ plugin: 'final-commit', key: 'dossier' } as const, null as DossierStat[] | null)
+const disputed = atom({ plugin: 'final-commit', key: 'dossierDisputed' } as const, 0)
 const ready = atom({ plugin: 'final-commit', key: 'ready' } as const, false)
 
 function repoOf($: EngineInterface): Repo {
@@ -18,10 +19,13 @@ function repoOf($: EngineInterface): Repo {
 /** `/dossier`: puzzle accuracy by category, in a pane so category names stay out of the transcript the model reads. */
 async function dossier($: EngineInterface): Promise<string> {
   if (!(await read($, ready))) return 'The Final Commit could not load its save; see the debug log (claude --debug).'
-  const drawn = (await repoOf($).puzzleStats()).map(({ category, type, attempts, correct, recent }) => ({ category, type, attempts, correct, recent }))
+  const repo = repoOf($)
+  const drawn = (await repo.puzzleStats()).map(({ category, type, attempts, correct, recent }) => ({ category, type, attempts, correct, recent }))
+  const count = (await repo.puzzleDisputes()).length
   await update($, stats, () => drawn)
+  await update($, disputed, () => count)
   await $.ui.open({ id: DOSSIER_PANE, title: 'Dossier', focus: true, closeOnEscape: true })
-  return `Opened the dossier (${drawn.reduce((n, s) => n + s.attempts, 0)} answered).`
+  return `Opened the dossier (${drawn.reduce((n, s) => n + s.attempts, 0)} answered${count > 0 ? `, ${count} disputed` : ''}).`
 }
 
 async function close($: EngineInterface) {
@@ -44,7 +48,7 @@ export function wireDossier(on: On): void {
     if (!list) return <Text dimColor>Nothing to show.</Text>
     return (
       <Box flexDirection="column">
-        {dossierRows(list, e.props.bodyColumns).map(r => (
+        {dossierRows(list, e.props.bodyColumns, await read($, disputed)).map(r => (
           <Text bold={r.style === 'bold'}>{r.text === '' ? ' ' : r.text}</Text>
         ))}
         <Text dimColor>Esc closes.</Text>

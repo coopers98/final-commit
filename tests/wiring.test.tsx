@@ -1442,6 +1442,41 @@ test('with puzzles local, a mission\'s changed code becomes a Bug Hunt before co
   expect((await run($, 'contain')).text).toBe('Opened containment.')
 })
 
+test('d on the result disputes the puzzle: kept for review, out of the record, and the dossier counts it', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  await pane.input({ key: 'analyze', text: '1', kind: 'change' })
+  const texts = async () => (await pane.findAll({ type: 'Text' })).map(t => t.text).join(' ')
+  expect(await texts()).toContain('d: dispute this puzzle')
+  await pane.input({ key: 'analyzed', text: 'd', kind: 'change' })
+  expect(await texts()).toContain('Disputed: kept for review')
+  expect(await texts()).not.toContain('d: dispute this puzzle')
+  // A second d does nothing more.
+  await pane.input({ key: 'analyzed', text: 'dd', kind: 'change' })
+  expect((await texts()).split('Disputed:').length).toBe(2)
+  await pane.input({ key: 'analyzed', text: '', kind: 'submit' })
+  expect(await texts()).toContain('Space: seal')
+  await pane.unmount()
+  expect((await run($, 'dossier')).text).toBe('Opened the dossier (0 answered, 1 disputed).')
+})
+
+test('two keys at once (a repeat or a double tap) answer once and dispute once', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  // Not awaited one by one: both saves start before either is written.
+  await Promise.all([pane.input({ key: 'analyze', text: '1', kind: 'change' }), pane.input({ key: 'analyze', text: '12', kind: 'change' })])
+  await Promise.all([pane.input({ key: 'analyzed', text: 'd', kind: 'change' }), pane.input({ key: 'analyzed', text: 'dd', kind: 'change' })])
+  await pane.unmount()
+  // The one answer was taken back by the one dispute: none left, one kept for review.
+  expect((await run($, 'dossier')).text).toBe('Opened the dossier (0 answered, 1 disputed).')
+})
+
 test('s skips the puzzle straight to the lattice', { options: { puzzles: 'local' } }, async ($, on) => {
   const w = world(on, { git: missionGit })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
