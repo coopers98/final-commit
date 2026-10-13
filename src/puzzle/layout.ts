@@ -90,7 +90,8 @@ export function puzzleLayout(view: AnalyzeView, hints: readonly string[], size: 
   if (size.rows === undefined) {
     return { isColumns, codeWidth, panel: panelLines(view, hints, panelWidth), code: codeWindow(wrapped.rows, wrapped.rows.length, 0), start }
   }
-  const panel = panelLines(view, hints, panelWidth, isColumns ? size.rows : size.rows - PUZZLE_VIEW.minCodeRows)
+  // Only the two-column panel cuts; stacked, the window takes the rows left (at least minCodeRows) and the body scrolls past that.
+  const panel = panelLines(view, hints, panelWidth, isColumns ? size.rows : undefined)
   const height = isColumns ? size.rows : Math.max(PUZZLE_VIEW.minCodeRows, size.rows - panel.length - PUZZLE_VIEW.inputRows)
   return { isColumns, codeWidth, panel, code: codeWindow(wrapped.rows, height, view.offset ?? start), start }
 }
@@ -117,8 +118,8 @@ export function scrollKey(c: string): number | 'page' | '-page' | undefined {
   return c === 'j' ? 1 : c === 'k' ? -1 : c === ' ' ? 'page' : c === 'b' ? '-page' : undefined
 }
 
-/** Whether a wheel at `pointer` (cells from the body's first showing row) is over the code window. */
-export function isOverCode(at: { isColumns: boolean; codeColumns: number; codeRows: number; bodyOffset: number }, pointer: { column: number; row: number }): boolean {
+/** Whether a wheel at `pointer` (cells from the body's first showing row) moves the code: the code window's rows when stacked, the whole body in two columns. */
+export function isOverCode(at: { isColumns: boolean; codeRows: number; bodyOffset: number }, pointer: { column: number; row: number }): boolean {
   const row = pointer.row + at.bodyOffset
-  return row >= 0 && row < at.codeRows && pointer.column >= 0 && (!at.isColumns || pointer.column < at.codeColumns)
+  return pointer.column >= 0 && row >= 0 && (at.isColumns || row < at.codeRows)
 }

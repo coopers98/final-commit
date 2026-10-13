@@ -100,11 +100,20 @@ test('j and k move a row, space and b a page; other keys are not scroll keys', a
   expect(['j', 'k', ' ', 'b', 'd', 's', '1'].map(scrollKey)).toEqual([1, -1, 'page', '-page', undefined, undefined, undefined])
 })
 
-test('the wheel is over the code inside its window only', async () => {
-  const cols = { isColumns: true, codeColumns: 49, codeRows: 20, bodyOffset: 0 }
+test('the wheel moves the code over the whole body in two columns, over the window rows when stacked', async () => {
+  const cols = { isColumns: true, codeRows: 20, bodyOffset: 0 }
   expect(isOverCode(cols, { column: 10, row: 5 })).toBe(true)
-  expect(isOverCode(cols, { column: 60, row: 5 })).toBe(false)
-  const stacked = { isColumns: false, codeColumns: 40, codeRows: 4, bodyOffset: 2 }
+  expect(isOverCode(cols, { column: 60, row: 5 })).toBe(true)
+  const stacked = { isColumns: false, codeRows: 4, bodyOffset: 2 }
   expect(isOverCode(stacked, { column: 3, row: 1 })).toBe(true)
   expect(isOverCode(stacked, { column: 3, row: 2 })).toBe(false)
+})
+
+test('stacked, a short body never cuts the explanation: the window keeps minCodeRows and the body scrolls', async () => {
+  const long = view({ code: Array.from({ length: 30 }, (_, i) => `line ${i}`), marks: Array(30).fill(null), result: { lines: ['Not this time.', 'One.', 'Two.', 'Three.', 'Four.'] } })
+  const l = puzzleLayout(long, ['Enter: on'], { columns: 40, rows: 8 })
+  expect(l.isColumns).toBe(false)
+  expect(l.panel.some(p => p.text === '…')).toBe(false)
+  for (const t of ['One.', 'Two.', 'Three.', 'Four.']) expect(l.panel.some(p => p.text === t)).toBe(true)
+  expect(l.code.rows.length + (l.code.more === undefined ? 0 : 1)).toBe(PUZZLE_VIEW.minCodeRows)
 })
