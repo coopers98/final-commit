@@ -131,6 +131,26 @@ export const PUZZLE = {
   maxDisputes: 50,
 } as const
 
+/** SPEC 8: the Analyze pane's size and layout, and the readability gates on puzzle units. */
+export const PUZZLE_VIEW = {
+  /** Share of the terminal's columns the dock is asked for: at least `twoColumnMin`, leaving the transcript `minTranscriptColumns`. */
+  dockShare: 0.6,
+  minTranscriptColumns: 40,
+  /** Body columns from which the code and the panel sit side by side; the panel's width there. */
+  twoColumnMin: 80,
+  panelColumns: 30,
+  /** Rows the code window keeps when the panel sits beneath it. */
+  minCodeRows: 3,
+  /** Rows the panel's Input takes. */
+  inputRows: 1,
+  /** Inline: rows asked for beyond the code and choices (heading, question, result, hints), and rows left to the prompt. */
+  panelReserveRows: 8,
+  inlineReserveRows: 6,
+  /** A unit is skipped past these shares of blanked lines or placeholder words; Bug Hunt changes no line past the second. */
+  maxBlankShare: 0.5,
+  maxPlaceholderShare: 1 / 3,
+} as const
+
 // SPEC 8.3 rules 3 and 4 (shape), DEFAULT (numbers). Trace: a unit run by a
 // runner on generated inputs. A runner's command and limits; one now (node),
 // `python3`, `php` and `sqlite3` take their own rows when their adapters land.
