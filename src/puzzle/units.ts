@@ -18,6 +18,8 @@ export type ContentAdapter = {
   claims(path: string): boolean
   /** Its language's filter (SPEC 5.3): what the units are read from, line for line. */
   filter(source: string, mode: PrivacyMode): string
+  /** The text the pane alone shows (puzzle view spec, section 4), line for line with `filter`'s; `filter` when absent. */
+  filterLocal?(source: string, mode: PrivacyMode): string
   /** A file it will not read at all, judged on the code as written (TypeScript: JSX). */
   rejects?(source: string, path: string): boolean
   /** Units overlapping `changed` (1-based line numbers) in `filtered`, whose line count matches the file's. */
@@ -318,6 +320,7 @@ export const MD_ADAPTER: ContentAdapter = {
   lang: 'Markdown',
   claims: path => /\.(?:md|markdown)$/.test(path),
   filter: filterMarkdown,
+  filterLocal: (source, mode) => filterMarkdown(source, mode, { local: true }),
   units(filtered, changed) {
     const lines = filtered.split('\n')
     const starts = lines.flatMap((l, k) => (headingName(l) !== undefined ? [k] : []))

@@ -56,7 +56,8 @@ export function puzzleBonus(tier: Tier, isCorrect: boolean, elapsedMs: number): 
 }
 
 /**
- * A puzzle for `tier` from `units`. `complete` is the model call; without
+ * A puzzle for `tier`. Pattern ID is made from `units` (what may go to a model), never `localUnits`;
+ * Bug Hunt and Trace read `localUnits` (the pane's own text, which never leaves the machine), else `units`. `complete` is the model call; without
  * one (puzzles set to local, or the strict filter) Pattern ID is not built,
  * and nothing is sent. `trace` runs a unit locally (SPEC 8.3 rule 3); it is
  * handed in only when a runner is available. A type that cannot be made
@@ -65,6 +66,8 @@ export function puzzleBonus(tier: Tier, isCorrect: boolean, elapsedMs: number): 
  */
 export async function buildPuzzle(req: {
   units: readonly Unit[]
+  /** The units as the pane alone shows them (puzzle view spec, section 4): Bug Hunt and Trace; `units` when absent. */
+  localUnits?: readonly Unit[]
   tier: Tier
   rng: Rng
   complete?: Complete
@@ -72,18 +75,19 @@ export async function buildPuzzle(req: {
   /** SPEC 8.2, D4: the accuracy record, so weak categories come up more often where the game picks one. */
   stats?: readonly PuzzleStat[]
 }): Promise<Puzzle | undefined> {
-  if (req.units.length === 0) return undefined
-  const built: PuzzleType[] = [...(req.complete ? ['pattern-id' as const] : []), ...(req.trace ? ['trace' as const] : []), 'bug-hunt']
+  const local = req.localUnits ?? req.units
+  if (req.units.length === 0 && local.length === 0) return undefined
+  const built: PuzzleType[] = [...(req.complete && req.units.length > 0 ? ['pattern-id' as const] : []), ...(req.trace ? ['trace' as const] : []), 'bug-hunt']
   const first = puzzleTypeFor(req.tier, built)
   for (const type of [first, ...built.filter(t => t !== first)]) {
     if (type === 'bug-hunt') {
-      const p = buildBugHunt(req.units, req.rng, req.stats ? categoryWeights(req.stats, 'bug-hunt') : undefined)
+      const p = buildBugHunt(local, req.rng, req.stats ? categoryWeights(req.stats, 'bug-hunt') : undefined)
       if (p) return p
     } else if (type === 'pattern-id' && req.complete) {
       const p = await buildPatternId(req.units, req.rng, req.complete)
       if (p) return p
     } else if (type === 'trace' && req.trace) {
-      const p = await req.trace(req.units, req.rng)
+      const p = await req.trace(local, req.rng)
       if (p) return p
     }
   }

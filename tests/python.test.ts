@@ -138,7 +138,7 @@ test('mission material reads a changed .py file through the Python filter', asyn
     },
     read: async () => py,
   }
-  const units = await missionUnits(io, 0, 'strict')
+  const { units } = await missionUnits(io, 0, 'strict')
   expect(units.map(u => [u.lang, u.name])).toEqual([['Python', 'score']])
   expect(units[0]!.lines.join('\n')).not.toContain('Jane')
 })

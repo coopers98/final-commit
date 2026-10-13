@@ -377,10 +377,10 @@ async function preparePuzzle($: EngineInterface) {
         }
       },
     }
-    const units = mission ? await missionUnits(io, mission.startedAt, settings.privacyMode) : []
-    const trace = units.length > 0 ? await traceVia($) : undefined
+    const { units, localUnits } = mission ? await missionUnits(io, mission.startedAt, settings.privacyMode) : { units: [], localUnits: [] }
+    const trace = localUnits.length > 0 ? await traceVia($) : undefined
     const puzzle = await buildPuzzle({
-      units, tier: pending.tier, rng: await rngOf($), stats: await repo.puzzleStats(),
+      units, localUnits, tier: pending.tier, rng: await rngOf($), stats: await repo.puzzleStats(),
       ...(sendsCode(settings) ? { complete: completeVia($, settings.puzzleModel, PUZZLE) } : {}),
       ...(trace ? { trace } : {}),
     })

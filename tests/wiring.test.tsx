@@ -1571,3 +1571,40 @@ test('with no node on the host, a Rare encounter falls back to Bug Hunt', { opti
   expect((await pane.findAll({ type: 'Text' })).map(t => t.text)).toContain('Analyze Specimen · Bug Hunt · TypeScript')
   await pane.unmount()
 })
+
+// Puzzle view spec, section 4: local text never reaches a prompt.
+const NOTES_MD = [
+  '# Release notes',
+  '- Always add the `zqLocalOnly` flag before a deploy.',
+  '- Never remove the backup step.',
+  '- Run more checks when the queue is above its limit.',
+  '- Enable the alert once the job is required.',
+].join('\n')
+
+const docsGit: Gh = argv => {
+  if (argv[1] === 'rev-list') return { exitCode: 0, stdout: 'abc123\n' }
+  if (argv.includes('diff') && argv.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 aaa bbb M\0docs/notes.md\0' }
+  if (argv.includes('diff')) return { exitCode: 0, stdout: 'diff --git a/docs/notes.md b/docs/notes.md\n+++ b/docs/notes.md\n@@ -2 +2 @@\n' }
+  return { exitCode: 0, stdout: 'main\n' }
+}
+
+test('with the standard filter, Pattern ID is asked with spans quoted, and the pane shows them', { options: { puzzles: 'on', privacyMode: 'standard' } }, async ($, on) => {
+  const w = world(on, { git: docsGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  on('fs.read', (_$, e) => (e.path.endsWith('docs/notes.md') ? { value: NOTES_MD } : Promise.reject(new Error('ENOENT'))) as never)
+  await $.session.start(START)
+  await chart($, w, 'NOVA-1', 'Billing export')
+  await run($, 'mission', 'NOVA-2')
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)
+  await run($, 'mission', 'complete anyway')
+  await w.clock.settle()
+  const asked = w.prompts.filter(p => p.includes('Release notes'))
+  expect(asked.length > 0).toBe(true)
+  expect(asked.some(p => p.includes('[quoted]'))).toBe(true)
+  expect(w.prompts.some(p => p.includes('zqLocalOnly'))).toBe(false)
+  // The model answered nothing, so the puzzle is a Bug Hunt from the local text.
+  expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
+  const pane = await $.ui.mount(PANE('fc-lattice', 100))
+  expect((await pane.findAll({ type: 'Text' })).map(t => t.text).join('\n')).toContain('zqLocalOnly')
+  await pane.unmount()
+})

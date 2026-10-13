@@ -1,5 +1,6 @@
 import { PUZZLE } from '../config'
 import type { PrivacyMode } from './privacy-filter'
+import { readableUnit } from './readable'
 import { ADAPTERS, changedLines, isSafePath, type Unit } from './units'
 
 // SPEC 8: a puzzle's material is the code a mission changed: its commits
@@ -35,13 +36,18 @@ export function regularFiles(raw: string): Set<string> {
 
 export { hasJsx } from './units'
 
-/** Filtered units from the code changed since `startedAt`, at most `PUZZLE.maxUnits`. */
-export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<Unit[]> {
+/** A mission's units: `units` for a prompt, `localUnits` for the pane alone (puzzle view spec, section 4). */
+export type MissionUnits = { units: Unit[]; localUnits: Unit[] }
+
+const gated = (units: readonly Unit[]) => units.flatMap(u => readableUnit(u) ?? [])
+
+/** Filtered units from the code changed since `startedAt`, gated for readability: at most `PUZZLE.maxUnits` of each set. */
+export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<MissionUnits> {
   const before = await io.git(['rev-list', '-1', `--before=${new Date(startedAt).toISOString()}`, 'HEAD'])
   if (before.exitCode !== 0 && before.stdout.trim() === '') {
     // Not a git repository, or one without a HEAD: nothing to read.
     const head = await io.git(['rev-parse', '--verify', '--quiet', 'HEAD'])
-    if (head.exitCode !== 0) return []
+    if (head.exitCode !== 0) return { units: [], localUnits: [] }
   }
   const base = before.stdout.trim() || EMPTY_TREE
   // Paths relative to the session's folder; the working tree, so uncommitted work counts. The
@@ -51,9 +57,10 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
   const pinned = ['--relative', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--src-prefix=a/', '--dst-prefix=b/']
   const raw = await git(['diff', ...pinned, '--raw', '-z', base])
   const diff = await git(['diff', ...pinned, '--unified=0', base])
-  if (raw.exitCode !== 0 || diff.exitCode !== 0) return []
+  if (raw.exitCode !== 0 || diff.exitCode !== 0) return { units: [], localUnits: [] }
   const files = regularFiles(raw.stdout)
   const units: Unit[] = []
+  const localUnits: Unit[] = []
   let read = 0
   for (const [path, changed] of changedLines(diff.stdout)) {
     const adapter = ADAPTERS.find(a => a.claims(path))
@@ -65,10 +72,13 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     // Judged on the code as written (TypeScript: JSX, whose tags the filter blanks but not the prose between them).
     if (adapter.rejects?.(text, path)) continue
     const filtered = adapter.filter(text, mode)
-    // Line numbers from the diff must still point at the same lines.
-    if (filtered.split('\n').length !== text.replace(/\r(?=\n)/g, '').split('\n').length) continue
-    units.push(...adapter.units(filtered, changed))
-    if (units.length >= PUZZLE.maxUnits) break
+    const shown = adapter.filterLocal ? adapter.filterLocal(text, mode) : filtered
+    // Line numbers from the diff must still point at the same lines, in both texts.
+    const lines = text.replace(/\r(?=\n)/g, '').split('\n').length
+    if (filtered.split('\n').length !== lines || shown.split('\n').length !== lines) continue
+    units.push(...gated(adapter.units(filtered, changed)))
+    localUnits.push(...gated(adapter.units(shown, changed)))
+    if (units.length >= PUZZLE.maxUnits && localUnits.length >= PUZZLE.maxUnits) break
   }
-  return units.slice(0, PUZZLE.maxUnits)
+  return { units: units.slice(0, PUZZLE.maxUnits), localUnits: localUnits.slice(0, PUZZLE.maxUnits) }
 }

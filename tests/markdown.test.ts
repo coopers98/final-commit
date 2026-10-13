@@ -381,7 +381,7 @@ test('mission material reads a changed .md file through the Markdown filter', as
     },
     read: async () => doc,
   }
-  const units = await missionUnits(io, 0, 'strict')
+  const { units } = await missionUnits(io, 0, 'strict')
   expect(units.map(u => [u.lang, u.name])).toEqual([['Markdown', '[name] plan']])
   const text = units[0]!.lines.join('\n')
   expect(text).not.toContain('Kessa')

@@ -180,3 +180,18 @@ test('buildPuzzle hands the accuracy record to Bug Hunt', async () => {
   // 4 to 1 against the even half: well over half.
   expect(logic > 130).toBe(true)
 })
+
+test('Pattern ID is made from prompt units only; Bug Hunt from local units', async () => {
+  const prompt: Unit = { ...UNIT, lines: UNIT.lines.map(l => l.replace('limit', '[quoted]')) }
+  const asked: string[] = []
+  const recording: Complete = async req => {
+    asked.push(req.prompt)
+    return { ok: false, reason: 'no answer' }
+  }
+  const p = await buildPuzzle({ units: [prompt], localUnits: [UNIT], tier: 'common', rng: createRng(1), complete: recording })
+  expect(asked.length > 0).toBe(true)
+  expect(asked.some(a => a.includes('limit'))).toBe(false)
+  // The model gave nothing: Bug Hunt, from the local unit.
+  expect(p!.type).toBe('bug-hunt')
+  expect(p!.code.join('\n')).toContain('limit')
+})

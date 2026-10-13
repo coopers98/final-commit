@@ -118,7 +118,7 @@ test('mission material: the diff against the last commit before the start, read 
     },
     read: async (path: string) => files[path],
   })
-  const units = await missionUnits(io('abc123\n'), Date.UTC(2026, 0, 2), 'strict')
+  const { units } = await missionUnits(io('abc123\n'), Date.UTC(2026, 0, 2), 'strict')
   expect(units.map(u => u.name)).toEqual(['totalOf'])
   expect(units[0]!.lines.join('\n')).not.toContain('example.com')
   expect(calls[0]).toEqual(['rev-list', '-1', '--before=2026-01-02T00:00:00.000Z', 'HEAD'])
@@ -133,7 +133,7 @@ test('mission material: the diff against the last commit before the start, read 
 
 test('mission material: outside a repository there is none', async () => {
   const io = { git: async () => ({ exitCode: 128, stdout: '' }), read: async () => undefined }
-  expect(await missionUnits(io, 0, 'strict')).toEqual([])
+  expect(await missionUnits(io, 0, 'strict')).toEqual({ units: [], localUnits: [] })
 })
 
 // Security review findings (FC-15): each one a test.
@@ -224,7 +224,7 @@ test('a symlink the diff names is never read', async () => {
     },
     read: async () => (reads += 1, FILE),
   }
-  expect(await missionUnits(io, 0, 'standard')).toEqual([])
+  expect(await missionUnits(io, 0, 'standard')).toEqual({ units: [], localUnits: [] })
   expect(reads).toBe(0)
 })
 

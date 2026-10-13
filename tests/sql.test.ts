@@ -276,7 +276,7 @@ test('mission material reads a changed .sql file through the SQL filter', async 
     },
     read: async () => sql,
   }
-  const units = await missionUnits(io, 0, 'strict')
+  const { units } = await missionUnits(io, 0, 'strict')
   expect(units.map(u => [u.lang, u.name])).toEqual([['SQL', 'select visits']])
   expect(units[0]!.lines.join('\n')).not.toContain('Jane')
 })

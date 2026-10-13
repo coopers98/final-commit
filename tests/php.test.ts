@@ -233,7 +233,7 @@ test('mission material reads a changed .php file through the PHP filter', async 
     },
     read: async () => php,
   }
-  const units = await missionUnits(io, 0, 'strict')
+  const { units } = await missionUnits(io, 0, 'strict')
   expect(units.map(u => [u.lang, u.name])).toEqual([['PHP', 'score']])
   expect(units[0]!.lines.join('\n')).not.toContain('Jane')
 })
