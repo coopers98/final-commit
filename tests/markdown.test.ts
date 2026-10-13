@@ -388,3 +388,44 @@ test('mission material reads a changed .md file through the Markdown filter', as
   expect(text).not.toContain('zqSecret')
   expect(units[0]!.lines).toContain('[name] must migrate first.')
 })
+
+// The local filter (puzzle view spec, section 4): for the pane only, never a prompt.
+const local = (src: string, mode: 'standard' | 'strict' = 'strict') => filterMarkdown(src, mode, { local: true }).split('\n')
+
+test('locally, backtick spans and capitalized words are shown; the prompt filter is unchanged', async () => {
+  const src = '# Engine rules\n\n- A `Client` gets keys only after a mouse click; never pass `$` across an import.'
+  expect(local(src)[2]).toBe('- A `Client` gets keys only after a mouse click; never pass `$` across an import.')
+  expect(filterMarkdown(src, 'strict').split('\n')[2]).toContain('[quoted]')
+  expect(local(src)[0]).toBe('# Engine rules')
+})
+
+test('locally, value shapes and secrets inside a span are still replaced', async () => {
+  expect(local('- Call `https://nova.example.com/x` first.')[0]).toBe('- Call `[url]` first.')
+  expect(local('- Mail `ops@nova.example` now.')[0]).toBe('- Mail `[email]` now.')
+  expect(local('- Not `123-45-6789` here.')[0]).toBe('- Not `[ssn]` here.')
+  for (const s of ['ghp_AbCdEf123456', 'sk_live_51HxQz', 'xoxb-1234-abcd', 'AKIAIOSFODNN7EXAMPL', 'AIzaSyA1234567890abcdefghijklmnopqrs', 'a1b2c3d4e5f6g7h8i9j0k1']) {
+    expect(local(`- Use \`${s}\` here.`)[0]).toBe('- Use `[secret]` here.')
+  }
+  expect(local('- Set `DB_PASS=Tr0ub4dor&3` once.')[0]).toBe('- Set `DB_PASS=[secret]` once.')
+})
+
+test('locally, quotes and values that straddle a span are caught whole', async () => {
+  expect(local('- Ask "Jane `x` Smith" first.')[0]).toBe('- Ask [quoted] first.')
+  // A URL running into a span swallows it rather than leaving a backtick behind.
+  expect(local('- See https://nova.example.com/a`b` now.')[0]).toBe('- See [url] now.')
+  // Outside spans the prose filter still runs: double quotes, Dr. names.
+  expect(local('- Ask "the lead" or Dr. Roe.')[0]).toBe('- Ask [quoted] or [name].')
+})
+
+test('locally, a private-use character in the source is dropped, and lines are kept', async () => {
+  expect(local('- A  `x` mark.')[0]).toBe('- A  `x` mark.')
+  const src = ['# Head', '', '```', 'code', '```', '- after `y`'].join('\n')
+  expect(local(src).length).toBe(src.split('\n').length)
+  // Fenced code stays blanked locally too.
+  expect(local(src)[3]).toBe('…')
+})
+
+test('locally, under standard only the spans change', async () => {
+  expect(local('- Keep `Alpha` and Beta.', 'standard')[0]).toBe('- Keep `Alpha` and Beta.')
+  expect(filterMarkdown('- Keep `Alpha` and Beta.', 'standard')).toBe('- Keep [quoted] and Beta.')
+})

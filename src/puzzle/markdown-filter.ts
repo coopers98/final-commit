@@ -1,6 +1,6 @@
 import { PUZZLE } from '../config'
 import { BLANK, CONTROL } from './code-filter'
-import { filterProse, type PrivacyMode } from './privacy-filter'
+import { filterProse, filterValues, type PrivacyMode } from './privacy-filter'
 
 // SPEC 5.3 and 8.3 rule 1, for Markdown: line for line, prose lines go
 // through the prose filter and everything that is not prose is blanked to
@@ -210,14 +210,55 @@ export function shownMarkdownLines(lines: readonly string[]): boolean[] {
   return shown
 }
 
-/** SPEC 8.3: Markdown ready for a prompt and the pane. `off` sends it as written, less control characters. */
-export function filterMarkdown(source: string, mode: PrivacyMode): string {
+/** Private-use code points: a span's place while the prose filter runs. Dropped from the source first. */
+const PRIVATE = /[-]/g
+const SPAN_MARK = ''
+const FIRST_SPAN = 0xe100
+
+/** Token shapes a span may hold: known prefixes, secret assignments (the name is kept), long runs mixing letters and digits. */
+const SECRET_RULES: readonly { pattern: RegExp; to: string }[] = [
+  { pattern: /\b(?:gh[oprsu]_|github_pat_|sk_|pk_|rk_|sk-|xox[abprs]-|AKIA|AIza)[\w-]{6,}/g, to: '[secret]' },
+  { pattern: /\b([\w.-]*(?:key|token|secret|pass)[\w.-]*)([ \t]*[=:][ \t]*)\S+/gi, to: '$1$2[secret]' },
+  { pattern: /\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{20,}/g, to: '[secret]' },
+]
+
+/** A backtick span's text as the pane shows it: secret shapes, then the value shapes (URLs, emails, IDs, ...). */
+export function filterSpan(text: string): string {
+  let out = text
+  for (const { pattern, to } of SECRET_RULES) out = out.replace(pattern, to)
+  return filterValues(out).text
+}
+
+/**
+ * A shown prose line for the pane only, never a prompt: backtick spans kept
+ * through `filterSpan`, the rest through the prose filter without strict's
+ * capitalized-word rule. Each span waits as a private-use mark while the
+ * prose filter runs, so a quote around a span is still caught whole, and a
+ * mark a rule swallowed is not put back.
+ */
+function localProse(line: string, mode: PrivacyMode): string {
+  const spans: string[] = []
+  const marked = line.replace(CONTROL, '').replace(PRIVATE, '').replace(/`([^`]*)`/g, (_, text: string) => {
+    spans.push(text)
+    return SPAN_MARK + String.fromCharCode(FIRST_SPAN + spans.length - 1)
+  })
+  const prose = filterProse(marked, mode === 'strict' ? 'standard' : mode).text
+  return prose.replace(/([-])/g, (_, c: string) => `\`${filterSpan(spans[c.charCodeAt(0) - FIRST_SPAN] ?? '')}\``).replace(PRIVATE, '')
+}
+
+/**
+ * SPEC 8.3: Markdown ready for a prompt and the pane. `off` sends it as
+ * written, less control characters. `local` (puzzle view spec, section 4)
+ * is for text that never leaves the machine: spans and capitalized words
+ * are shown, everything else is filtered as for a prompt.
+ */
+export function filterMarkdown(source: string, mode: PrivacyMode, opts: { local?: boolean } = {}): string {
   const lines = source.replace(/\r(?=\n)/g, '').split('\n')
   if (mode === 'off') return lines.map(l => l.replace(CONTROL, '')).join('\n')
   const shown = shownMarkdownLines(lines)
   const blank = (l: string) => (/^[ \t]*$/.test(l) ? '' : `${/^[ \t]*/.exec(l)![0].slice(0, PUZZLE.maxLineChars)}${BLANK}`)
   // A shown line's backtick spans are single, paired and free of escapes and `<` (backtickRuns), so a renderer pairs them
   // left to right, as this does: each is quoted before the prose filter, whose other rules could take an opening backtick.
-  const prose = (l: string) => filterProse(l.replace(CONTROL, '').replace(/`[^`]*`/g, '[quoted]'), mode).text
+  const prose = opts.local ? (l: string) => localProse(l, mode) : (l: string) => filterProse(l.replace(CONTROL, '').replace(/`[^`]*`/g, '[quoted]'), mode).text
   return lines.map((l, i) => (shown[i] && l.length <= PUZZLE.maxLineChars ? prose(l) : blank(l))).join('\n')
 }
