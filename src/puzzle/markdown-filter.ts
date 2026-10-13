@@ -216,10 +216,11 @@ const SPAN_MARK = '\uE000'
 const FIRST_SPAN = 0xe100
 
 /**
- * Names whose value is a secret: `key`, `token`, `secret`, `pass` (`passwd`, `password`), `pwd`, `auth`, `credential`, `private`.
- * Bounded either side, so a long run of such names (`key-key-key…`) is not tried every way.
+ * A name whose value is a secret: a whole run of name characters holding `key`, `token`, `secret`, `pass` (`passwd`,
+ * `password`), `pwd`, `auth`, `credential` or `private`, of any length. Tried only where a run starts (each rule's
+ * lookbehind), so the word is looked for once per run, and a long run (`key-key-key…`) is not tried every way.
  */
-const SECRET_NAME = String.raw`[\w.-]{0,64}?(?:key|token|secret|pass|pwd|auth|credential|private)[\w.-]{0,64}`
+const SECRET_NAME = String.raw`(?=[\w.-]*?(?:key|token|secret|pass|pwd|auth|credential|private))[\w.-]+`
 /** A value taken whole: a quoted string (backslash escapes and doubled quotes kept inside, to its closing quote or the line's end), else a run of non-space. */
 const SECRET_VALUE = String.raw`(?:"(?:[^"\\\n]|\\.|"")*"?|'(?:[^'\\\n]|\\.|'')*'?|\S+)`
 
@@ -229,16 +230,18 @@ const SECRET_VALUE = String.raw`(?:"(?:[^"\\\n]|\\.|"")*"?|'(?:[^'\\\n]|\\.|'')*
  * passwords, long base64 runs and long runs mixing letters and digits. A blocklist: a secret of another shape still shows.
  */
 const SECRET_RULES: readonly { pattern: RegExp; to: string }[] = [
-  // The password runs to the last `@` before the path, so one holding `@` is hidden whole.
-  { pattern: /(?<![\w+.-])([a-z][\w+.-]{0,30}:\/\/[^\s:/@]*:)[^\s/]*@/gi, to: '$1[secret]@' },
+  // The password runs to the token's last `@`, so one holding `@` or `/` is hidden whole (a port and path before an `@` too).
+  { pattern: /(?<![\w+.-])([a-z][\w+.-]{0,30}:\/\/[^\s:/@]*:)\S*@/gi, to: '$1[secret]@' },
   { pattern: /\beyJ[\w-]+\.[\w-]+\.[\w-]*/g, to: '[secret]' },
   { pattern: /\b((?:Bearer|Basic)[ \t]+)\S+/gi, to: '$1[secret]' },
   { pattern: /\b(?:gh[oprsu]_|github_pat_|sk_|pk_|rk_|sk-|xox[abprs]-|AKIA|AIza)[\w-]{6,}/g, to: '[secret]' },
   { pattern: new RegExp(String.raw`(?<![\w.-])(${SECRET_NAME}["']?[ \t]*[=:]{1,2}[ \t]*)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
-  { pattern: new RegExp(String.raw`((?<![\w-])--?${SECRET_NAME}[ \t]+)(?!-)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
+  { pattern: new RegExp(String.raw`((?<![\w.-])--?${SECRET_NAME}[ \t]+)(?!-)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
   { pattern: /((?<![\w-])(?:-u|--user)(?:[ \t]+|=)?[^\s:]*:)\S+/g, to: '$1[secret]' },
-  // `-pVALUE`: any value after a mysql, mariadb or sshpass command, else one that is not a lowercase flag (`-print`).
+  // `-pVALUE`: any value after a mysql, mariadb or sshpass command, else one that is not a lowercase flag (`-print`);
+  // after sshpass, `-p VALUE` too.
   { pattern: /(?<![\w-])(-p)(?<=\b(?:mysql|mariadb|sshpass)\w*\b.*-p)\S+/g, to: '$1[secret]' },
+  { pattern: /(?<![\w-])(-p[ \t]+)(?<=\bsshpass\b.*)(?!-)\S+/g, to: '$1[secret]' },
   { pattern: /(?<![\w-])(-p)(?![a-z]+(?!\S))\S+/g, to: '$1[secret]' },
   { pattern: /(?<![\w+/=-])(?=[\w+/=-]*\d)[\w+/-]{30,}={0,2}/g, to: '[secret]' },
   // Tried only where a run starts (a suffix of a run is never longer), so a long run is read once, not from every `-`.
@@ -253,7 +256,8 @@ export function filterSpan(text: string): string {
 }
 
 /** Text ending in a title or role word, or a name: a span right after it is a name (`Dr. `Roe``, `patient `Jane``, `Dr. Jane `Roe``). */
-const AFTER_TITLE = /(?:\b(?:Mr|Mrs|Ms|Mx|Dr|Prof)\.?|\b(?:patient|pt|client|member|resident)[\s:.,]*|\[name\][\s,]*)\s*$/i
+// Each branch ends in one run of its own space class, so a long run of spaces is split one way only.
+const AFTER_TITLE = /(?:\b(?:Mr|Mrs|Ms|Mx|Dr|Prof)\.?\s*|\b(?:patient|pt|client|member|resident)[\s:.,]*|\[name\][\s,]*)$/i
 
 /**
  * A shown prose line for the pane only, never a prompt: backtick spans kept

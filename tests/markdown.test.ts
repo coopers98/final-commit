@@ -480,7 +480,7 @@ test('locally, curl user passwords, Basic credentials and an @ in a connection p
 })
 
 test('locally, a long run of secret-like names filters fast, per span and per file', async () => {
-  for (const unit of ['key-', 'key.', '-key', 'key_', 'pass', '--key ', 'mysql -p ', 'a.', 'x://a:']) {
+  for (const unit of ['key-', 'key.', '-key', '.-key', 'key_', 'pass', '--key ', 'mysql -p ', 'sshpass -p ', 'a.', 'x://a:', 'x://a:b/']) {
     const line = `- \`${unit.repeat(Math.floor(1_990 / unit.length))}\``
     const at = Date.now()
     local(line)
@@ -492,6 +492,29 @@ test('locally, a long run of secret-like names filters fast, per span and per fi
   const at = Date.now()
   filterMarkdown(file, 'strict', { local: true })
   expect(Date.now() - at).toBeLessThan(1_000)
+})
+
+test('locally, a secret name of any length hides its value', async () => {
+  const name = 'app.integrations.thirdparty.billing.provider.production.us-east.clientsecret'
+  expect(local(`- Set \`${name}=zz\` once.`)[0]).toBe(`- Set \`${name}=[secret]\` once.`)
+  expect(local(`- Run \`deploy --${name} zz\` once.`)[0]).toBe(`- Run \`deploy --${name} [secret]\` once.`)
+  // A name with no secret word in it is left, and a secret assignment inside its value is still found.
+  expect(local('- Set `mode=fast` once.')[0]).toBe('- Set `mode=fast` once.')
+  expect(local('- Set `opts="a token=zz"` once.')[0]).toBe('- Set `opts="a token=[secret]` once.')
+})
+
+test('locally, an sshpass password after a space and a connection password with a slash are hidden', async () => {
+  expect(local('- Run `sshpass -p hunter ssh nova` once.')[0]).toBe('- Run `sshpass -p [secret] ssh nova` once.')
+  expect(local('- Use `postgres://u:p/ss@host/x` here.')[0]).toBe('- Use `postgres://u:[secret]@host/x` here.')
+})
+
+test('locally, a long run of spaces after a title word stays fast', async () => {
+  for (const title of ['Dr.', 'patient']) {
+    const line = `- ${title} \`a\`${' '.repeat(1_000)}x${' `a`'.repeat(240)}`
+    const at = Date.now()
+    local(line)
+    expect(Date.now() - at).toBeLessThan(150)
+  }
 })
 
 test('a section unreadable in prompt text but readable locally is only a local unit', async () => {

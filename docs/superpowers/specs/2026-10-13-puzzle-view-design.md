@@ -160,12 +160,13 @@ window, offsets, counts and clamping work on the wrapped rows.
   `xox`, `AKIA`, `AIza`), assignments and flags whose name (quoted or not)
   contains `KEY`, `TOKEN`, `SECRET`, `PASS`, `PWD`, `AUTH`, `CREDENTIAL` or
   `PRIVATE` (a quoted value taken whole, escapes included), `-p` passwords
-  (any after `mysql`, `mariadb` or `sshpass`; elsewhere any but a lowercase
-  word, so `-print` stays), the password after `-u`/`--user user:`,
-  connection-string passwords, JWTs, `Bearer` and `Basic` credentials,
-  base64 runs of 30 or more with a digit, and any run of 20 or more letters
-  and digits mixing both. Names are bounded (64 characters either side) so
-  a crafted run cannot make the rule slow.
+  (any after `mysql`, `mariadb` or `sshpass`, and `-p value` after
+  `sshpass`; elsewhere any but a lowercase word, so `-print` stays), the
+  password after `-u`/`--user user:`, connection-string passwords (to the
+  token's last `@`), JWTs, `Bearer` and `Basic` credentials, base64 runs of
+  30 or more with a digit, and any run of 20 or more letters and digits
+  mixing both. A name of any length counts; names and runs are tried only
+  from where they start, so a crafted run cannot make the rules slow.
 - What a span still shows, stated plainly: the rule is a list of shapes,
   so a secret of any other shape in a span is shown locally (a lowercase
   `-psecret` outside those commands, say). Other quoted text inside a span
