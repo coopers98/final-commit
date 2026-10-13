@@ -170,8 +170,9 @@ window, offsets, counts and clamping work on the wrapped rows.
 
 Thresholds live in `src/config.ts` under `PUZZLE_VIEW`.
 
-- A blanked line: one that, with whitespace and the characters
-  `…;,{}()[]` removed, is empty (the SQL adapter's `…;` counts).
+- A blanked line: one holding a `…` that, with whitespace and the
+  characters `…;,{}()[]` removed, is empty (the SQL adapter's `…;` counts;
+  a lone `}` does not, so code keeps its closing brace).
 - A placeholder: any of the filter's tokens (`[quoted]`, `[name]`,
   `[url]`, `[email]`, `[ip]`, `[host]`, `[key]`, `[ssn]`, `[date]`,
   `[phone]`, `[id]`, `[age]`, `[number]`, `[secret]`). A word: a run of
@@ -191,12 +192,16 @@ Thresholds live in `src/config.ts` under `PUZZLE_VIEW`.
 
 - No store change and no schema bump: marks are derived (section 3), the
   first-shown time is a module map, and `Puzzle` keeps its shape.
-- `AnalyzeView` (types contract) gains `marks: (number | undefined)[]`
-  (the choice for each code line) and carries the code lines without
-  baked-in numbers; the layout draws the gutter.
+- `AnalyzeView` (types contract) gains `marks: (number | null)[]` (the
+  choice for each code line; null, not undefined, because the view is
+  JSON) and `offset: number | null` (the code window's first wrapped row;
+  null until the reader scrolls, so it opens on the first candidate), and
+  carries the code lines without baked-in numbers.
 - New tuning block `PUZZLE_VIEW` in `src/config.ts`: `dockShare` (0.6),
-  `twoColumnMin` (80), `panelColumns` (30), `minCodeRows` (3),
-  `maxBlankShare` (0.5), `maxPlaceholderShare` (1/3).
+  `minTranscriptColumns` (40), `twoColumnMin` (80), `panelColumns` (30),
+  `minCodeRows` (3), `inputRows` (1), `panelReserveRows` (8),
+  `inlineReserveRows` (6), `maxBlankShare` (0.5), `maxPlaceholderShare`
+  (1/3).
 
 ## 7. Units
 
