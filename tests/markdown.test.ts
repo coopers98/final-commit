@@ -409,6 +409,69 @@ test('locally, value shapes and secrets inside a span are still replaced', async
   expect(local('- Set `DB_PASS=Tr0ub4dor&3` once.')[0]).toBe('- Set `DB_PASS=[secret]` once.')
 })
 
+test('locally, a quoted assignment value is taken whole', async () => {
+  expect(local('- Set `API_KEY = "my real value"` once.')[0]).toBe('- Set `API_KEY = [secret]` once.')
+  expect(local("- Set `secret: 'two words'` once.")[0]).toBe('- Set `secret: [secret]` once.')
+})
+
+test('locally, a quoted key in JSON or YAML hides its value', async () => {
+  expect(local('- Send `"password": "hunter2"` once.')[0]).toBe('- Send `"password": [secret]` once.')
+  expect(local('- Send `{"token": "abc"}` once.')[0]).toBe('- Send `{"token": [secret]}` once.')
+})
+
+test('locally, a password flag hides its value', async () => {
+  expect(local('- Run `login --password hunter2` once.')[0]).toBe('- Run `login --password [secret]` once.')
+  for (const s of ['mysql -u root -pHunter2xyz', 'mysql -u root -phunter']) {
+    const shown = local(`- Run \`${s}\` once.`)[0]!
+    expect(shown).not.toContain('unter')
+    expect(shown).toContain('[secret]')
+  }
+  // A plain lowercase find flag stays.
+  expect(local('- Run `find . -print` once.')[0]).toBe('- Run `find . -print` once.')
+})
+
+test('locally, more secret names hide their values', async () => {
+  for (const name of ['pwd', 'passwd', 'auth', 'credential', 'private_key']) {
+    expect(local(`- Set \`${name}=zq7value\` once.`)[0]).toBe(`- Set \`${name}=[secret]\` once.`)
+  }
+})
+
+test('locally, the password in a connection string is hidden', async () => {
+  expect(local('- Use `postgres://nova:Sup3rS3cret@db/x` here.')[0]).toBe('- Use `postgres://nova:[secret]@db/x` here.')
+  expect(local('- Use `redis://:pw@cache:6379` here.')[0]).toBe('- Use `redis://:[secret]@cache:6379` here.')
+})
+
+test('locally, a JWT, a bearer token and a long base64 run are hidden whole', async () => {
+  // Built from parts so the secret scanner does not take the invented token for a real one.
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJub3ZhIn0', 'c2lnbmF0dXJlLXNpZw'].join('.')
+  expect(local(`- Send \`${jwt}\` once.`)[0]).toBe('- Send `[secret]` once.')
+  expect(local('- Send `Bearer abcdefghij` once.')[0]).toBe('- Send `Bearer [secret]` once.')
+  expect(local('- Send `Bearer zq7AbCdEf` once.')[0]).toBe('- Send `Bearer [secret]` once.')
+  expect(local('- Send `QWxhZGRpbjpvcGVu+c2VzYW1l/Zm9vYmFy0==` once.')[0]).toBe('- Send `[secret]` once.')
+})
+
+test('locally, a span after a title or role word is a name', async () => {
+  expect(local('- Ask Dr. `Roe` first.')[0]).toBe('- Ask Dr. [name] first.')
+  expect(local('- Ask patient `Jane` first.')[0]).toBe('- Ask patient [name] first.')
+  // Elsewhere a span is kept.
+  expect(local('- Ask the `lead` first.')[0]).toBe('- Ask the `lead` first.')
+})
+
+test('a section unreadable in prompt text but readable locally is only a local unit', async () => {
+  const doc = md('# Build steps', '- Run `ci` `lint` `test`.', '- Then `deploy` `cache` `warm`.', '- Finally `tag` `push` `notify`.', '- Check `logs` `alerts` `pager`.')
+  const io = {
+    git: async (args: readonly string[]) => {
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: 'abc\n' }
+      if (args.includes('--raw')) return { exitCode: 0, stdout: ':100644 100644 a b M\0docs/build.md\0' }
+      return { exitCode: 0, stdout: 'diff --git a/docs/build.md b/docs/build.md\n+++ b/docs/build.md\n@@ -2 +2 @@\n' }
+    },
+    read: async () => doc,
+  }
+  const { units, localUnits } = await missionUnits(io, 0, 'standard')
+  expect(units).toEqual([])
+  expect(localUnits.map(u => [u.lang, u.name])).toEqual([['Markdown', 'Build steps']])
+})
+
 test('locally, quotes and values that straddle a span are caught whole', async () => {
   expect(local('- Ask "Jane `x` Smith" first.')[0]).toBe('- Ask [quoted] first.')
   // A URL running into a span swallows it rather than leaving a backtick behind.
@@ -418,7 +481,7 @@ test('locally, quotes and values that straddle a span are caught whole', async (
 })
 
 test('locally, a private-use character in the source is dropped, and lines are kept', async () => {
-  expect(local('- A  `x` mark.')[0]).toBe('- A  `x` mark.')
+  expect(local('- A \uE000\uE100 `x` mark.')[0]).toBe('- A  `x` mark.')
   const src = ['# Head', '', '```', 'code', '```', '- after `y`'].join('\n')
   expect(local(src).length).toBe(src.split('\n').length)
   // Fenced code stays blanked locally too.

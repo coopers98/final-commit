@@ -211,14 +211,31 @@ export function shownMarkdownLines(lines: readonly string[]): boolean[] {
 }
 
 /** Private-use code points: a span's place while the prose filter runs. Dropped from the source first. */
-const PRIVATE = /[-]/g
-const SPAN_MARK = ''
+const PRIVATE = /[\uE000-\uF8FF]/g
+const SPAN_MARK = '\uE000'
 const FIRST_SPAN = 0xe100
 
-/** Token shapes a span may hold: known prefixes, secret assignments (the name is kept), long runs mixing letters and digits. */
+/** Names whose value is a secret: `key`, `token`, `secret`, `pass` (`passwd`, `password`), `pwd`, `auth`, `credential`, `private`. */
+const SECRET_NAME = String.raw`[\w.-]*(?:key|token|secret|pass|pwd|auth|credential|private)[\w.-]*`
+/** A value taken whole: a quoted string (to its closing quote, or the line's end), else a run of non-space. */
+const SECRET_VALUE = String.raw`(?:"[^"\n]*"?|'[^'\n]*'?|\S+)`
+
+/**
+ * Token shapes a span may hold, in order: connection-string passwords, JWTs, bearer tokens, known prefixes,
+ * secret assignments and password flags (the name is kept), `-p` passwords, long base64 runs and long runs
+ * mixing letters and digits. Fails closed: an ordinary word may be taken too.
+ */
 const SECRET_RULES: readonly { pattern: RegExp; to: string }[] = [
+  { pattern: /\b([a-z][\w+.-]*:\/\/[^\s:/@]*:)[^\s@]+@/gi, to: '$1[secret]@' },
+  { pattern: /\beyJ[\w-]+\.[\w-]+\.[\w-]*/g, to: '[secret]' },
+  { pattern: /\b(Bearer[ \t]+)\S+/gi, to: '$1[secret]' },
   { pattern: /\b(?:gh[oprsu]_|github_pat_|sk_|pk_|rk_|sk-|xox[abprs]-|AKIA|AIza)[\w-]{6,}/g, to: '[secret]' },
-  { pattern: /\b([\w.-]*(?:key|token|secret|pass)[\w.-]*)([ \t]*[=:][ \t]*)\S+/gi, to: '$1$2[secret]' },
+  { pattern: new RegExp(String.raw`\b(${SECRET_NAME}["']?[ \t]*[=:]{1,2}[ \t]*)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
+  { pattern: new RegExp(String.raw`((?<![\w-])--?${SECRET_NAME}[ \t]+)(?!-)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
+  // `-pVALUE` (mysql and the like): any value after a mysql or mariadb command, else one that is not a lowercase flag (`-print`).
+  { pattern: /(?<=\b(?:mysql|mariadb)\w*\b.*)(?<![\w-])(-p)\S+/g, to: '$1[secret]' },
+  { pattern: /(?<![\w-])(-p)(?![a-z]+(?!\S))\S+/g, to: '$1[secret]' },
+  { pattern: /(?<![\w+/=-])(?=[\w+/=-]*\d)[\w+/-]{30,}={0,2}/g, to: '[secret]' },
   { pattern: /\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{20,}/g, to: '[secret]' },
 ]
 
@@ -228,6 +245,9 @@ export function filterSpan(text: string): string {
   for (const { pattern, to } of SECRET_RULES) out = out.replace(pattern, to)
   return filterValues(out).text
 }
+
+/** Text ending in a title or role word: a span right after it is a name (`Dr. `Roe``, `patient `Jane``). */
+const AFTER_TITLE = /(?:\b(?:Mr|Mrs|Ms|Mx|Dr|Prof)\.?|\b(?:patient|pt|client|member|resident)[\s:.,]*)\s*$/i
 
 /**
  * A shown prose line for the pane only, never a prompt: backtick spans kept
@@ -243,7 +263,10 @@ function localProse(line: string, mode: PrivacyMode): string {
     return SPAN_MARK + String.fromCharCode(FIRST_SPAN + spans.length - 1)
   })
   const prose = filterProse(marked, mode === 'strict' ? 'standard' : mode).text
-  return prose.replace(/([-])/g, (_, c: string) => `\`${filterSpan(spans[c.charCodeAt(0) - FIRST_SPAN] ?? '')}\``).replace(PRIVATE, '')
+  return prose
+    .replace(/\uE000([\uE100-\uF8FF])/g, (_, c: string, at: number, all: string) =>
+      AFTER_TITLE.test(all.slice(0, at)) ? '[name]' : `\`${filterSpan(spans[c.charCodeAt(0) - FIRST_SPAN] ?? '')}\``)
+    .replace(PRIVATE, '')
 }
 
 /**
@@ -258,7 +281,7 @@ export function filterMarkdown(source: string, mode: PrivacyMode, opts: { local?
   const shown = shownMarkdownLines(lines)
   const blank = (l: string) => (/^[ \t]*$/.test(l) ? '' : `${/^[ \t]*/.exec(l)![0].slice(0, PUZZLE.maxLineChars)}${BLANK}`)
   // A shown line's backtick spans are single, paired and free of escapes and `<` (backtickRuns), so a renderer pairs them
-  // left to right, as this does: each is quoted before the prose filter, whose other rules could take an opening backtick.
+  // left to right, as this does: off the local path each is quoted before the prose filter, whose other rules could take an opening backtick.
   const prose = opts.local ? (l: string) => localProse(l, mode) : (l: string) => filterProse(l.replace(CONTROL, '').replace(/`[^`]*`/g, '[quoted]'), mode).text
   return lines.map((l, i) => (shown[i] && l.length <= PUZZLE.maxLineChars ? prose(l) : blank(l))).join('\n')
 }

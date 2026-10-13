@@ -170,7 +170,7 @@ press **d** on its result to dispute it. It is kept in your save for review,
 and your answer no longer counts in the dossier, right or wrong. A bonus you
 already earned stays.
 
-A Bug Hunt or Trace puzzle shows a document's code
+A Bug Hunt on a document shows its code
 spans, because it never leaves your machine (value shapes and secret-shaped
 tokens inside a span are still replaced, and quoted text outside spans is
 still filtered); a Pattern ID

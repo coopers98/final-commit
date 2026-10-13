@@ -147,7 +147,7 @@ Node's permission model does not itself block the network; the sandbox
 holds nothing that can reach it. Only a small, self-contained function is
 ever run; anything that could reach outside is refused before running.
 Its inputs are made up by the game. Nothing is sent to a model for Trace.
-Bug Hunt and Trace puzzles show Markdown code spans and capitalized words
+A Bug Hunt on a Markdown document shows its code spans and capitalized words
 (value shapes and token shapes inside a span are still replaced; double-quoted
 text and value shapes outside spans are still filtered); the save keeps that text with the waiting
 encounter and the disputed puzzles. Nothing of it is sent to a model.

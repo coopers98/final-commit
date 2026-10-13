@@ -150,14 +150,18 @@ window, offsets, counts and clamping work on the wrapped rows.
      A double quote that straddles a span is therefore still caught whole,
      and a URL cannot run into a span's closing backtick.
   3. Put back each sentinel that survived, as the span with its text run
-     through `filterValues` and the local secret rule below. A sentinel
-     swallowed by a rule (inside a quote) stays swallowed.
+     through `filterValues` and the local secret rule below, or as `[name]`
+     when the text before it ends in a title or role word (`Dr.`,
+     `patient`). A sentinel swallowed by a rule (inside a quote) stays
+     swallowed.
 - Local secret rule (spans only): token shapes are replaced by
   `[secret]`: known prefixes (`ghp_`, `gho_`, `github_pat_`, `sk_`, `pk_`,
-  `xox`, `AKIA`, `AIza`), `KEY=value` assignments whose name contains
-  `KEY`, `TOKEN`, `SECRET` or `PASS`, and any run of 20 or more letters and
-  digits mixing both.
-- What a span still shows, stated plainly: quoted text inside a span
+  `xox`, `AKIA`, `AIza`), assignments and flags whose name (quoted or not)
+  contains `KEY`, `TOKEN`, `SECRET`, `PASS`, `PWD`, `AUTH`, `CREDENTIAL` or
+  `PRIVATE` (a quoted value taken whole), `-p` passwords, connection-string
+  passwords, JWTs, `Bearer` tokens, base64 runs of 30 or more with a digit,
+  and any run of 20 or more letters and digits mixing both. It fails closed.
+- What a span still shows, stated plainly: other quoted text inside a span
   (`'hunter2'`) is shown as written, because inside a span it is code.
   That is part of what the user accepted.
 - Each mission builds two unit sets from one read of each file: prompt

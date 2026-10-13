@@ -213,9 +213,12 @@ test('Bug Hunt never changes a line that is mostly placeholders', async () => {
       '}',
     ],
   }
+  let built = 0
   for (let seed = 0; seed < 40; seed += 1) {
     const p = buildBugHunt([soup], createRng(seed))
     if (!p) continue
+    built += 1
     expect(p.code[1]).toBe(soup.lines[1])
   }
+  expect(built).toBeGreaterThan(0)
 })
