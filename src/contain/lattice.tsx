@@ -132,7 +132,7 @@ async function closePane($: EngineInterface, id: string) {
   try {
     await $.ui.close({ id })
   } catch {
-    // Not open: nothing to close.
+    // A hook denied the close: the open or the hand-on goes ahead regardless.
   }
 }
 
@@ -232,6 +232,7 @@ async function open($: EngineInterface, args: string, columns?: number): Promise
     return 'Containment could not open here; the encounter is still waiting.'
   }
   asking = undefined
+  shown = undefined
   await update($, analyze, () => null)
   await closePane($, ANALYZE_PANE)
   return (await openLattice($, args)) ? 'Opened containment.' : 'Containment could not open here; the encounter is still waiting.'

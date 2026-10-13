@@ -1662,7 +1662,7 @@ test('the puzzle opens in its own Analyze pane, asking for a wide dock', { optio
   expect((await run($, 'contain')).text).toBe('Opened containment, with a puzzle first.')
   const last = w.openedWith.at(-1)!
   expect(last.id).toBe('fc-analyze')
-  expect(typeof last.columns).toBe('number')
+  expect(last.columns).toBe(dockColumns(PRESENTATION.columns))
 })
 
 test('"Contain now" from the report sizes the pane from the terminal the report was drawn on', { options: { puzzles: 'local' } }, async ($, on) => {
@@ -1674,6 +1674,17 @@ test('"Contain now" from the report sizes the pane from the terminal the report 
   await report.unmount()
   const last = w.openedWith.at(-1)!
   expect(last).toEqual({ id: 'fc-analyze', columns: dockColumns(200), rows: 7 + 4 + 8 })
+})
+
+test('"Contain now" with no terminal size seen asks for no size', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  await missionWithCode($, on, w)
+  // No viewport on the drawing and no command's presentation: nothing to size from.
+  const report = await $.ui.mount(PANE('fc-report', 100))
+  await report.input({ key: 'report', text: '', kind: 'submit' })
+  await report.unmount()
+  expect(w.openedWith.at(-1)).toEqual({ id: 'fc-analyze' })
 })
 
 test('j and k scroll the code window; the panel stays', { options: { puzzles: 'local' } }, async ($, on) => {
@@ -1716,6 +1727,10 @@ test('the wheel over the code scrolls the code, not the body', { options: { puzz
   // The body stays where it was drawn; the code moved instead.
   expect(offsets).toEqual([0])
   expect(codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]).not.toBe(top)
+  // At the body's top the engine's offset is already clamped (0, by -1): the body stays at 0, where 0 - by would move it.
+  await $.ui.scroll({ component: 'Pane', requestId: 'fc-analyze', offset: 0, by: -1, bodyRows: 4, contentRows: 4, origin: { kind: 'person' }, pointer: { column: 2, row: 1 } } as never)
+  expect(offsets).toEqual([0, 0])
+  expect(codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]).toBe(top)
   await pane.unmount()
 })
 
