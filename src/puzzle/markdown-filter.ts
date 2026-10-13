@@ -215,28 +215,34 @@ const PRIVATE = /[\uE000-\uF8FF]/g
 const SPAN_MARK = '\uE000'
 const FIRST_SPAN = 0xe100
 
-/** Names whose value is a secret: `key`, `token`, `secret`, `pass` (`passwd`, `password`), `pwd`, `auth`, `credential`, `private`. */
-const SECRET_NAME = String.raw`[\w.-]*(?:key|token|secret|pass|pwd|auth|credential|private)[\w.-]*`
-/** A value taken whole: a quoted string (to its closing quote, or the line's end), else a run of non-space. */
-const SECRET_VALUE = String.raw`(?:"[^"\n]*"?|'[^'\n]*'?|\S+)`
+/**
+ * Names whose value is a secret: `key`, `token`, `secret`, `pass` (`passwd`, `password`), `pwd`, `auth`, `credential`, `private`.
+ * Bounded either side, so a long run of such names (`key-key-key…`) is not tried every way.
+ */
+const SECRET_NAME = String.raw`[\w.-]{0,64}?(?:key|token|secret|pass|pwd|auth|credential|private)[\w.-]{0,64}`
+/** A value taken whole: a quoted string (backslash escapes and doubled quotes kept inside, to its closing quote or the line's end), else a run of non-space. */
+const SECRET_VALUE = String.raw`(?:"(?:[^"\\\n]|\\.|"")*"?|'(?:[^'\\\n]|\\.|'')*'?|\S+)`
 
 /**
- * Token shapes a span may hold, in order: connection-string passwords, JWTs, bearer tokens, known prefixes,
- * secret assignments and password flags (the name is kept), `-p` passwords, long base64 runs and long runs
- * mixing letters and digits. Fails closed: an ordinary word may be taken too.
+ * Token shapes a span may hold, in order: connection-string passwords, JWTs, bearer and basic credentials, known
+ * prefixes, secret assignments and password flags (the name is kept), `user:password` after `-u`/`--user`, `-p`
+ * passwords, long base64 runs and long runs mixing letters and digits. A blocklist: a secret of another shape still shows.
  */
 const SECRET_RULES: readonly { pattern: RegExp; to: string }[] = [
-  { pattern: /\b([a-z][\w+.-]*:\/\/[^\s:/@]*:)[^\s@]+@/gi, to: '$1[secret]@' },
+  // The password runs to the last `@` before the path, so one holding `@` is hidden whole.
+  { pattern: /(?<![\w+.-])([a-z][\w+.-]{0,30}:\/\/[^\s:/@]*:)[^\s/]*@/gi, to: '$1[secret]@' },
   { pattern: /\beyJ[\w-]+\.[\w-]+\.[\w-]*/g, to: '[secret]' },
-  { pattern: /\b(Bearer[ \t]+)\S+/gi, to: '$1[secret]' },
+  { pattern: /\b((?:Bearer|Basic)[ \t]+)\S+/gi, to: '$1[secret]' },
   { pattern: /\b(?:gh[oprsu]_|github_pat_|sk_|pk_|rk_|sk-|xox[abprs]-|AKIA|AIza)[\w-]{6,}/g, to: '[secret]' },
-  { pattern: new RegExp(String.raw`\b(${SECRET_NAME}["']?[ \t]*[=:]{1,2}[ \t]*)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
+  { pattern: new RegExp(String.raw`(?<![\w.-])(${SECRET_NAME}["']?[ \t]*[=:]{1,2}[ \t]*)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
   { pattern: new RegExp(String.raw`((?<![\w-])--?${SECRET_NAME}[ \t]+)(?!-)${SECRET_VALUE}`, 'gi'), to: '$1[secret]' },
-  // `-pVALUE` (mysql and the like): any value after a mysql or mariadb command, else one that is not a lowercase flag (`-print`).
-  { pattern: /(?<=\b(?:mysql|mariadb)\w*\b.*)(?<![\w-])(-p)\S+/g, to: '$1[secret]' },
+  { pattern: /((?<![\w-])(?:-u|--user)(?:[ \t]+|=)?[^\s:]*:)\S+/g, to: '$1[secret]' },
+  // `-pVALUE`: any value after a mysql, mariadb or sshpass command, else one that is not a lowercase flag (`-print`).
+  { pattern: /(?<![\w-])(-p)(?<=\b(?:mysql|mariadb|sshpass)\w*\b.*-p)\S+/g, to: '$1[secret]' },
   { pattern: /(?<![\w-])(-p)(?![a-z]+(?!\S))\S+/g, to: '$1[secret]' },
   { pattern: /(?<![\w+/=-])(?=[\w+/=-]*\d)[\w+/-]{30,}={0,2}/g, to: '[secret]' },
-  { pattern: /\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{20,}/g, to: '[secret]' },
+  // Tried only where a run starts (a suffix of a run is never longer), so a long run is read once, not from every `-`.
+  { pattern: /(?<![\w-])(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{20,}/g, to: '[secret]' },
 ]
 
 /** A backtick span's text as the pane shows it: secret shapes, then the value shapes (URLs, emails, IDs, ...). */
@@ -246,8 +252,8 @@ export function filterSpan(text: string): string {
   return filterValues(out).text
 }
 
-/** Text ending in a title or role word: a span right after it is a name (`Dr. `Roe``, `patient `Jane``). */
-const AFTER_TITLE = /(?:\b(?:Mr|Mrs|Ms|Mx|Dr|Prof)\.?|\b(?:patient|pt|client|member|resident)[\s:.,]*)\s*$/i
+/** Text ending in a title or role word, or a name: a span right after it is a name (`Dr. `Roe``, `patient `Jane``, `Dr. Jane `Roe``). */
+const AFTER_TITLE = /(?:\b(?:Mr|Mrs|Ms|Mx|Dr|Prof)\.?|\b(?:patient|pt|client|member|resident)[\s:.,]*|\[name\][\s,]*)\s*$/i
 
 /**
  * A shown prose line for the pane only, never a prompt: backtick spans kept
@@ -263,10 +269,15 @@ function localProse(line: string, mode: PrivacyMode): string {
     return SPAN_MARK + String.fromCharCode(FIRST_SPAN + spans.length - 1)
   })
   const prose = filterProse(marked, mode === 'strict' ? 'standard' : mode).text
-  return prose
-    .replace(/\uE000([\uE100-\uF8FF])/g, (_, c: string, at: number, all: string) =>
-      AFTER_TITLE.test(all.slice(0, at)) ? '[name]' : `\`${filterSpan(spans[c.charCodeAt(0) - FIRST_SPAN] ?? '')}\``)
-    .replace(PRIVATE, '')
+  // Marks go back one at a time against the line built so far, so a span after a titled span is a name too.
+  let out = ''
+  let from = 0
+  for (const m of prose.matchAll(/\uE000([\uE100-\uF8FF])/g)) {
+    out += prose.slice(from, m.index)
+    out += AFTER_TITLE.test(out) ? '[name]' : `\`${filterSpan(spans[m[1]!.charCodeAt(0) - FIRST_SPAN] ?? '')}\``
+    from = m.index + m[0].length
+  }
+  return (out + prose.slice(from)).replace(PRIVATE, '')
 }
 
 /**

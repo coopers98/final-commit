@@ -159,10 +159,16 @@ window, offsets, counts and clamping work on the wrapped rows.
   `[secret]`: known prefixes (`ghp_`, `gho_`, `github_pat_`, `sk_`, `pk_`,
   `xox`, `AKIA`, `AIza`), assignments and flags whose name (quoted or not)
   contains `KEY`, `TOKEN`, `SECRET`, `PASS`, `PWD`, `AUTH`, `CREDENTIAL` or
-  `PRIVATE` (a quoted value taken whole), `-p` passwords, connection-string
-  passwords, JWTs, `Bearer` tokens, base64 runs of 30 or more with a digit,
-  and any run of 20 or more letters and digits mixing both. It fails closed.
-- What a span still shows, stated plainly: other quoted text inside a span
+  `PRIVATE` (a quoted value taken whole, escapes included), `-p` passwords
+  (any after `mysql`, `mariadb` or `sshpass`; elsewhere any but a lowercase
+  word, so `-print` stays), the password after `-u`/`--user user:`,
+  connection-string passwords, JWTs, `Bearer` and `Basic` credentials,
+  base64 runs of 30 or more with a digit, and any run of 20 or more letters
+  and digits mixing both. Names are bounded (64 characters either side) so
+  a crafted run cannot make the rule slow.
+- What a span still shows, stated plainly: the rule is a list of shapes,
+  so a secret of any other shape in a span is shown locally (a lowercase
+  `-psecret` outside those commands, say). Other quoted text inside a span
   (`'hunter2'`) is shown as written, because inside a span it is code.
   That is part of what the user accepted.
 - Each mission builds two unit sets from one read of each file: prompt

@@ -457,6 +457,43 @@ test('locally, a span after a title or role word is a name', async () => {
   expect(local('- Ask the `lead` first.')[0]).toBe('- Ask the `lead` first.')
 })
 
+test('locally, a span after a titled name is a name too', async () => {
+  expect(local('- Ask Dr. `Jane` `Roe` first.')[0]).toBe('- Ask Dr. [name] [name] first.')
+  expect(local('- Ask Dr. Jane `Roe` first.')[0]).toBe('- Ask [name] [name] first.')
+})
+
+test('locally, an escaped quote does not end a secret value early', async () => {
+  const a = local('- Set `token: "a\\"b c"` once.')[0]!
+  expect(a).toBe('- Set `token: [secret]` once.')
+  const b = local("- Set `password: 'it''s'` once.")[0]!
+  expect(b).toBe('- Set `password: [secret]` once.')
+})
+
+test('locally, curl user passwords, Basic credentials and an @ in a connection password are hidden', async () => {
+  // Built from parts so the secret scanner does not take the invented password for a real one.
+  const curl = ['curl', '-u', 'nova:hunter2', 'x'].join(' ')
+  expect(local(`- Run \`${curl}\` once.`)[0]).toBe('- Run `curl -u nova:[secret] x` once.')
+  expect(local(`- Run \`${['curl', '--user', 'nova:pw', 'x'].join(' ')}\` once.`)[0]).toBe('- Run `curl --user nova:[secret] x` once.')
+  expect(local('- Send `Basic Zm9v` once.')[0]).toBe('- Send `Basic [secret]` once.')
+  expect(local('- Use `postgres://u:p@ss@host/x` here.')[0]).toBe('- Use `postgres://u:[secret]@host/x` here.')
+  expect(local('- Run `sshpass -phunter ssh nova` once.')[0]).toBe('- Run `sshpass -p[secret] ssh nova` once.')
+})
+
+test('locally, a long run of secret-like names filters fast, per span and per file', async () => {
+  for (const unit of ['key-', 'key.', '-key', 'key_', 'pass', '--key ', 'mysql -p ', 'a.', 'x://a:']) {
+    const line = `- \`${unit.repeat(Math.floor(1_990 / unit.length))}\``
+    const at = Date.now()
+    local(line)
+    expect(Date.now() - at).toBeLessThan(100)
+  }
+  // Before the bounded names a line like these took about 650 ms. What is left (a few ms a line) is the value filter's
+  // own ID rule, shared with prompts, which reads a long hyphenated run from each word in it.
+  const file = Array.from({ length: 64 }, (_, i) => `- \`${(i % 2 ? 'key.' : 'key-').repeat(495)}\``).join('\n')
+  const at = Date.now()
+  filterMarkdown(file, 'strict', { local: true })
+  expect(Date.now() - at).toBeLessThan(1_000)
+})
+
 test('a section unreadable in prompt text but readable locally is only a local unit', async () => {
   const doc = md('# Build steps', '- Run `ci` `lint` `test`.', '- Then `deploy` `cache` `warm`.', '- Finally `tag` `push` `notify`.', '- Check `logs` `alerts` `pager`.')
   const io = {
