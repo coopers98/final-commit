@@ -123,3 +123,8 @@ export function isOverCode(at: { isColumns: boolean; codeRows: number; bodyOffse
   const row = pointer.row + at.bodyOffset
   return pointer.column >= 0 && row >= 0 && (at.isColumns || row < at.codeRows)
 }
+
+/** Whether a wheel at `pointer` moves the code: over the code, and the code window has rows it does not show. Else the body scrolls. */
+export function wheelMovesCode(at: { isColumns: boolean; codeRows: number; bodyOffset: number; visible: number; total: number }, pointer: { column: number; row: number }): boolean {
+  return at.total > at.visible && isOverCode(at, pointer)
+}

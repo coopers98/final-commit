@@ -115,8 +115,9 @@ window, offsets, counts and clamping work on the wrapped rows.
 - Scrolling the code, before and after the answer: `j`/`k` one wrapped
   row, `space`/`b` a window's height, typed into the Input that takes the
   answer digits. The wheel, through a `ui.scroll` hook on the Analyze
-  pane: when the event has a `pointer` over the code window's rows (or
-  the whole body in two columns), the hook moves the code offset by `by`
+  pane: when the code window has rows it does not show and the event has
+  a `pointer` over the window's rows (or the whole body in two columns),
+  the hook moves the code offset by `by`
   and passes `next({ ...e, offset })` with the body offset it last drew
   (not `e.offset - e.by`: the engine's offset is already clamped to the
   tree, so that would move the body at its top or bottom edge), so the

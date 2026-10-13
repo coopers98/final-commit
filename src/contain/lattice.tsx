@@ -5,7 +5,7 @@ import { CELLS, LATTICE_SHARED, PUZZLE_VIEW, TIER_SPECS, type Cell, type Tier } 
 import { tierColor } from '../bridge/color'
 import { answerPuzzle, attemptContainment, disputePuzzle, CELL_KEYS, cellsOf, parseCell } from '../game'
 import { analyzeKey, analyzeView, DISPUTED_LINE, resultLines } from '../puzzle/analyze'
-import { clampOffset, isOverCode, paneSize, puzzleLayout, scrollKey, type PanelLine } from '../puzzle/layout'
+import { clampOffset, paneSize, puzzleLayout, scrollKey, wheelMovesCode, type PanelLine } from '../puzzle/layout'
 import type { Puzzle } from '../puzzle/puzzle'
 import type { Rng } from '../rng'
 import { NO_MOOD, rngFor, snapshot } from '../runtime'
@@ -433,8 +433,9 @@ export function wireLattice(on: On): void {
 
   on('ui.scroll', { component: 'Pane', requestId: ANALYZE_PANE }, async ($, e, next) => {
     const s = shown
-    // The wheel over the code moves the code and the body stays put; anything else is the engine's.
-    if (!s || !e.pointer || !isOverCode({ ...s }, e.pointer)) return next(e)
+    // The wheel over a code window with rows to scroll moves the code and the body stays put; anything else
+    // (a code window already showing every row, too) is the engine's, so an overflowing panel still scrolls.
+    if (!s || !e.pointer || !wheelMovesCode(s, e.pointer)) return next(e)
     await scrollCode($, e.by)
     return next({ ...e, offset: s.bodyOffset })
   })

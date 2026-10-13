@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { AnalyzeView } from '../types'
 import { PUZZLE_VIEW } from '../src/config'
 import { marksOf } from '../src/puzzle/analyze'
-import { clampOffset, codeWindow, dockColumns, gutterWidth, isOverCode, panelLines, paneSize, puzzleLayout, scrollKey, wrapCode } from '../src/puzzle/layout'
+import { clampOffset, codeWindow, dockColumns, gutterWidth, isOverCode, panelLines, paneSize, puzzleLayout, scrollKey, wheelMovesCode, wrapCode } from '../src/puzzle/layout'
 
 // Invented content only (SPEC 15).
 
@@ -107,6 +107,15 @@ test('the wheel moves the code over the whole body in two columns, over the wind
   const stacked = { isColumns: false, codeRows: 4, bodyOffset: 2 }
   expect(isOverCode(stacked, { column: 3, row: 1 })).toBe(true)
   expect(isOverCode(stacked, { column: 3, row: 2 })).toBe(false)
+})
+
+test('the wheel moves the code only while the code window has rows to scroll', async () => {
+  const stacked = { isColumns: false, codeRows: 4, bodyOffset: 0, visible: 4, total: 9 }
+  expect(wheelMovesCode(stacked, { column: 3, row: 1 })).toBe(true)
+  // The code already fits: the wheel is the body's, so an overflowing panel still scrolls.
+  expect(wheelMovesCode({ ...stacked, total: 4 }, { column: 3, row: 1 })).toBe(false)
+  expect(wheelMovesCode({ ...stacked, isColumns: true, total: 3 }, { column: 3, row: 1 })).toBe(false)
+  expect(wheelMovesCode(stacked, { column: 3, row: 6 })).toBe(false)
 })
 
 test('stacked, a short body never cuts the explanation: the window keeps minCodeRows and the body scrolls', async () => {

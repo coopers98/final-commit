@@ -1734,6 +1734,25 @@ test('the wheel over the code scrolls the code, not the body', { options: { puzz
   await pane.unmount()
 })
 
+test('when the code window already shows every row, the wheel scrolls the body as the engine says', { options: { puzzles: 'local' } }, async ($, on) => {
+  const w = world(on, { git: missionGit })
+  on('tool.call', () => ({ result: { stdout: '' } }) as never)
+  const offsets: number[] = []
+  on('ui.scroll', (_$, e) => {
+    offsets.push(e.offset)
+    return {}
+  })
+  await missionWithCode($, on, w)
+  await run($, 'contain')
+  const pane = await $.ui.mount(SIZED('fc-analyze', 100, 80))
+  const top = codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]
+  await $.ui.scroll({ component: 'Pane', requestId: 'fc-analyze', offset: 3, by: 3, bodyRows: 80, contentRows: 90, origin: { kind: 'person' }, pointer: { column: 2, row: 1 } } as never)
+  // Not pinned to the drawn offset (0): the engine's own offset goes through, and the code did not move.
+  expect(offsets).toEqual([3])
+  expect(codeRows((await pane.findAll({ type: 'Text' })).map(t => t.text))[0]![0]).toBe(top)
+  await pane.unmount()
+})
+
 test('/contain with a Containment pane still open closes it, so only Analyze shows', { options: { puzzles: 'local' } }, async ($, on) => {
   const w = world(on, { git: missionGit })
   on('tool.call', () => ({ result: { stdout: '' } }) as never)
