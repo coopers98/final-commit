@@ -494,6 +494,7 @@ src/
   bridge/                         status.ts, bay.ts, bridge.ts, alert.ts, log.ts, text.ts (pure); band.tsx, bay-pane.tsx, bridge-pane.tsx
 tests/                            *.test.ts(x) (claude plugin test)
 scripts/harness-check.mjs         Trace's harness run for real under node --test (the plugin's tests cannot start a process)
+scripts/growth-check.mjs          Complexity Read's keys against measured growth under node --test (the plugin's tests cannot run generated code)
 ```
 
 The engine's validator only lets `$` reach top-level functions of the file that uses it, so each wiring file (`hooks/register.tsx`, `src/contain/*.tsx`, `src/bridge/*-pane.tsx`) has its own small store adapter; everything else is pure and takes plain values.

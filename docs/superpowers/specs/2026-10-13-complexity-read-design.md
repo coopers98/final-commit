@@ -544,9 +544,13 @@ Returns a `Puzzle` with `type: 'complexity-read'`, the unit's lines as
   stored value (serialize and search).
 - **Empirical check (TS):** a test corpus of TS functions the reader
   accepts is run in node with an iteration counter inserted at each loop
-  and builtin call site, at n = 8, 16, 32 (and m alike); the growth ratio
-  must match the key's class. Catches classes of error, not only listed
-  cases.
+  and builtin call site, at n = 64, 128, 256 (and m alike); the growth
+  ratio must match the key's class. Catches classes of error, not only
+  listed cases. The corpus and its keys live in
+  `tests/complexity-growth-corpus.ts` (keys checked by
+  `complexity-growth.test.ts`); the measuring runs in
+  `scripts/growth-check.mjs`, since the plugin's tests disallow code
+  generation from strings.
 - `complexity-read.test.ts`: choices from the table, shuffled with a
   seed; the question's size line; the explanation; weighting with a
   stubbed `weightOf`; no unit with a cost gives none.
