@@ -419,9 +419,9 @@ everything else fails.
   non-primitive values, a whole entry), its properties (not
   `.length`/`.size`) and its elements are opaque. One may be compared,
   used as a key (`has`, `get`, `add`, `set`, an accumulator's index) or
-  pushed; it never takes a method call or `+`, is never aliased (a
-  declaration or assignment), handed to another call, spread or iterated.
-  A map's results are opaque.
+  pushed; it never takes a method call or `+`, is never handed to another
+  call, spread or iterated. An alias of one (a declaration or assignment)
+  is a closed local. A map's results are opaque.
 
 Fix round 3 (default-refuse rules):
 
@@ -443,7 +443,13 @@ Fix round 3 (default-refuse rules):
   `charCodeAt`, `codePointAt`, `at`, and `toFixed` with a literal
   argument. A value that is neither a known collection nor such a value
   takes no method. An unbound name (a module) keeps the rule: other calls
-  cost 1.
+  cost 1. That rule covers only calls through unbound names and helpers.
+  A method called on a parameter, a local, a loop element or a literal
+  matches a known collection kind's listed builtins, or the closed list
+  above on a string- or number-typed value or a string or number literal
+  union (`'a' | 'b'`, `1 | 2`); any other receiver (a tuple or object
+  type, an untyped or named type, `String`, any other union) refuses
+  (fix round 4). Property reads are unchanged.
 - **reduce (D).** The accumulator is a number only when its start is a
   number and every return of the callback is proven a number, assuming
   the accumulator is.
@@ -453,7 +459,7 @@ Fix round 3 (default-refuse rules):
   unions, named and other types fail. Several `===` exits on one element
   may be avoided together.
 - **Binary search (F).** After `mid`: an optional equality exit (`S[mid]
-  === v`, S the search's number or string source, v a literal or another
+  === v`, S any number or string source, v a literal or another
   parameter; a lone return or break), then one if/else on a comparison
   reading `mid` whose branches set exactly `lo` and `hi`, one each. Any
   other body fails.

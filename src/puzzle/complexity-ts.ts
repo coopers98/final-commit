@@ -634,7 +634,8 @@ type Kind = 'array' | 'string' | 'set' | 'map' | 'numeric' | 'bool' | 'fixed' | 
 /** What an element is: a primitive, or `opaque` (any other or unknown type: property reads and comparisons only). */
 type ElemType = 'number' | 'string' | 'boolean' | 'opaque'
 /** `elem`: an array's or Set's element type, a Map's value type; `key`: a Map's key type. */
-type Param = { name: string; kind: Kind; elem?: ElemType; key?: ElemType }
+/** `literal`: an `other` parameter typed as a union of string literals, or of number literals (ruling C). */
+type Param = { name: string; kind: Kind; elem?: ElemType; key?: ElemType; literal?: 'string' | 'number' }
 
 /** Splits `toks` at `sep` outside brackets of any kind. */
 function splitTop(toks: Tok[], sep: string): Tok[][] {
@@ -672,6 +673,8 @@ function elemTypeOf(toks: Tok[]): ElemType {
 /** Spec "Typed receivers": arrays, `string`, `Set<…>`, `Map<…>` (optionally `| undefined`/`| null`); numbers are sizes by value. */
 function classify(type: Tok[]): Omit<Param, 'name'> {
   const parts = splitTop(type, '|').filter((p) => !(p.length === 1 && (isWord(p[0], 'undefined') || isWord(p[0], 'null'))))
+  const literal = parts.length === 0 ? undefined : parts.every((q) => q.length === 1 && q[0]!.t === 'str') ? 'string' : parts.every((q) => (q.length === 1 && q[0]!.t === 'num') || (q.length === 2 && isP(q[0], '-') && q[1]!.t === 'num')) ? 'number' : undefined
+  if (literal) return { kind: 'other', literal }
   if (parts.length !== 1) return { kind: 'other' }
   let p = parts[0]!
   if (p.length === 1 && (isWord(p[0], 'number') || isWord(p[0], 'bigint'))) return { kind: 'numeric' }
@@ -2313,10 +2316,12 @@ class Reader {
     // and then only the closed O(1) list. An unbound name (a module) keeps the rule: other calls cost 1.
     const isModule = obj.k === 'id' && !this.isBound(obj.name)
     const isValue = recv === 'expr' || recv === 'scalar' || recv === 'numeric' || recv === 'bool' || (recv === 'plain' && !isModule)
-    if (isValue) {
-      need(this.isPrimitiveValue(obj, env) && SCALAR_METHODS.has(m))
-      if (m === 'toFixed') need(n.args.length === 1 && numLit(n.args[0]) !== undefined)
-    }
+    // Fix round 4: a parameter of no known collection kind (`fixed`, `other`) takes a method only as a string or
+    // number literal union, and then only the closed O(1) list for its type.
+    const literal = recv === 'fixed' || recv === 'other' ? this.params.get(name)?.literal : undefined
+    if (recv === 'fixed' || recv === 'other') need(literal === 'string' ? STRING_METHODS.has(m) : literal === 'number' && m === 'toFixed')
+    if (isValue) need(this.isPrimitiveValue(obj, env) && SCALAR_METHODS.has(m))
+    if (m === 'toFixed') need(n.args.length === 1 && numLit(n.args[0]) !== undefined)
     // Reached through a closed local or an accumulator (`o.a`, `acc[k]`): lookups and appends only.
     const rootLocal = root ? this.locals.get(root.name) : undefined
     if (obj.k !== 'id' && root && (rootLocal?.k === 'acc' || (rootLocal?.k === 'local' && !this.scalarLocals.has(root.name)))) need(COLL_METHODS.has(m))
@@ -2345,7 +2350,8 @@ class Reader {
         if (POSITIONAL.has(m)) need(this.isPosition(n.args[0], env))
         return this.costOfArgs(n.args, env, true)
       default:
-        need(!COUNTED.has(m))
+        // Left here: a module's call (1 by the rule), a proven string or number value, or a literal union parameter.
+        need(!COUNTED.has(m) && (isModule || isValue || literal !== undefined))
         return add(this.costOfObject(obj, env), this.costOfArgs(n.args, env, COLL_METHODS.has(m) && obj.k !== 'id'))
     }
   }

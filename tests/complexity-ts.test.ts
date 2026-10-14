@@ -831,3 +831,24 @@ test('ruling F: a binary search is mid, an optional equality exit, then an if/el
   expect(answer(bs('lo <= hi', 'items.length - 1', 'if (items[mid] === x) {', '  return mid', '}', 'if (items[mid] < x) {', '  lo = mid + 1', '} else {', '  hi = mid - 1', '}'))).toBe('O(log n)')
   expect(answer(bs('lo < hi', 'items.length', 'if (items[mid] < x) {', '  lo = mid + 1', '} else {', '  hi = mid', '}'))).toBe('O(log n)')
 })
+
+test('ruling C (fix round 4): a method on a parameter that is not a known collection, string or number refuses', async () => {
+  // Reviewer.
+  expect(answer(fn("n: number, s: 'a' | 'b'", 'let t = 0', 'for (let i = 0; i < n; i++) {', '  t += s.repeat(n).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("items: number[], s: 'a' | 'b'", 'let t = 0', 'for (const x of items) {', '  t += s.repeat(items.length).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("n: number, s: 'x'", 'let t = 0', 'for (let i = 0; i < n; i++) {', '  t += s.padStart(n).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("items: number[], s: 'a' | 'b'", 'let t = 0', 'for (const x of items) {', '  t += s.repeat(t).length', '}', 'return t'))).toBe(undefined)
+  for (const type of ['String', 'string | number', 'Text']) {
+    expect(answer(fn(`n: number, s: ${type}`, 'let t = 0', 'for (let i = 0; i < n; i++) {', '  t += s.repeat(n).length', '}', 'return t'))).toBe(undefined)
+  }
+  expect(answer(fn('n: number, s', 'let t = 0', 'for (let i = 0; i < n; i++) {', '  t += s.repeat(n).length', '}', 'return t'))).toBe(undefined)
+  // Own: a method outside the list on a literal union, a number union, a tuple, an object and a callback.
+  expect(answer(fn("items: number[], s: 'a' | 'b'", 'let t = 0', 'for (const x of items) {', '  t += s.toUpperCase().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], k: 1 | 2', 'let t = 0', 'for (const x of items) {', '  t += k.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], p: [string, string]', 'let t = 0', 'for (const x of items) {', '  t += p.join().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], o: { a: string }', 'let t = 0', 'for (const x of items) {', '  t += o.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], cb: (x: number) => number', 'let t = 0', 'for (const x of items) {', '  t += cb.call(null, x)', '}', 'return t'))).toBe(undefined)
+  // The list itself on a string or number literal union.
+  expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'for (const x of items) {', "  if (s.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: number[], k: 1 | 2', 'let t = 0', 'for (const x of items) {', '  t += k.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
+})
