@@ -353,6 +353,12 @@ export type HiddenScan = { lines: readonly string[]; last: number; open: string 
 /** A fresh scan over a unit's `lines`, for one run of `hidden`; after it, `open` must be undefined. */
 export const hiddenScan = (lines: readonly string[]): HiddenScan => ({ lines, last: -1, open: undefined })
 
+/** A function or method name that may end the process or raise a signal (task 6 fix rounds 1 and 2): it holds an exit part, any case, or is an exit word. */
+export function isExitName(name: string): boolean {
+  const n = name.replace(/^\$/, '')
+  return COMPLEXITY.exitNameParts.some((p) => n.toLowerCase().includes(p)) || COMPLEXITY.exitWords.includes(n)
+}
+
 /** Stands for one string literal in a line's skeleton. */
 const STR = '\u0001'
 
@@ -483,12 +489,13 @@ function skeletonTokens(code: string, lang: 'TypeScript' | 'Python' | 'PHP'): HT
 const LITERAL_WORDS: Record<string, readonly string[]> = { Python: ['True', 'False', 'None'], TypeScript: ['true', 'false', 'null', 'undefined'], PHP: ['true', 'false', 'null'] }
 
 /**
- * Fix round 1 (task 6): a hidden line is one of a closed set of forms, so it
- * can neither raise nor exit but where an exit is allowed. `plain`: a
- * comment, a string statement, a call of a name (or `module.name`) with
- * literal arguments, a literal given to a name, an else or a close; `exit`:
- * a return or raise of literals, a break or continue, a call of an exit name.
- * Undefined for anything else.
+ * Task 6 fix rounds 1 and 2: a hidden line is one of a closed set of forms,
+ * so it can neither raise nor exit but where an exit is allowed. `plain`: a
+ * comment, a string statement (a docstring), `pass`, an else or a close;
+ * `exit`: a return or raise of literals, a break or continue, a call of an
+ * exit name with literal arguments. No call and no assignment is plain: a
+ * literal word or a host builtin raises when called, and a name may shadow a
+ * helper the shown code calls. Undefined for anything else.
  */
 function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain' | 'exit' | undefined {
   let ts = toks
@@ -528,7 +535,6 @@ function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain
     k++
     return true
   }
-  const exitName = (n: string): boolean => COMPLEXITY.exitCalls.includes(n.replace(/^\$/, '')) || COMPLEXITY.exitWords.includes(n)
   if (done()) return 'plain'
   if (ts.every((t) => t.t === 'str')) return 'plain'
   const words = ts.map((t) => (t.t === 'p' || t.t === 'id' ? t.v : t.t)).join(' ')
@@ -555,19 +561,8 @@ function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain
     k++
     return done() || (litArgs() && done()) ? 'exit' : undefined
   }
-  // A literal given to a fresh name (the names rule keeps it fresh).
-  const start = k
-  const declared = lang === 'TypeScript' && (w('const') || w('let'))
-  if (declared) k++
-  const target = name()
-  // TypeScript declares it (assigning an undeclared name throws in strict code); PHP's is a variable.
-  if (target !== undefined && (lang === 'TypeScript' ? declared : lang !== 'PHP' || target.startsWith('$')) && p('=')) {
-    k++
-    if (lit() && done()) return 'plain'
-    return undefined
-  }
-  // A call of a name or `module.name` with literal arguments.
-  k = start
+  // Fix round 2: no call and no assignment is a plain form (a literal word or a host builtin raises when called, and a
+  // name may shadow a helper the shown code calls); a call of an exit name with literal arguments is an exit form.
   const first = name()
   if (first === undefined || first.startsWith('$')) return undefined
   let fn = first
@@ -578,7 +573,7 @@ function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain
     fn = second
   }
   if (!litArgs() || !done()) return undefined
-  return exitName(fn) || exitName(first) ? 'exit' : 'plain'
+  return isExitName(fn) || isExitName(first) ? 'exit' : undefined
 }
 
 /**
@@ -615,6 +610,6 @@ export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python'
     scan.open = sk.open
     if (at !== undefined) scan.last = at
   }
-  if (form === 'exit' || holds(COMPLEXITY.exitWords) || holds(COMPLEXITY.exitCalls)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
+  if (form === 'exit' || holds(COMPLEXITY.exitWords)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
   return true
 }

@@ -13,7 +13,7 @@
 // assignment raises. Each has its own allowlist below.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, hiddenScan, isInert, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
+import { add, factor, hiddenScan, isExitName, isInert, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -695,8 +695,6 @@ const hasFactors = (c: Cost): boolean => c.some((t) => t.length > 0)
 const NOTHING: Cost = []
 const vtOf = (t: ElemType): VT => (t === 'str' ? 'str' : t === 'opaque' || t === 'object' ? 'opaque' : 'num')
 const isPrimitive = (t: ElemType): boolean => t === 'int' || t === 'float' || t === 'bool' || t === 'str'
-/** A call that ends the process or raises a signal (fix round 1). */
-const isExitName = (name: string): boolean => COMPLEXITY.exitCalls.includes(name) || COMPLEXITY.exitWords.includes(name)
 const iterType = (s: Source): ElemType => (s.kind === 'map' ? s.key : s.elem)
 const indexable = (s: Source | undefined): boolean => s !== undefined && (s.kind === 'list' || s.kind === 'seq' || s.kind === 'str')
 const isEmptyLiteral = (n: Node): 'list' | 'set' | 'dict' | undefined => {
@@ -729,6 +727,8 @@ class Reader {
   readonly sizeLocals = new Map<string, Set<string>>()
   /** Locals a condition outside loops may read (lessons family 2, 6). */
   readonly sizeFree = new Set<string>()
+  /** Names the signature holds besides its parameters (types, `def`): never called. */
+  readonly signatureNames = new Set<string>()
   /** In-place sorts per parameter: a sorted run sorts again in linear time, so nothing sorts it twice. */
   readonly sortedInPlace = new Map<string, number>()
 
@@ -743,6 +743,8 @@ class Reader {
     need(lines.every((l) => !isBlankedLine(l)) || this.unit.hidden !== undefined)
     const sig = readSignature(lines[0]!, this.unit.name)
     for (const p of sig.params) this.params.set(p.name, p)
+    // Fix round 2: a name the signature uses as a type is a class, never a helper (a call may need arguments it lacks).
+    for (const t of tokenize(lines[0]!.trim())) if (t.t === 'id' && !this.params.has(t.v) && t.v !== this.unit.name) this.signatureNames.add(t.v)
     this.skipped = sig.skipped
     const tree = treeByIndent(lines)
     if (!tree) refuse()
@@ -2061,8 +2063,8 @@ class Reader {
     need(!(callee.k === 'name' && isExitName(callee.name)) && !(callee.k === 'attr' && isExitName(callee.name)))
     if (callee.k === 'name') {
       if (GLOBALS.has(callee.name)) return this.builtinCall(callee.name, n, env)
-      // A helper: 1 by the rule. A bound name is never called.
-      need(!this.isBound(callee.name))
+      // A helper: 1 by the rule. A bound name, or a type the signature names, is never called.
+      need(!this.isBound(callee.name) && !this.signatureNames.has(callee.name))
       return { c: this.scalarArgs(n, env), vt: 'opaque' }
     }
     need(callee.k === 'attr' && isName(callee.obj))

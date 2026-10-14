@@ -70,7 +70,7 @@ test('a callback is a loop body, and its cost multiplies', async () => {
 
 test('hidden lines: inert passes, a hidden cost fails, a hidden line without hidden() fails', async () => {
   const lines = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    …', '    t += x', '  }', '  return t', '}']
-  const raw: Record<number, string> = { 3: "    log('step')" }
+  const raw: Record<number, string> = { 3: '    // step' }
   const withHidden = (r: Record<number, string>): Unit => ({ ...ts(...lines), hidden: check => Object.entries(r).every(([at, text]) => check(text, Number(at))) })
   expect(answer(withHidden(raw))).toBe('O(n)')
   expect(answer(withHidden({ 3: "    t += items.indexOf(x) // 'x'" }))).toBe(undefined)
@@ -540,7 +540,7 @@ test('a hidden exit passes only last at body level or last in a guard outside lo
 
 test('the reader reads full lines and numbers sites from the shown offset', async () => {
   const full = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  …', '}']
-  const unit: Unit = { lang: 'TypeScript', name: 'f', lines: full.slice(0, 5), full: { lines: full, offset: 0 }, hidden: (check) => check("  log('done')", 5) }
+  const unit: Unit = { lang: 'TypeScript', name: 'f', lines: full.slice(0, 5), full: { lines: full, offset: 0 }, hidden: (check) => check('  // done', 5) }
   expect(costOf(unit)?.explanation).toBe('Line 3: loop over items. n = O(n).')
   expect(costOf({ ...unit, hidden: (check) => check('  return items.length // c', 5) })).toBe(undefined)
 })
@@ -873,7 +873,9 @@ test('fix round 5: a literal-typed parameter is no size, loop source or length',
 test('task 6 fix round 1: a hidden line that may raise or exit fails, in a loop or before it', async () => {
   const inLoop = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    …', '    t += x', '  }', '  return t', '}']
   const before = ['function f(items: number[]): number {', '  …', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  return t', '}']
-  expect(answer(withHidden(inLoop, { 3: "    log('step')" }))).toBe('O(n)')
+  expect(answer(withHidden(inLoop, { 3: '    // step' }))).toBe('O(n)')
+  // Fix round 2: a hidden call is no hidden form.
+  expect(answer(withHidden(inLoop, { 3: "    log('step')" }))).toBe(undefined)
   expect(answer(withHidden(before, { 1: '  // note' }))).toBe('O(n)')
   for (const raw of ['const z = (1 as any).x.y // c', 'process.exit(1) // stop', "JSON.parse('') // c", 'const z = q.r // c', "lib.abort('x') // c", 'const z = 1 / q // c']) {
     expect([raw, answer(withHidden(inLoop, { 3: `    ${raw}` }))]).toEqual([raw, undefined])
@@ -910,4 +912,28 @@ test('task 6 fix round 1: a property or index write needs a receiver that is nev
   expect(answer(write('const v = null', 'v.a = x'))).toBe(undefined)
   expect(answer(write('const v = null', 'v[x] = 1'))).toBe(undefined)
   expect(answer(write('const v = lib.make()', 'v.a = x'))).toBe(undefined)
+})
+
+// --- Task 6 fix round 2 -----------------------------------------------------------
+
+test('task 6 fix round 2: an index read or write needs a receiver that is never null, and a primitive takes no write', async () => {
+  const loop = (decl: string, line: string): Unit => fn('items: number[]', 'let t = 0', decl, 'for (const x of items) {', `  ${line}`, '  t += x', '}', 'return t')
+  expect(answer(loop('const v: number[] = []', 'v[x] = 1'))).toBe('O(n)')
+  expect(answer(loop('const v = null', 'const w = v[x]'))).toBe(undefined)
+  expect(answer(loop('const v = null', "const w = v['a']"))).toBe(undefined)
+  expect(answer(loop("let v = 'ab'", 'v[0] = 1'))).toBe(undefined)
+  expect(answer(loop("let v = 'ab'", 'v.a = 1'))).toBe(undefined)
+  expect(answer(loop('let v = 3', 'v.a = 1'))).toBe(undefined)
+  expect(answer(loop('const v = [1]', 'v.length = -1'))).toBe(undefined)
+})
+
+test('task 6 fix round 2: an exit name matches by substring; toFixed takes 0 to 20; a signature type is never called', async () => {
+  const after = (line: string, params = 'items: number[]'): Unit => fn(params, 'let t = 0', 'for (const x of items) {', '  t += 1', '}', line, 'return t')
+  expect(answer(after('lib.log(t)'))).toBe('O(n)')
+  for (const line of ['process.reallyExit(1)', 'lib.dieRoll()', 'lib.onSignal(1)', 'lib.crashNow()', 'lib.panic()', 'lib.terminateAll()', 'lib.segvHere()']) expect([line, answer(after(line))]).toEqual([line, undefined])
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(200).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(21).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(after('Foo(1)', 'items: Foo[]'))).toBe(undefined)
+  expect(answer(after('Bar(1)', 'items: Foo[]'))).toBe('O(n)')
 })

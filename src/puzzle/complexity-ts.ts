@@ -6,7 +6,7 @@
 // not, so every doubt refuses.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, hiddenScan, isInert, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
+import { add, factor, hiddenScan, isExitName, isInert, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -149,10 +149,8 @@ const KEYWORDS = new Set(['yield', 'function', 'class', 'goto', 'do', 'switch', 
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=', '&&=', '||=', '??='])
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6, '===': 6, '!==': 6, '<': 7, '>': 7, '<=': 7, '>=': 7, instanceof: 7, in: 7, '<<': 8, '>>': 8, '>>>': 8, '+': 9, '-': 9, '*': 10, '/': 10, '%': 10, '**': 11 }
 
-/** A function or method that ends the process or raises a signal (task 6 fix round 1). */
 /** String and number methods that always return a string or number (`at` and `codePointAt` may return undefined). */
 const NON_NULL_METHODS = new Set(['charAt', 'charCodeAt', 'toFixed'])
-const isExitName = (name: string): boolean => COMPLEXITY.exitCalls.includes(name) || COMPLEXITY.exitWords.includes(name)
 const isTarget = (n: Node): boolean => n.k === 'id' || n.k === 'member' || n.k === 'index'
 const numberOf = (v: string): number | undefined => (/^\d+$/.test(v) ? Number(v) : undefined)
 
@@ -951,6 +949,8 @@ class Reader {
   readonly sizedNumbers = new Set<string>()
   readonly loops = new Map<number, Loop>()
   readonly searchVars = new Set<string>()
+  /** Names the signature holds besides its parameters (types): never called. */
+  readonly signatureNames = new Set<string>()
   readonly places = new Map<number, HiddenPlace>()
   readonly openers = new Set<number>()
   readonly tinyGuards = new Set<Node>()
@@ -977,10 +977,13 @@ class Reader {
     need(lines.every((l) => !isBlankedLine(l)) || this.unit.hidden !== undefined)
     this.opener = lines.findIndex((l) => /[{}]/.test(l))
     need(this.opener >= 0)
-    for (const p of readSignature(lines.slice(0, this.opener + 1).join(' '), this.unit.name)) {
+    const signature = lines.slice(0, this.opener + 1).join(' ')
+    for (const p of readSignature(signature, this.unit.name)) {
       need(!GLOBALS.has(p.name) && !FAILS.has(p.name))
       this.params.set(p.name, p)
     }
+    // Task 6 fix round 2: a name the signature uses as a type (a class) throws when called without `new`.
+    for (const t of tokenize(signature)) if (t.t === 'id' && !this.params.has(t.v) && t.v !== this.unit.name) this.signatureNames.add(t.v)
     const tree = treeByBraces(lines)
     if (!tree) refuse()
     this.closers = closersOf(lines, this.opener)
@@ -2082,6 +2085,8 @@ class Reader {
         // A read at a fixed position probes the size (`items[16] !== undefined`).
         // So does any read by position on a call's or literal's result.
         if ((n.obj.k === 'id' && this.isSequence(n.obj.name)) || !['id', 'member', 'index'].includes(n.obj.k)) need(this.isPosition(n.index, env))
+        // Task 6 fix round 2: an index read throws on null or undefined, as a property read does.
+        need(this.isPropertyReceiver(n.obj, env))
         return add(this.costOfObject(n.obj, env), this.cost(n.index, env))
       case 'call':
         return this.costOfCall(n, env, ctx)
@@ -2354,6 +2359,17 @@ class Reader {
     return false
   }
 
+  /** Task 6 fix round 2: a write's receiver is an accumulator, or a local that only ever holds a fresh object or array (never null or a primitive). */
+  private isWritableReceiver(obj: Node): boolean {
+    if (obj.k !== 'id') return false
+    const l = this.locals.get(obj.name)
+    if (l?.k === 'acc') return true
+    if (l?.k !== 'local' || this.scalarLocals.has(obj.name)) return false
+    const d = this.decls.get(obj.name)
+    const values = [d?.line.init, ...this.assignments.filter((a) => a.name === obj.name && a.whole).map((a) => a.value)]
+    return values.every((v) => v !== undefined && (v.k === 'array' || v.k === 'object' || v.k === 'new'))
+  }
+
   /** A local every write of which is never null or undefined (task 6 fix round 1). */
   private isNonNullLocal(name: string, env: Env, seen = new Set<string>()): boolean {
     const d = this.decls.get(name)
@@ -2418,7 +2434,7 @@ class Reader {
       }
       const p = this.params.get(f)
       // A callback parameter, or a helper: 1 by the rule. A local or loop name is never called.
-      need(p ? p.kind === 'other' : !this.isBound(f))
+      need(p ? p.kind === 'other' : !this.isBound(f) && !this.signatureNames.has(f))
       return this.costOfArgs(n.args, env)
     }
     need(callee.k === 'member')
@@ -2443,7 +2459,8 @@ class Reader {
     const literal = recv === 'literal' ? this.params.get(name)?.literal : undefined
     if (recv === 'literal') need(literal === 'string' ? STRING_METHODS.has(m) : literal === 'number' && m === 'toFixed')
     if (isValue) need(this.isPrimitiveValue(obj, env) && SCALAR_METHODS.has(m))
-    if (m === 'toFixed') need(n.args.length === 1 && numLit(n.args[0]) !== undefined)
+    // toFixed throws a RangeError past 20 digits.
+    if (m === 'toFixed') need(n.args.length === 1 && (numLit(n.args[0]) ?? -1) >= 0 && numLit(n.args[0])! <= 20)
     // Reached through a closed local or an accumulator (`o.a`, `acc[k]`): lookups and appends only.
     const rootLocal = root ? this.locals.get(root.name) : undefined
     if (obj.k !== 'id' && root && (rootLocal?.k === 'acc' || (rootLocal?.k === 'local' && !this.scalarLocals.has(root.name)))) need(COLL_METHODS.has(m))
@@ -2618,8 +2635,9 @@ class Reader {
     let c = value ? this.cost(value, env) : NOTHING
     if (target.k === 'index') c = add(c, this.cost(target.index, env))
     if (target.k !== 'id') c = add(c, this.costOfObject(target.k === 'index' || target.k === 'member' ? target.obj : target, env))
-    // Task 6 fix round 1: a write to a property or index of null throws.
-    if (target.k === 'member' || target.k === 'index') need(this.isPropertyReceiver(target.obj, env))
+    // Task 6 fix round 1: a write to a property or index of null throws; round 2: so does one to a primitive (strict
+    // mode), and a write to `.length` resizes (or throws on a negative length).
+    if (target.k === 'member' || target.k === 'index') need(this.isWritableReceiver(target.obj) && !(target.k === 'member' && (target.name === 'length' || target.name === 'size')))
     if (this.searchVars.has(name)) return c
     need(!this.loopNames.has(name))
     const local = this.locals.get(name)

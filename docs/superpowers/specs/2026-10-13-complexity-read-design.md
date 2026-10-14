@@ -125,27 +125,25 @@ A hidden line passes only when it is **inert**:
    constant or failing) or any global builtin name of its language, and
    no spread or unpacking (`...`, `*` or `**` before a name).
 4. **Exits:** an exit word (`return`, `break`, `continue`, `throw`,
-   `raise`, `exit`, `die`), an exit or abort name (`_exit`, `abort`,
-   `kill`, `raise_signal`, `quit`) or an exit form passes only on the last
+   `raise`, `exit`, `die`) or an exit form passes only on the last
    statement at body level, or inside an `if` block that is outside every
    loop (a guard; its condition is shown and goes through gate 10).
-5. **Forms** (task 6 fix round 1): with its comments dropped, it is one
-   of a closed set, so it can neither raise nor exit but where rule 4
-   allows: empty (a comment); a string-literal statement (a docstring,
-   read across hidden lines in order, over blank lines only); a call
-   `name(…)` or `mod.fn(…)` of unbound names, not an exit name, whose
-   arguments are string, number, boolean or null literals; a string or
-   number literal given to a fresh name (TS `const`/`let`, PHP `$name`);
-   `pass`, an `else` or a close; and, under rule 4, `return` of nothing or
-   a literal, `raise Name(literals)` / `throw new Name(literals)`, `break`,
-   `continue`, an exit-name call with literals. Anything else fails:
-   arithmetic, subscripts, attribute reads, other assignments, f-strings,
-   template interpolation, and openers with a test (a hidden opener is only
-   an `else`).
+5. **Forms** (task 6 fix rounds 1 and 2): with its comments dropped, it
+   is one of a closed set, so it can neither raise nor exit but where rule
+   4 allows: empty (a comment); a string-literal statement (a docstring,
+   read across hidden lines in order, over blank lines only); `pass`, an
+   `else` or a close; and, under rule 4, `return` of nothing or a literal,
+   `raise Name(literals)` / `throw new Name(literals)`, `break`,
+   `continue`, or a call of an exit name with literal arguments. Anything
+   else fails, calls and assignments included: a literal word or a host
+   builtin raises when called (`None()`, `int('x')`, `atob('*')`), and a
+   hidden name may shadow a helper the shown code calls (`log = 1`). So do
+   arithmetic, subscripts, attribute reads, f-strings, template
+   interpolation, and openers with a test (a hidden opener is only an
+   `else`).
 
-The answer then holds under the stated rule: a hidden line does constant
-work and cannot raise, so it cannot cut a loop short (a helper it calls
-returns, by the rule).
+The answer then holds under the stated rule: a hidden line calls nothing
+and assigns nothing, so it cannot raise or cut a loop short.
 
 ## The reader (`src/puzzle/complexity.ts`)
 
@@ -502,10 +500,22 @@ Task 6 fix round 1 (raises and exits the input cannot avoid):
   null or an opaque value, a lookup's result (`m.get(k).a`), a chain
   through another property, `this`, or an untyped or other-typed
   parameter.
-- **Exit calls.** No call whose function or method name is an exit or
-  abort name (`process.exit`, `lib.abort`, `exit`, `kill`, `quit`, `die`).
+- **Exit calls.** No call whose function or method name holds an exit
+  part, any case (`process.exit`, `process.reallyExit`, `lib.abort`,
+  `lib.dieRoll`: the list is in config), or is an exit word.
 - **Hidden lines** are closed forms (rule 5 under "What the reader
   reads"); a hidden opener is only an `else`.
+
+Task 6 fix round 2:
+
+- **Index reads** take the same receivers as property reads (never a
+  null local: `v[x]`, `v['a']`). **Writes** to a property or index take
+  only an accumulator or a local that only ever holds a fresh object or
+  array (never a primitive: strict mode throws), and never `.length` or
+  `.size`.
+- **`toFixed`** takes a literal from 0 to 20 (beyond, a RangeError).
+- **A name the signature uses as a type** (`Foo` in `items: Foo[]`) is
+  never called (a class throws without `new`).
 
 ### Stricter readings (Python reader, Task 6)
 
@@ -558,10 +568,11 @@ read before its first assignment raises. Each is a test.
   a nonzero literal, a number parameter or a number element over a
   parameter; orderings compare numbers with numbers or strs with strs;
   bitwise operators and `~` fail (a float raises). A helper or module
-  call returns, by the rule, but no call of an exit or abort name (`exit`,
-  `_exit`, `abort`, `kill`, `raise_signal`, `quit`, `die`, the exit
-  words) is read, in any reader. Hidden lines are closed forms (rule 5
-  above). An attribute is read only on a loop's element of a class type
+  call returns, by the rule, but no call is read whose function or method
+  name holds (any case) `exit`, `kill`, `abort`, `quit`, `die`, `signal`,
+  `segv`, `crash`, `panic` or `terminate`, or is an exit word, in any
+  reader, shown or hidden; no name the signature uses as a type is called.
+  Hidden lines are closed forms (rule 5 above). An attribute is read only on a loop's element of a class type
   of the code's own (a capitalized name, no typing or collection name) or
   on a helper's or module's result: never on None, a `get` result, a
   container, a primitive or another attribute.

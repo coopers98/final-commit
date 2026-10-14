@@ -50,11 +50,13 @@ test('a trimmed return after the loops is hidden and must be inert (round 1, #2;
 test('hidden lines: inert passes, a hidden cost fails, a hidden line without hidden() fails', async () => {
   const lines = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '        t += x', '    return t']
   const withRaw = (raw: string): Unit => ({ ...py(...lines), hidden: check => check(raw, 3) })
-  expect(answer(withRaw("        log('step')"))).toBe('O(n)')
+  expect(answer(withRaw('        # step'))).toBe('O(n)')
+  // Fix round 2: a hidden call is no hidden form.
+  expect(answer(withRaw("        log('step')"))).toBe(undefined)
   expect(answer(withRaw("        t += items.count(x)  # 'x'"))).toBe(undefined)
   expect(answer(withRaw("        assert ready(), 'never'"))).toBe(undefined)
   expect(answer(withRaw("        del cache['k']"))).toBe(undefined)
-  expect(answer(withRaw("    log('step')"))).toBe(undefined)
+  expect(answer(withRaw('    # step'))).toBe(undefined)
   expect(answer(py(...lines))).toBe(undefined)
   // A hidden guard that returns at the root is fine; a hidden return in a loop is not.
   const guard = ['def f(items: list[int]) -> int:', '    if not items:', '        …', '    t = 0', '    for x in items:', '        t += x', '    return t']
@@ -530,7 +532,8 @@ test('fix round 1: a hidden line that may raise or exit fails, in a loop, as an 
   const inLoop = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '        t += x', '    return t']
   const root = ['def f(items: list[int]) -> int:', '    …', '    t = 0', '    for x in items:', '        t += x', '    return t']
   const mk = (lines: string[], at: number, raw: string): Unit => ({ ...py(...lines), hidden: check => check(raw, at) })
-  expect(answer(mk(inLoop, 3, "        log('step')"))).toBe('O(n)')
+  expect(answer(mk(inLoop, 3, '        # step'))).toBe('O(n)')
+  expect(answer(mk(inLoop, 3, "        log('step')"))).toBe(undefined)
   expect(answer(mk(root, 1, '    """Add them up."""'))).toBe('O(n)')
   for (const raw of ['z = 1 / 0  # boom', 'os._exit(1)  # stop', 'sys.exit(1)  # stop', 'z = [][0]  # c', "z = {}['k']  # c", "z = 'a' + 1  # c", "z = qqq + 'a'  # c", 'z = q.r  # c']) {
     expect([raw, answer(mk(inLoop, 3, `        ${raw}`))]).toEqual([raw, undefined])
@@ -568,4 +571,17 @@ test('fix round 1: a call to an exit or abort name fails', async () => {
     expect([line, answer(fn('a: list[int]', 't = 0', 'for x in a:', '    t += x', line, 'return t'))]).toEqual([line, undefined])
     expect([line, answer(fn('a: list[int]', 't = 0', 'for x in a:', '    t += x', `    ${line}`, 'return t'))]).toEqual([line, undefined])
   }
+})
+
+// --- Fix round 2 (task 6 re-review) -------------------------------------------------
+
+test('fix round 2: an exit name matches by substring, and a signature type is never called', async () => {
+  const after = (line: string, params = 'a: list[int]'): Unit => fn(params, 't = 0', 'for x in a:', '    t += 1', line, 'return t')
+  expect(answer(after('repo.save(t)'))).toBe('O(n)')
+  for (const line of ['os.killpg(0, 9)', 'signal.pthread_kill(1, 9)', 'faulthandler._sigsegv()', 'lib.dieRoll()', 'lib.crash()', 'lib.panic()', 'lib.terminate()', 'lib.Exit_now()']) {
+    expect([line, answer(after(line))]).toEqual([line, undefined])
+    expect([line, answer(after(`    ${line}`))]).toEqual([line, undefined])
+  }
+  expect(answer(after('Foo(1)', 'a: list[Foo]'))).toBe(undefined)
+  expect(answer(after('Bar(1)', 'a: list[Foo]'))).toBe('O(n)')
 })

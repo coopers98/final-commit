@@ -302,8 +302,8 @@ export const COMPLEXITY = {
   /** `...` is spread; Python's `*` and `**` unpacking is read by its place. */
   inertSymbols: ['=>', '...'] as readonly string[],
   exitWords: ['return', 'break', 'continue', 'throw', 'raise', 'exit', 'die'] as readonly string[],
-  /** Functions and methods that end the process or raise a signal: a call to one is an exit, in a shown or a hidden line, in every language. */
-  exitCalls: ['exit', '_exit', 'abort', 'kill', 'raise_signal', 'quit', 'die'] as readonly string[],
+  /** Parts of a function or method name that may end the process or raise a signal: a call whose name holds one (any case) is an exit, in a shown or a hidden line, in every language. */
+  exitNameParts: ['exit', 'kill', 'abort', 'quit', 'die', 'signal', 'segv', 'crash', 'panic', 'terminate'] as readonly string[],
   /** Python type names that are no class of the code's own: an element of one takes no attribute read (it may be None, a container or a primitive). */
   pythonNotClasses: ['Any', 'AnyStr', 'Optional', 'Union', 'Literal', 'None', 'NoneType', 'Type', 'Self', 'Never', 'NoReturn', 'List', 'Dict', 'Set', 'FrozenSet', 'Tuple', 'Sequence', 'MutableSequence', 'Mapping', 'MutableMapping', 'AbstractSet', 'MutableSet', 'Iterable', 'Iterator', 'Generator', 'Collection', 'Container', 'Reversible', 'Sized', 'Hashable', 'Callable', 'Awaitable', 'Coroutine', 'AsyncIterable', 'AsyncIterator', 'Deque', 'DefaultDict', 'Counter', 'OrderedDict', 'ChainMap', 'Text', 'ByteString', 'TypeVar', 'Protocol', 'Generic', 'Final', 'ClassVar', 'Annotated', 'TypedDict', 'NamedTuple'] as readonly string[],
   /** Python words a hidden line may not hold besides the lists: statements that raise, unbind or reach other scopes. */
