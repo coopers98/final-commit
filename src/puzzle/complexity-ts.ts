@@ -494,7 +494,7 @@ function negate(n: Node): Node {
 // ---------------------------------------------------------------------------
 // Lines
 
-type ForHead = { k: 'of' | 'in'; names: string[]; source: Node } | { k: 'count'; name: string; init: Node; test: Node; step: Node }
+type ForHead = { k: 'of' | 'in'; names: string[]; pattern: boolean; source: Node } | { k: 'count'; name: string; init: Node; test: Node; step: Node }
 type Simple =
   | { k: 'decl'; name: string; isConst: boolean; type?: 'numeric' | 'string'; init?: Node }
   | { k: 'expr'; node: Node }
@@ -563,7 +563,8 @@ function forLine(toks: Tok[]): Line {
   if ((p.isWord('const') || p.isWord('let')) && (p.isWord('of', 2) || p.isWord('in', 2) || p.is('[', 1))) {
     p.i++
     const names: string[] = []
-    if (p.is('[')) {
+    const pattern = p.is('[')
+    if (pattern) {
       p.i++
       while (!p.is(']')) {
         names.push(p.name())
@@ -578,7 +579,7 @@ function forLine(toks: Tok[]): Line {
     p.take('{')
     p.end()
     need(names.length >= 1 && names.length <= (k === 'in' ? 1 : 2))
-    return { k: 'for', head: { k, names, source } }
+    return { k: 'for', head: { k, names, pattern, source } }
   }
   p.takeWord('let')
   const name = p.name()
@@ -1487,7 +1488,7 @@ class Reader {
       const src = this.sourceOf(h.source, h.k)
       // An untyped or other-typed parameter may be a one-shot iterator: iterated inside a loop, it runs once.
       if (h.k === 'of' && h.source.k === 'id' && this.params.get(h.source.name)?.kind === 'other') need(env.loops.length === 0)
-      const { elements, positions, numeric } = rolesOf(h.names, src)
+      const { elements, positions, numeric } = rolesOf(h.names, src, h.pattern)
       // An array's keys() and entries() walk it: their positions index it.
       const walker = src.numericKeys && h.source.k === 'call' && h.source.callee.k === 'member' && h.source.callee.obj.k === 'id' ? h.source.callee.obj.name : undefined
       return { at: s.at, kind: 'of', elements, positions, numeric, ...(walker ? { walks: walker } : {}), factor: factor({ size: src.origin, log: false, kind: 'loop', at: s.at, what: `loop over ${src.origin}` }), hasExit: false }
@@ -2955,9 +2956,10 @@ function elementsOf(loops: Loop[]): Map<string, Elem> {
  * Which loop names are elements and which hold indices: keys are indices; an
  * entry's first name is one; a Map pair's names are its key and value; a
  * whole entry or pair is an opaque element and no atom. `numeric`: names that
- * hold numbers.
+ * hold numbers. `pattern`: the names destructure each item; of plain elements
+ * that refuses (final review M1: a part of an element is no fixed-cost operand).
  */
-function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; positions: string[]; numeric: string[] } {
+function rolesOf(names: string[], src: Elem, pattern = false): { elements: Map<string, Elem>; positions: string[]; numeric: string[] } {
   const elem = (type: ElemType, shaped = true): Elem => ({ origin: src.origin, distinct: src.distinct, type, atom: src.atom, ...(shaped && src.shape ? { shape: src.shape } : {}), ...(shaped && src.props ? { props: src.props } : {}), ...(src.derived ? { derived: true } : {}) })
   const whole = (n: string): Elem => ({ origin: src.origin, distinct: src.distinct, type: 'opaque', atom: false })
   const numeric = (m: Map<string, Elem>, pos: string[]): string[] => [...[...m].filter(([, e]) => e.type === 'number').map(([n]) => n), ...(src.numericKeys ? pos : [])]
@@ -2970,7 +2972,10 @@ function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; pos
     elements = names.length === 2 ? new Map([[names[1]!, elem(src.type)]]) : new Map([[names[0]!, whole(names[0]!)]])
   } else if (src.yields === 'pairs') {
     elements = names.length === 2 ? new Map([[names[0]!, elem(src.key ?? 'opaque', false)], [names[1]!, elem(src.type)]]) : new Map([[names[0]!, whole(names[0]!)]])
-  } else elements = new Map(names.map((n) => [n, elem(src.type)]))
+  } else {
+    need(!pattern)
+    elements = new Map(names.map((n) => [n, elem(src.type)]))
+  }
   return { elements, positions, numeric: numeric(elements, positions) }
 }
 

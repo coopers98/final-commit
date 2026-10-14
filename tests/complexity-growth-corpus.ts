@@ -198,7 +198,7 @@ export const CORPUS: readonly Entry[] = [
     inputs: (n, m, from) => [from(range(n)), from(range(m))],
   },
   {
-    name: 'scanThenFind', answer: 'O(n + m)', category: 'two inputs',
+    name: 'scanThenFind', answer: 'O(n + m)', category: 'linear scan',
     // 1 is never in ids: indexOf reads all of it.
     lines: ['function scanThenFind(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  t += ids.indexOf(1)', '  return t', '}'],
     inputs: (n, m, from) => [from(range(n)), from(range(m, 2))],

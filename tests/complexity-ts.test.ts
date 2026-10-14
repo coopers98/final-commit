@@ -1141,3 +1141,16 @@ test('D-a in TypeScript: a map or filter callback names only its own parameters,
   // A derived collection's element is no fixed-cost operand.
   expect(answer(fn('items: number[], ids: number[]', 'const d = items.slice()', 'let t = 0', 'for (const u of d) {', '  t += ids.indexOf(u)', '}', 'return t'))).toBe(undefined)
 })
+
+test('destructured parts of an element are no fixed-cost operands: such a loop refuses, as in Python and PHP (final review M1)', async () => {
+  expect(answer(fn('srows: string[][]', 'let t = 0', 'for (const [p, q] of srows) {', '  if (p === q) {', '    t++', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('rows: number[][], k: number', 'let t = 0', 'for (const [p, q] of rows) {', '  if (p === k) {', '    t += q', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('srows: string[][]', 'const st = new Set<string>()', 'for (const [p] of srows) {', '  st.add(p)', '}', 'return st.size'))).toBe(undefined)
+  // Object patterns, in a loop head or a callback, refuse too.
+  expect(answer(fn('rows: Row[], k: number', 'let t = 0', 'for (const { a, b } of rows) {', '  if (a === k) {', '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('rows: Row[], k: number', 'let t = 0', 'rows.forEach(({ a }) => {', '  if (a === k) {', '    t += 1', '  }', '})', 'return t'))).toBe(undefined)
+  expect(answer(fn('rows: number[][], k: number', 'let t = 0', 'rows.forEach(([p, q]) => {', '  if (p === k) {', '    t += q', '  }', '})', 'return t'))).toBe(undefined)
+  // Pairs and entries still read.
+  expect(answer(fn('m: Map<string, number>, k: number', 'let t = 0', 'for (const [key, v] of m) {', '  if (v === k) {', '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: number[], k: number', 'for (const [i, x] of items.entries()) {', '  if (x === k) {', '    return i', '  }', '}', 'return -1'))).toBe('O(n)')
+})

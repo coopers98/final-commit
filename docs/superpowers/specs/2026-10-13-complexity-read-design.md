@@ -38,7 +38,9 @@ change to what the filters show.
 What is the time complexity of dedupe(items, ids)?
 n = size of items, m = size of ids. Worst case. Built-in operations over
 a whole collection (search, copy, sum, join, map, filter) cost its size;
-sorts size × log size; hash lookups and appends 1; other calls 1.
+sorts size × log size; hash lookups and appends 1; comparing or hashing
+one element 1; other calls 1. Sizes: a collection's or string's length,
+or a number's value.
 
   1) O(n·m)
   2) O(n + m)
@@ -48,11 +50,12 @@ sorts size × log size; hash lookups and appends 1; other calls 1.
 
 - **Line 1** names the unit by its name and its parameter names, without
   types, defaults or `$`-less changes (`merge($a, $b)`), cut to 160
-  characters.
+  characters (the parameter list is cut, keeping `…)?`); a unit whose name
+  alone leaves no room for that gives no puzzle.
 - **Line 2** defines every size the choices use: `n = size of items` (one
   input) or `n = size of items, m = size of ids`; for a number parameter,
-  `n = count` (its value). A size is a collection's or string's length.
-  Then the fixed rule text (config).
+  its name (`n = k`: its value). A size is a collection's or string's
+  length, or a number's value. Then the fixed rule text (config).
 - **The ladder:** `O(log n)`, `O(n)`, `O(n log n)`, `O(n²)`, `O(n³)`,
   `O(n·m)`, `O(n + m)` as answers; `O(1)` only as a distractor. A cost that
   is constant, or does not reduce to one ladder entry, is no puzzle.
@@ -74,8 +77,8 @@ sorts size × log size; hash lookups and appends 1; other calls 1.
   | O(n + m) | O(n·m), O(n), O(n²) |
 
 - **Explanation:** one line naming the sites that set the dominant term
-  in line order (unit line index + 1, as the pane counts), e.g. `The loop
-  on line 3 calls includes on items (line 5): n × n = O(n²).`
+  in line order (unit line index + 1, as the pane counts), e.g. `Line 3:
+  loop over items; line 5: includes on items. n × n = O(n²).`
 
 ## What the reader reads
 
@@ -955,7 +958,7 @@ Returns a `Puzzle` with `type: 'complexity-read'`, the unit's lines as
   `complexity-growth.test.ts`); the measuring runs in
   `scripts/growth-check.mjs`, since the plugin's tests disallow code
   generation from strings.
-- `complexity-read.test.ts`: choices from the table, shuffled with a
+- `tests/puzzle.test.ts` (the builder): choices from the table, shuffled with a
   seed; the question's size line; the explanation; weighting with a
   stubbed `weightOf`; no unit with a cost gives none.
 - `puzzle.test.ts`: tier mapping and fallbacks with the new type

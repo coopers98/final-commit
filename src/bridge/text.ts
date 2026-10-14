@@ -5,8 +5,12 @@ function cut(text: string, width: number): string {
   return chars.length <= width ? text : `${chars.slice(0, Math.max(1, width - 1)).join('')}~`
 }
 
-/** `text` broken at spaces into lines of at most `width` (a longer word is cut). Continuations indent two cells. */
+/** `text` broken at its line breaks, then each part at spaces into lines of at most `width` (a longer word is cut). Continuations indent two cells. */
 export function wrap(text: string, width: number): string[] {
+  return text.split('\n').flatMap(part => wrapLine(part, width))
+}
+
+function wrapLine(text: string, width: number): string[] {
   const out: string[] = []
   let line = ''
   for (const word of text.split(' ')) {

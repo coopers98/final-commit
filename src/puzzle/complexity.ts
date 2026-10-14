@@ -108,7 +108,7 @@ function categoryOf(terms: Cost, answer: Ladder): Category {
   if (all.some((f) => f.log && (f.kind === 'halving' || f.kind === 'search'))) return 'halving'
   if (all.some((f) => f.log && f.kind === 'sort')) return 'sorting'
   if (terms.some((t) => t.some((f) => f.kind === 'builtin') && t.some((f) => LOOPY.includes(f.kind)))) return 'hidden linear call'
-  if (answer === 'O(n·m)' || answer === 'O(n + m)') return 'two inputs'
+  if ((answer === 'O(n·m)' || answer === 'O(n + m)') && all.every((f) => f.kind === 'loop' || f.kind === 'callback')) return 'two inputs'
   if (terms.some((t) => t.filter((f) => f.kind === 'loop' || f.kind === 'callback').length >= 2)) return 'nested loops'
   return 'linear scan'
 }

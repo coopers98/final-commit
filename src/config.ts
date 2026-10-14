@@ -259,7 +259,7 @@ export const COMPLEXITY = {
   maxQuestionChars: 160,
   /** Task 7 fix round 1, ruling A: the largest magnitude a shown number literal may have (2^31 - 1). A literal beyond a type's range is constant against it (PHP's 64-bit ints, TS's `1e400` = Infinity, any Python int below `1e400`), which would make a guard always or never true. */
   maxLiteral: 2_147_483_647,
-  ruleText: "Worst case. Built-in operations over a whole collection (search, copy, sum, join, map, filter) cost its size; sorts size × log size; hash lookups and appends 1; comparing or hashing one element 1; other calls 1. Sizes are the parameters' lengths.",
+  ruleText: "Worst case. Built-in operations over a whole collection (search, copy, sum, join, map, filter) cost its size; sorts size × log size; hash lookups and appends 1; comparing or hashing one element 1; other calls 1. Sizes: a collection's or string's length, or a number's value.",
   distractors: {
     'O(log n)': ['O(1)', 'O(n)', 'O(n log n)'],
     'O(n)': ['O(log n)', 'O(n log n)', 'O(n²)'],

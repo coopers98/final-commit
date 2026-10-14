@@ -3,6 +3,7 @@ import { COMPLEXITY, PUZZLE } from '../src/config'
 import { createRng } from '../src/rng'
 import { analyzeKey, analyzeView, resultLines } from '../src/puzzle/analyze'
 import { buildBugHunt } from '../src/puzzle/bug-hunt'
+import { costOf } from '../src/puzzle/complexity'
 import { buildComplexityRead } from '../src/puzzle/complexity-read'
 import { buildPatternId, parseCheck, parseGenerated } from '../src/puzzle/pattern-id'
 import { buildPuzzle, categoryWeights, puzzleBonus, puzzleTypeFor } from '../src/puzzle/puzzle'
@@ -259,6 +260,7 @@ test('Complexity Read picks a weak category first when weights are given', async
 
 test('Complexity Read gives none when no unit has a cost; buildPuzzle falls through', async () => {
   expect(buildComplexityRead([FLAT], createRng(1))).toBe(undefined)
+  expect(costOf(UNIT)).toBe(undefined)
   const p = await buildPuzzle({ units: [UNIT], tier: 'uncommon', rng: createRng(3) })
   expect(p?.type).toBe('bug-hunt')
 })
@@ -269,4 +271,66 @@ test('tiers: Uncommon asks Complexity Read; with puzzles local, Common does too;
   expect(puzzleTypeFor('rare', ['complexity-read', 'bug-hunt'])).toBe('complexity-read')
   const p = await buildPuzzle({ units: [NESTED], tier: 'uncommon', rng: createRng(3) })
   expect(p?.type).toBe('complexity-read')
+})
+
+const tsFn = (name: string, params: string, ...body: string[]): Unit => ({ lang: 'TypeScript', name, lines: [`function ${name}(${params}): number {`, ...body.map(l => `  ${l}`), '}'] })
+
+test('Complexity Read cuts an over-long parameter list, keeping `)?`, within the cap', async () => {
+  const long = Array.from({ length: 6 }, (_, i) => `parameterNumber${'x'.repeat(14)}${i}`)
+  const u = tsFn('f', ['items: number[]', ...long.map(n => `${n}: number`)].join(', '), 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t')
+  const line = buildComplexityRead([u], createRng(1))!.question.split('\n')[0]!
+  expect(line.startsWith('What is the time complexity of f(items, parameterNumber')).toBe(true)
+  expect(line.endsWith('…)?')).toBe(true)
+  expect(line.length <= COMPLEXITY.maxQuestionChars).toBe(true)
+})
+
+test('Complexity Read gives no puzzle for a unit whose name alone passes the cap, and takes another unit', async () => {
+  const name = `f${'x'.repeat(169)}`
+  expect(name.length).toBe(170)
+  const u = tsFn(name, 'items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t')
+  expect(costOf(u)?.answer).toBe('O(n)')
+  expect(buildComplexityRead([u], createRng(1))).toBe(undefined)
+  for (let seed = 1; seed <= 20; seed += 1) {
+    const p = buildComplexityRead([u, NESTED], createRng(seed))!
+    expect(p.question.startsWith('What is the time complexity of pairs(')).toBe(true)
+    for (const l of p.question.split('\n')) expect(l.length <= COMPLEXITY.maxQuestionChars || l.includes(COMPLEXITY.ruleText)).toBe(true)
+  }
+})
+
+test('Complexity Read names a number parameter by itself in the size line', async () => {
+  const one = tsFn('f', 'items: number[], k: number', 'let t = 0', 'for (let i = 0; i < k; i++) {', '  t += i', '}', 'return t')
+  expect(buildComplexityRead([one], createRng(1))!.question).toBe(`What is the time complexity of f(items, k)?\nn = k. ${COMPLEXITY.ruleText}`)
+  const two = tsFn('g', 'k: number, j: number', 'let t = 0', 'for (let a = 0; a < k; a++) {', '  for (let b = 0; b < j; b++) {', '    t += 1', '  }', '}', 'return t')
+  expect(buildComplexityRead([two], createRng(1))!.question).toBe(`What is the time complexity of g(k, j)?\nn = k, m = j. ${COMPLEXITY.ruleText}`)
+  expect(COMPLEXITY.ruleText.endsWith("Sizes: a collection's or string's length, or a number's value.")).toBe(true)
+})
+
+test('every answer on the ladder appears exactly once among four distinct choices', async () => {
+  const loop = (src: string) => [`for (const x of ${src}) {`, '  t += 1', '}']
+  const ladder: [string, Unit][] = [
+    ['O(log n)', tsFn('f', 'k: number', 'let t = 0', 'for (let i = 1; i < k; i *= 2) {', '  t += i', '}', 'return t')],
+    ['O(n)', tsFn('f', 'items: number[]', 'let t = 0', ...loop('items'), 'return t')],
+    ['O(n log n)', tsFn('f', 'items: number[]', 'const s = items.toSorted((a, b) => a - b)', 'return s.length')],
+    ['O(n²)', tsFn('f', 'items: number[]', 'let t = 0', 'for (const x of items) {', '  for (const y of items) {', '    t += 1', '  }', '}', 'return t')],
+    ['O(n³)', tsFn('f', 'items: number[]', 'let t = 0', 'for (const x of items) {', '  for (const y of items) {', '    for (const z of items) {', '      t += 1', '    }', '  }', '}', 'return t')],
+    ['O(n·m)', NESTED],
+    ['O(n + m)', tsFn('f', 'items: number[], ids: number[]', 'let t = 0', ...loop('items'), ...loop('ids'), 'return t')],
+  ]
+  for (const [answer, u] of ladder) {
+    for (let seed = 1; seed <= 5; seed += 1) {
+      const p = buildComplexityRead([u], createRng(seed))!
+      expect([answer, p.choices[p.answer]]).toEqual([answer, answer])
+      expect(p.choices.length).toBe(4)
+      expect(new Set(p.choices).size).toBe(4)
+      expect(p.choices.filter(c => c === answer).length).toBe(1)
+    }
+  }
+})
+
+test('an O(n + m) from builtins alone takes the builtins\' category; from loops alone it is two inputs', async () => {
+  const calls = tsFn('f', 'items: number[], ids: number[]', 'const a = items.indexOf(1)', 'const b = ids.indexOf(1)', 'return a + b')
+  expect(costOf(calls)?.answer).toBe('O(n + m)')
+  expect(costOf(calls)?.category).toBe('linear scan')
+  const loops = tsFn('f', 'items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'for (const y of ids) {', '  t += y', '}', 'return t')
+  expect(costOf(loops)?.category).toBe('two inputs')
 })

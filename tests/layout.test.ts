@@ -1,6 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import type { AnalyzeView } from '../types'
 import { PUZZLE_VIEW } from '../src/config'
+import { createRng } from '../src/rng'
+import { buildComplexityRead } from '../src/puzzle/complexity-read'
+import { wrap } from '../src/bridge/text'
 import { marksOf } from '../src/puzzle/analyze'
 import { clampOffset, codeWindow, dockColumns, gutterWidth, isOverCode, panelLines, paneSize, puzzleLayout, scrollKey, wheelMovesCode, wrapCode } from '../src/puzzle/layout'
 
@@ -125,4 +128,17 @@ test('stacked, a short body never cuts the explanation: the window keeps minCode
   expect(l.panel.some(p => p.text === '…')).toBe(false)
   for (const t of ['One.', 'Two.', 'Three.', 'Four.']) expect(l.panel.some(p => p.text === t)).toBe(true)
   expect(l.code.rows.length + (l.code.more === undefined ? 0 : 1)).toBe(PUZZLE_VIEW.minCodeRows)
+})
+
+test('a Complexity Read question breaks at its line break: no panel row holds one, and line 2 starts its own row (final review I1)', async () => {
+  const code = ['function pairs(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    for (const y of ids) {', '      t += x * y', '    }', '  }', '  return t', '}']
+  const p = buildComplexityRead([{ lang: 'TypeScript', name: 'pairs', lines: code }], createRng(7))!
+  const v = view({ label: 'Analyze Specimen · Complexity Read · TypeScript', question: p.question, code, marks: code.map(() => null), choices: p.choices.map((c, i) => `${i + 1}  ${c}`) })
+  const rows = panelLines(v, ['s skip'], 40).filter(l => l.kind === 'question').map(l => l.text)
+  for (const r of rows) expect(r.includes('\n')).toBe(false)
+  for (const r of rows) expect([...r].length <= 40).toBe(true)
+  const [one, two] = p.question.split('\n') as [string, string]
+  expect(rows.length).toBe(wrap(one, 40).length + wrap(two, 40).length)
+  expect(rows[wrap(one, 40).length]!.startsWith('n = size of items')).toBe(true)
+  expect(wrap('a b\nc d', 3)).toEqual(['a b', 'c d'])
 })
