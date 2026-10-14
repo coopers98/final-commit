@@ -355,7 +355,7 @@ export const hiddenScan = (lines: readonly string[]): HiddenScan => ({ lines, la
 
 /** A function or method name that may end the process or raise a signal (task 6 fix rounds 1 and 2): it holds an exit part, any case, or is an exit word. */
 export function isExitName(name: string): boolean {
-  const n = name.replace(/^\$/, '')
+  const n = name.replace(/^\$/, '').normalize('NFKC')
   return COMPLEXITY.exitNameParts.some((p) => n.toLowerCase().includes(p)) || COMPLEXITY.exitWords.includes(n)
 }
 
@@ -386,6 +386,8 @@ function closeAt(raw: string, from: number, closer: string, isString: boolean, f
  * with `$`, a PHP attribute or heredoc, a single-quoted string left open.
  */
 function skeleton(raw: string, lang: 'TypeScript' | 'Python' | 'PHP', open: string | undefined): { code: string; open: string | undefined } | undefined {
+  // Fix round 3: a `\N{…}` escape raises on an unknown name.
+  if (lang === 'Python' && raw.includes('\\N{')) return undefined
   let out = ''
   let i = 0
   const forbidOf = (closer: string): string[] => (closer === '`' ? ['${'] : lang === 'PHP' && closer === '"' ? ['$'] : [])
@@ -428,7 +430,8 @@ function skeleton(raw: string, lang: 'TypeScript' | 'Python' | 'PHP', open: stri
       if (lang === 'Python') {
         // A prefix stands right before the quote: r, b, u and their pairs only (f and t strings run code).
         const prefix = /[A-Za-z_\d]*$/.exec(out)![0]
-        if (prefix !== '' && !/^[rRbBuU]{1,2}$/.test(prefix)) return undefined
+        // Fix round 3: r or u only (b is bytes, f and t run code).
+        if (prefix !== '' && !/^[rRuU]$/.test(prefix)) return undefined
         out = out.slice(0, out.length - prefix.length)
         if (rest.startsWith(c.repeat(3))) closer = c.repeat(3)
       }
@@ -489,9 +492,10 @@ function skeletonTokens(code: string, lang: 'TypeScript' | 'Python' | 'PHP'): HT
 const LITERAL_WORDS: Record<string, readonly string[]> = { Python: ['True', 'False', 'None'], TypeScript: ['true', 'false', 'null', 'undefined'], PHP: ['true', 'false', 'null'] }
 
 /**
- * Task 6 fix rounds 1 and 2: a hidden line is one of a closed set of forms,
+ * Task 6 fix rounds 1 to 3: a hidden line is one of a closed set of forms,
  * so it can neither raise nor exit but where an exit is allowed. `plain`: a
- * comment, a string statement (a docstring), `pass`, an else or a close;
+ * comment, `pass`, an else or a close, and in Python one plain string token
+ * (a docstring; in TS or PHP a string after an expression is a tagged call);
  * `exit`: a return or raise of literals, a break or continue, a call of an
  * exit name with literal arguments. No call and no assignment is plain: a
  * literal word or a host builtin raises when called, and a name may shadow a
@@ -536,7 +540,9 @@ function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain
     return true
   }
   if (done()) return 'plain'
-  if (ts.every((t) => t.t === 'str')) return 'plain'
+  // Fix round 3: in TS and PHP a string after an expression is a tagged template call (no ASI before a template), so
+  // no string statement; in Python exactly one string token (no implicit concatenation).
+  if (lang === 'Python' && ts.length === 1 && ts[0]!.t === 'str') return 'plain'
   const words = ts.map((t) => (t.t === 'p' || t.t === 'id' ? t.v : t.t)).join(' ')
   if (lang === 'Python' && (words === 'pass' || words === 'else :')) return 'plain'
   if (lang !== 'Python' && (words === '}' || words === '} else {' || words === 'else {')) return 'plain'
@@ -610,6 +616,7 @@ export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python'
     scan.open = sk.open
     if (at !== undefined) scan.last = at
   }
-  if (form === 'exit' || holds(COMPLEXITY.exitWords)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
+  // Fix round 3: only as the function's last line at the root (two guards with hidden exits may be complementary).
+  if (form === 'exit' || holds(COMPLEXITY.exitWords)) return !place.isInLoop && place.isLastAtBodyLevel
   return true
 }

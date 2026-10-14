@@ -60,7 +60,8 @@ test('hidden lines: inert passes, a hidden cost fails, a hidden line without hid
   expect(answer(py(...lines))).toBe(undefined)
   // A hidden guard that returns at the root is fine; a hidden return in a loop is not.
   const guard = ['def f(items: list[int]) -> int:', '    if not items:', '        …', '    t = 0', '    for x in items:', '        t += x', '    return t']
-  expect(answer({ ...py(...guard), hidden: check => check("        raise ValueError('empty')", 2) })).toBe('O(n)')
+  // Fix round 3: a hidden exit only as the function's last line (guards may be complementary).
+  expect(answer({ ...py(...guard), hidden: check => check("        raise ValueError('empty')", 2) })).toBe(undefined)
   expect(answer({ ...py(...lines), hidden: check => check("        return 'x'", 3) })).toBe(undefined)
 })
 
@@ -327,7 +328,7 @@ test('self-review: a hidden exit in a root guard stands before the code after it
   expect(answer({ ...py(...lines), hidden: (check) => check("        raise ValueError('bad')", 2) })).toBe(undefined)
   const other = lines.map((l) => l.replace('if k > 5', 'if t > 5').replace('t = 0', 't = 9'))
   expect(answer({ ...py(...other), hidden: (check) => check("        log('bad')", 2) })).toBe(undefined)
-  expect(answer({ ...py(...lines.slice(0, 4), '    for x in items:', '        t += x', '    return t'), hidden: (check) => check("        raise ValueError('bad')", 2) })).toBe('O(n)')
+  expect(answer({ ...py(...lines.slice(0, 4), '    for x in items:', '        t += x', '    return t'), hidden: (check) => check("        raise ValueError('bad')", 2) })).toBe(undefined)
 })
 
 test('self-review: a literal range runs at least once, or its body is dead', async () => {
@@ -584,4 +585,27 @@ test('fix round 2: an exit name matches by substring, and a signature type is ne
   }
   expect(answer(after('Foo(1)', 'a: list[Foo]'))).toBe(undefined)
   expect(answer(after('Bar(1)', 'a: list[Foo]'))).toBe('O(n)')
+})
+
+// --- Fix round 3 (task 6 re-review) -------------------------------------------------
+
+test('fix round 3: a hidden string is one plain token; a hidden else closes a shown if, for or while', async () => {
+  const inLoop = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '        t += x', '    return t']
+  const mk = (raw: string): Unit => ({ ...py(...inLoop), hidden: check => check(raw, 3) })
+  expect(answer(mk("        u'a'  # c"))).toBe('O(n)')
+  for (const raw of ["        'a' 'b'", "        b'a'", "        '\\N{nope}'", "        u'a' b'b'"]) expect([raw, answer(mk(raw))]).toEqual([raw, undefined])
+  const afterStmt = ['def f(items: list[int]) -> int:', '    t = 0', '    …', '        t += 1', '    for x in items:', '        t += x', '    return t']
+  expect(answer({ ...py(...afterStmt), hidden: check => check('    else:  # c', 2) })).toBe(undefined)
+})
+
+test('fix round 3: hidden exits in complementary guards fail', async () => {
+  const P = ['def f(items: list[int], k: int) -> int:', '    t = 0', '    if k > 0:', '        …', '    if k <= 0:', '        …', '    for y in items:', '        t += y', '    return t']
+  expect(answer({ ...py(...P), hidden: check => check('        return 0', 3) && check('        return 1', 5) })).toBe(undefined)
+})
+
+test('fix round 3: a literal operand of or, and, not, or a literal condition, fails', async () => {
+  const guard = (c: string): Unit => fn('items: list[int], k: int, b: bool', 't = 0', `if ${c}:`, '    return 0', 'for y in items:', '    t += y', 'return t')
+  expect(answer(guard('k > 0'))).toBe('O(n)')
+  for (const c of ['k > 0 or True', 'True or k > 0', 'k > 0 or 1', 'not False', 'True', 'b and not 0', 'k > 0 or None']) expect([c, answer(guard(c))]).toEqual([c, undefined])
+  expect(answer(fn('a: list[int], k: int', 'out = [x for x in a if k > 0 or True]', 'return len(out)'))).toBe(undefined)
 })

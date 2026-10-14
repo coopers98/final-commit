@@ -94,7 +94,9 @@ test('treeByIndent nests by indentation and refuses continued lines', async () =
 })
 
 test('a hidden line is inert only with the kept braces, no bound name, no listed word', async () => {
-  expect(isInert("'done'", '…', 'TypeScript', new Set(['items']), none, out)).toBe(true)
+  expect(isInert('// done', '…', 'TypeScript', new Set(['items']), none, out)).toBe(true)
+  // Fix round 3: a TS string statement after an expression is a tagged template call.
+  expect(isInert("'done'", '…', 'TypeScript', new Set(['items']), none, out)).toBe(false)
   // Fix round 2: a call is no hidden form (a host builtin or a literal word may raise).
   expect(isInert("log('done')", '…', 'TypeScript', new Set(['items']), none, out)).toBe(false)
   // The scanner blanked the line and dropped its brace: structure differs.
@@ -105,8 +107,8 @@ test('a hidden line is inert only with the kept braces, no bound name, no listed
   expect(isInert("emit(...rest, 'x')", '…', 'TypeScript', none, none, out)).toBe(false)
 })
 
-test('a hidden exit passes only as the last body statement or inside a guard outside loops', async () => {
-  expect(isInert("throw new Error('bad')", '…', 'TypeScript', none, none, { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(true)
+test('a hidden exit passes only as the function\'s last statement at the root (fix round 3: not in a guard)', async () => {
+  expect(isInert("throw new Error('bad')", '…', 'TypeScript', none, none, { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
   expect(isInert("return 'done'", '…', 'TypeScript', none, none, { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(true)
   expect(isInert("raise NotImplementedError('x')", '…', 'Python', none, none, { isInLoop: false, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
   expect(isInert("return 'done'", '        …', 'Python', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
@@ -180,7 +182,7 @@ test('inert words: closures, Python unpacking, exits in strings', async () => {
   expect(isInert('    return *a, b', '    …', 'Python', none, none, { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(false)
   expect(isInert('    log(a * b, 2 ** c)', '    …', 'Python', none, none, out)).toBe(false)
   expect(isInert("log('return')", '…', 'TypeScript', none, none, out)).toBe(false)
-  expect(isInert("'done' // c", '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(true)
+  expect(isInert('// done', '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(true)
   expect(isInert('break', '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
   // Soft keywords: `match` and `case` take an unpacking subject or pattern.
   expect(isInert('        case *rest, x:  # n', '        …', 'Python', new Set(['v']), none, out)).toBe(false)
@@ -193,7 +195,7 @@ test('fix round 1: a hidden line is one of a closed set of forms (a raise or an 
   const ts = (raw: string, kept = '…', place = out): boolean => isInert(raw, kept, 'TypeScript', none, none, place)
   // Admitted: comments, string statements, literal-argument calls, a literal to a fresh name, structure.
   for (const raw of ['    # note', "    '''Doc.'''", '    """Sum."""  # n', '    pass  # c', '    else:  # c']) expect([raw, py(raw)]).toEqual([raw, true])
-  for (const raw of ['// note', "'use strict'", '/* note */']) expect([raw, ts(raw)]).toEqual([raw, true])
+  for (const raw of ['// note', '/* note */']) expect([raw, ts(raw)]).toEqual([raw, true])
   // Fix round 2: no call and no assignment (a literal word or host builtin raises when called; a name may shadow a helper).
   for (const raw of ["    log('step')", "    log.info('x', 1, True, None)  # c", "    z = 'a'", '    z = -3  # c', '    None()  # c', "    int('x')  # c", '    NotImplemented(1)  # c', '    log = 1  # c']) expect([raw, py(raw)]).toEqual([raw, false])
   for (const raw of ["log('step');", "lib.log('x', 1, true) // c", "const z = 'a' // c", 'undefined() // c', "atob('*') // c", 'Buffer.alloc(-1) // c', "require('zz-nope') // c", 'Foo() // c', 'NaN(1) // c', 'const lib = 1 // c']) expect([raw, ts(raw)]).toEqual([raw, false])
@@ -205,7 +207,8 @@ test('fix round 1: a hidden line is one of a closed set of forms (a raise or an 
   for (const raw of ['const z = (1 as any).x.y // c', 'process.exit(1) // stop', "throw_it('x') + 1", 'const z = `${q}` // c', 'z = 1 // c', 'z.y = 1 // c']) expect([raw, ts(raw)]).toEqual([raw, false])
   expect(ts("if (mode() === 'a') {", '…{')).toBe(false)
   // Exit forms keep their places.
-  expect(py("    raise ValueError('bad')", { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(true)
+  expect(py("    raise ValueError('bad')", { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
+  expect(py("    raise ValueError('bad')", { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(true)
   expect(py('    sys.exit(1)  # stop', { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(true)
   expect(py('    os._exit(1)  # stop', { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
   expect(py("    raise ValueError('a' + q)", { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
@@ -226,11 +229,21 @@ test('fix round 1: a string over several hidden lines is read in order, and only
   expect(run({ 1: '    """Sum.', 2: '    """; z = 1 / 0', 4: '    # c' })).toBe(false)
 })
 
+test('fix round 3: hidden strings: none in TS or PHP; one plain Python string token only', async () => {
+  const ts = (raw: string): boolean => isInert(raw, '…', 'TypeScript', none, none, out)
+  const py = (raw: string): boolean => isInert(raw, '    …', 'Python', none, none, out)
+  for (const raw of ["'a'", '`step`', "'a' `b`", '`a` `b`', '"a"', "'use strict'; // c"]) expect([raw, ts(raw)]).toEqual([raw, false])
+  expect(isInert("'a';", '…', 'PHP', none, none, out)).toBe(false)
+  for (const raw of ["    'a'", "    u'a'  # c", "    r'a'", '    """Doc."""', "    U'a'"]) expect([raw, py(raw)]).toEqual([raw, true])
+  for (const raw of ["    'a' 'b'", "    b'a'", "    rb'a'", "    u'a' b'b'", "    '''a''' '''b'''", "    '\\N{nope}'"]) expect([raw, py(raw)]).toEqual([raw, false])
+})
+
 test('PHP variable variables fail: a name reached without being written', async () => {
   const items = new Set(['items'])
   expect(isInert("log(${'it'.'ems'}); // n", '…', 'PHP', items, none, out)).toBe(false)
   expect(isInert('log($$n); // n', '…', 'PHP', items, none, out)).toBe(false)
-  expect(isInert("'x'; // n", '…', 'PHP', items, none, out)).toBe(true)
+  expect(isInert('// n', '…', 'PHP', items, none, out)).toBe(true)
+  expect(isInert("'x'; // n", '…', 'PHP', items, none, out)).toBe(false)
 })
 
 /** A stand-in repository: one file changed on `lines`, read as `source`. */

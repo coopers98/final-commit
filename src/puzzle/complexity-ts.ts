@@ -100,7 +100,8 @@ function tokenize(line: string): Tok[] {
     }
     const num = /\d/.test(c) || (c === '.' && /\d/.test(line[i + 1] ?? '')) ? NUMBER.exec(rest) : null
     if (num) {
-      if (IDENT.test(rest.slice(num[0].length))) refuse()
+      // A bigint literal (`10n`) mixed with a number throws.
+      if (IDENT.test(rest.slice(num[0].length)) || num[0].endsWith('n')) refuse()
       out.push({ t: 'num', v: num[0] })
       i += num[0].length
       continue
@@ -613,7 +614,7 @@ function simpleLine(toks: Tok[]): Simple {
       p.i++
       const t = p.typeUntilAssign()
       const word = t.length === 1 ? t[0]!.v : ''
-      type = word === 'number' || word === 'bigint' ? 'numeric' : word === 'string' ? 'string' : undefined
+      type = word === 'number' ? 'numeric' : word === 'string' ? 'string' : undefined
     }
     let init: Node | undefined
     if (p.is('=')) {
@@ -704,7 +705,8 @@ function propsOf(toks: Tok[]): Props | undefined {
 function elemTypeOf(toks: Tok[]): ElemType {
   if (toks.length !== 1 || toks[0]!.t !== 'id') return 'opaque'
   const w = toks[0]!.v
-  return w === 'number' || w === 'bigint' ? 'number' : w === 'string' ? 'string' : w === 'boolean' ? 'boolean' : 'opaque'
+  // Task 6 fix round 3: a bigint is no number (mixing the two throws, and toFixed is no bigint method).
+  return w === 'number' ? 'number' : w === 'string' ? 'string' : w === 'boolean' ? 'boolean' : 'opaque'
 }
 
 /** Spec "Typed receivers": arrays, `string`, `Set<…>`, `Map<…>` (optionally `| undefined`/`| null`); numbers are sizes by value. */
@@ -714,7 +716,7 @@ function classify(type: Tok[]): Omit<Param, 'name'> {
   if (literal) return { kind: 'literal', literal }
   if (parts.length !== 1) return { kind: 'other' }
   let p = parts[0]!
-  if (p.length === 1 && (isWord(p[0], 'number') || isWord(p[0], 'bigint'))) return { kind: 'numeric' }
+  if (p.length === 1 && isWord(p[0], 'number')) return { kind: 'numeric' }
   if (p.length === 1 && isWord(p[0], 'string')) return { kind: 'string' }
   if (p.length === 1 && isWord(p[0], 'boolean')) return { kind: 'bool' }
   const readonly = isWord(p[0], 'readonly')
@@ -1376,6 +1378,15 @@ class Reader {
         for (const b of s.branches) {
           if (b.cond) {
             need(!isTrivial(b.cond))
+            // Task 6 fix round 3: outside loops, no comparison names one value on both sides (`k !== k + 1` always holds).
+            if (depth === 0) {
+              const names = (m: Node): Set<string> => {
+                const out = new Set<string>()
+                someNode(m, (c) => (c.k === 'id' ? (out.add(c.name), false) : false))
+                return out
+              }
+              need(!someNode(b.cond, (m) => m.k === 'bin' && COMPARE.has(m.op) && [...names(m.left)].some((x) => names(m.right).has(x))))
+            }
             // Family 2: outside loops, a test holds only literals, number and boolean parameters, a parameter's size and size-free locals.
             if (depth === 0) need(this.rootAllowed(b.cond))
             // Family 3: no test names two size sources.
@@ -2115,6 +2126,7 @@ class Reader {
         if (n.op === '+') need(this.isNumeric(n.left, env) && this.isNumeric(n.right, env))
         return add(this.cost(n.left, env), this.cost(n.right, env))
       case 'cond': {
+        need(!isTrivial(n.test))
         this.checkConsistent(env.path, n.test)
         const arm = ctx === 'test' || ctx === 'ret' ? ctx : 'value'
         const yes = this.cost(n.yes, { ...env, path: [...env.path, { cond: n.test, neg: false, depth }] }, arm)
@@ -2206,6 +2218,29 @@ class Reader {
     if (n.k === 'id') return elementsOf(env.loops).get(n.name)?.type === 'string'
     if (n.k === 'index' && n.obj.k === 'id') return this.sourceOfName(n.obj.name)?.type === 'string'
     return false
+  }
+
+  /** Task 6 fix round 3: proven a string — a string literal, a string element or element read, a string method's result, or a local every write of which is one. */
+  private isStringValue(n: Node, env: Env, seen = new Set<string>()): boolean {
+    switch (n.k) {
+      case 'lit':
+        return n.kind === 'str'
+      case 'id': {
+        const e = elementsOf(env.loops).get(n.name)
+        if (e) return e.type === 'string'
+        const d = this.decls.get(n.name)
+        if (!d || seen.has(n.name) || this.locals.get(n.name)?.k !== 'local') return false
+        seen.add(n.name)
+        const values = [d.line.init, ...this.assignments.filter((a) => a.name === n.name).map((a) => (a.op === '=' ? a.value : undefined))]
+        return values.every((v) => v !== undefined && this.isStringValue(v, env, seen))
+      }
+      case 'index':
+        return n.obj.k === 'id' && this.sourceOfName(n.obj.name)?.type === 'string'
+      case 'call':
+        return n.callee.k === 'member' && n.callee.name === 'charAt' && this.isStringValue(n.callee.obj, env, seen)
+      default:
+        return false
+    }
   }
 
   /** A value whose positions reveal a size: a size source, a closed local, an array accumulator. */
@@ -2359,6 +2394,17 @@ class Reader {
     return false
   }
 
+  /** An array accumulator, or a local that only ever holds an array literal. */
+  private isArrayReceiver(obj: Node): boolean {
+    if (obj.k !== 'id') return false
+    const l = this.locals.get(obj.name)
+    if (l?.k === 'acc') return l.array
+    if (l?.k !== 'local') return false
+    const d = this.decls.get(obj.name)
+    const values = [d?.line.init, ...this.assignments.filter((a) => a.name === obj.name && a.whole).map((a) => a.value)]
+    return values.every((v) => v !== undefined && v.k === 'array')
+  }
+
   /** Task 6 fix round 2: a write's receiver is an accumulator, or a local that only ever holds a fresh object or array (never null or a primitive). */
   private isWritableReceiver(obj: Node): boolean {
     if (obj.k !== 'id') return false
@@ -2458,7 +2504,8 @@ class Reader {
     need(recv !== 'fixed' && recv !== 'other')
     const literal = recv === 'literal' ? this.params.get(name)?.literal : undefined
     if (recv === 'literal') need(literal === 'string' ? STRING_METHODS.has(m) : literal === 'number' && m === 'toFixed')
-    if (isValue) need(this.isPrimitiveValue(obj, env) && SCALAR_METHODS.has(m))
+    // Task 6 fix round 3: a scalar method matches its receiver's proven type (toFixed on numbers, the rest on strings).
+    if (isValue) need(this.isPrimitiveValue(obj, env) && SCALAR_METHODS.has(m) && (m === 'toFixed' ? this.isNumeric(obj, env) : this.isStringValue(obj, env)))
     // toFixed throws a RangeError past 20 digits.
     if (m === 'toFixed') need(n.args.length === 1 && (numLit(n.args[0]) ?? -1) >= 0 && numLit(n.args[0])! <= 20)
     // Reached through a closed local or an accumulator (`o.a`, `acc[k]`): lookups and appends only.
@@ -2606,7 +2653,8 @@ class Reader {
   }
 
   private costOfNew(n: Extract<Node, { k: 'new' }>, env: Env): Cost {
-    need(n.callee !== this.unit.name && !FAILS.has(n.callee))
+    // Task 6 fix round 3: an exit-named constructor may end the process as an exit-named call may.
+    need(n.callee !== this.unit.name && !FAILS.has(n.callee) && !isExitName(n.callee))
     if (n.callee === 'Set' || n.callee === 'Map') {
       if (n.args.length === 0) return NOTHING
       need(n.args.length === 1)
@@ -2638,6 +2686,8 @@ class Reader {
     // Task 6 fix round 1: a write to a property or index of null throws; round 2: so does one to a primitive (strict
     // mode), and a write to `.length` resizes (or throws on a negative length).
     if (target.k === 'member' || target.k === 'index') need(this.isWritableReceiver(target.obj) && !(target.k === 'member' && (target.name === 'length' || target.name === 'size')))
+    // Task 6 fix round 3: a bracket write takes a number key (never 'length') on an array accumulator or a fresh array.
+    if (target.k === 'index') need(this.isNumeric(target.index, env) && this.isArrayReceiver(target.obj))
     if (this.searchVars.has(name)) return c
     need(!this.loopNames.has(name))
     const local = this.locals.get(name)
@@ -2770,6 +2820,9 @@ function blockCall(line: Simple): Extract<Node, { k: 'call' }> {
 /** A condition no input can change: no names at all, a comparison of a value with itself, or `a || !a` / `a && !a` (comparisons flipped). */
 function isTrivial(n: Node): boolean {
   if (!someNode(n, (m) => m.k === 'id' || m.k === 'this')) return true
+  // Task 6 fix round 3: a literal (or fresh value) operand of ||, && or ! makes the test always or never hold.
+  const isLiteral = (m: Node): boolean => ['lit', 'array', 'object', 'new', 'arrow'].includes(m.k)
+  if (someNode(n, (m) => (m.k === 'bin' && (m.op === '||' || m.op === '&&' || m.op === '??') && (isLiteral(m.left) || isLiteral(m.right))) || (m.k === 'unary' && m.op === '!' && isLiteral(m.arg)))) return true
   const same = (a: Node, b: Node): boolean => JSON.stringify(a) === JSON.stringify(b)
   return someNode(n, (m) => m.k === 'bin' && ((COMPARE.has(m.op) && same(m.left, m.right)) || ((m.op === '||' || m.op === '&&') && (same(negate(m.left), m.right) || same(m.left, negate(m.right))))))
 }

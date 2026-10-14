@@ -249,7 +249,9 @@ test('each constant builtin keeps the loop O(n)', async () => {
 })
 
 test('accumulators grow by constant operations, and anything else on one fails', async () => {
-  expect(answer(fn('items: number[]', 'const out: number[] = []', 'const seen = new Set<number>()', 'const by = new Map<number, number>()', 'const count = {}', 'for (const x of items) {', '  for (const y of items) {', '    out.push(x * y)', '    seen.add(y)', '    by.set(x, y)', '    count[x] = y', '  }', '}', 'return out.length + seen.size'))).toBe('O(n²)')
+  expect(answer(fn('items: number[]', 'const out: number[] = []', 'const seen = new Set<number>()', 'const by = new Map<number, number>()', 'for (const x of items) {', '  for (const y of items) {', '    out.push(x * y)', '    seen.add(y)', '    by.set(x, y)', '  }', '}', 'return out.length + seen.size'))).toBe('O(n²)')
+  // Task 6 fix round 3: a bracket write takes a number key on an array accumulator or fresh array only.
+  expect(answer(fn('items: number[]', 'const count = {}', 'for (const x of items) {', '  count[x] = 1', '}', 'return 0'))).toBe(undefined)
   for (const use of ['return out.join()', 'return out.includes(1) ? 1 : 0', 'return [...out].length', 'return use(out)', 'out = []']) {
     expect([use, answer(fn('items: number[]', 'let out: number[] = []', 'for (const x of items) {', '  out.push(x)', '}', use))]).toEqual([use, undefined])
   }
@@ -524,11 +526,12 @@ test('a blanked opener must be an else; its body counts, and an exit inside it f
   expect(answer(withHidden(chain, { 4: '  } else { // c' }))).toBe(undefined)
 })
 
-test('a hidden exit passes only last at body level or last in a guard outside loops', async () => {
+test('a hidden exit passes only last at body level (task 6 fix round 3: not in a guard)', async () => {
   const last = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  …']
   expect(answer(withHidden([...last, '}'], { 5: "  return 0 // 'none'" }))).toBe('O(n)')
   const guard = ['function f(items: number[]): number {', '  if (items.length === 0) {', '    …', '  }', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  return t', '}']
-  expect(answer(withHidden(guard, { 2: "    return 0 // 'none'" }))).toBe('O(n)')
+  // Task 6 fix round 3: a hidden exit only as the function's last line (guards may be complementary).
+  expect(answer(withHidden(guard, { 2: "    return 0 // 'none'" }))).toBe(undefined)
   // The guard must exit: a hidden line that does not leaves the guard as a plain small-size branch.
   expect(answer(withHidden(guard, { 2: "    log('none')" }))).toBe(undefined)
   const inLoopLines = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    …', '    t += x', '  }', '  return t', '}']
@@ -936,4 +939,51 @@ test('task 6 fix round 2: an exit name matches by substring; toFixed takes 0 to 
   expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(21).length', '}', 'return t'))).toBe(undefined)
   expect(answer(after('Foo(1)', 'items: Foo[]'))).toBe(undefined)
   expect(answer(after('Bar(1)', 'items: Foo[]'))).toBe('O(n)')
+})
+
+// --- Task 6 fix round 3 -----------------------------------------------------------
+
+test('task 6 fix round 3: a hidden template or string is a tagged call after an expression', async () => {
+  const inLoop = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    t += x', '    …', '  }', '  return t', '}']
+  expect(answer(withHidden(inLoop, { 4: '    // step' }))).toBe('O(n)')
+  for (const raw of ['    `step`', "    'step'", "    'a' `b`", '    `a` `b`']) expect([raw, answer(withHidden(inLoop, { 4: raw }))]).toEqual([raw, undefined])
+})
+
+test('task 6 fix round 3: hidden exits in complementary guards fail', async () => {
+  const guards = (a: string, b: string, k = 'number'): string[] => [`function f(items: number[], k: ${k}): number {`, '  let t = 0', `  if (${a}) {`, '    …', '  }', `  if (${b}) {`, '    …', '  }', '  for (const y of items) {', '    t += y', '  }', '  return t', '}']
+  const both = (u: string[]): Unit => withHidden(u, { 3: '    return 0', 6: '    return 1' })
+  expect(answer(both(guards('k === 1', 'k !== 1')))).toBe(undefined)
+  expect(answer(both(guards('k', '!k', 'boolean')))).toBe(undefined)
+  expect(answer(both(guards('k > 0', '!(k > 0)')))).toBe(undefined)
+})
+
+test('task 6 fix round 3: a literal operand of || or && or !, or a literal condition, fails; a name twice in a root test fails', async () => {
+  const guard = (c: string): Unit => fn('items: number[], k: number', 'let t = 0', `if (${c}) {`, '  return 0', '}', 'for (const y of items) {', '  t += y', '}', 'return t')
+  expect(answer(guard('k > 0'))).toBe('O(n)')
+  for (const c of ['k > 0 || true', 'true || k > 0', 'k > 0 || 1', "k > 0 || 'a'", 'k > 0 || []', 'k > 0 || {}', '!false', 'k > 0 && !0', 'k !== k + 1', 'true']) expect([c, answer(guard(c))]).toEqual([c, undefined])
+  expect(answer(fn('items: number[], k: number', 'let t = 0', 'for (const y of items) {', '  t += (k > 0 || true) ? y : 0', '}', 'return t'))).toBe(undefined)
+})
+
+test('task 6 fix round 3: a bracket write takes a number key on an array accumulator or a fresh array', async () => {
+  const loop = (decl: string, line: string): Unit => fn('items: number[]', 'let t = 0', decl, 'for (let i = 0; i < items.length; i++) {', `  ${line}`, '  t += 1', '}', 'return t')
+  expect(answer(loop('const v: number[] = []', 'v[i] = 1'))).toBe('O(n)')
+  expect(answer(loop('const v = [0]', 'v[i] = 1'))).toBe('O(n)')
+  for (const [decl, line] of [['const v: number[] = []', "v['length'] = -1"], ['const v: number[] = []', 'v[`length`] = -1'], ['const v: number[] = []', 'v["length"] = -1'], ['const v: number[] = []', "v['length'] -= 5"], ['const v = [0]', "v['length'] = -1"], ['const m = new Map()', "m['size'] = 1"], ['const s = new Set()', 's[i] = 1'], ['const o = {}', "o['k'] = 1"]]) {
+    expect([decl, line, answer(loop(decl!, line!))]).toEqual([decl, line, undefined])
+  }
+})
+
+test('task 6 fix round 3: a scalar method matches its receiver: string methods on strings, toFixed on numbers; bigint is no number', async () => {
+  const each = (params: string, line: string): Unit => fn(params, 'let t = 0', 'for (const x of items) {', `  ${line}`, '}', 'return t')
+  expect(answer(each('items: number[]', 't += x.toFixed(2).length'))).toBe('O(n)')
+  expect(answer(each('items: string[]', 't += x.charAt(0).length'))).toBe('O(n)')
+  for (const [params, line] of [['items: string[]', 't += x.toFixed(2).length'], ['items: boolean[]', 't += x.toFixed(2).length'], ['items: bigint[]', 't += x.toFixed(2).length'], ['items: number[]', 't += x.charAt(0).length'], ['items: boolean[]', 't += x.charAt(0).length'], ['items: bigint[]', 't += x'], ['items: number[], k: bigint', 't += k']]) {
+    expect([params, line, answer(each(params!, line!))]).toEqual([params, line, undefined])
+  }
+})
+
+test('task 6 fix round 3: an exit name fails as a constructor too, and in any Unicode form', async () => {
+  const after = (line: string): Unit => fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += 1', '}', line, 'return t')
+  expect(answer(after('lib.log(t)'))).toBe('O(n)')
+  for (const line of ['new Exit()', 'new lib.Exit()', 'lib.ｅxit(0)', 'lib.ſignal()']) expect([line, answer(after(line))]).toEqual([line, undefined])
 })

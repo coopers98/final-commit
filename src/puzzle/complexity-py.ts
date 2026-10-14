@@ -781,6 +781,9 @@ class Reader {
       if (isBlankedLine(text)) {
         this.places.set(b.at, { isInLoop: where.inLoop, isLastAtBodyLevel: where.atRoot && isLast, isInGuard: where.inGuard && isLast })
         if (b.children.length > 0) {
+          // Fix round 3: a hidden opener is an else (checked on its raw text), so it must close a shown if, for or while.
+          const prev = out.at(-1)
+          need(prev !== undefined && (prev.k === 'for' || prev.k === 'while' || (prev.k === 'if' && !prev.hasElse)))
           this.openers.add(b.at)
           out.push({ k: 'hblock', at: b.at, body: this.build(b.children, { inLoop: where.inLoop, inGuard: false, atRoot: false }, endOf(b)) })
         } else out.push({ k: 'hidden', at: b.at })
@@ -2307,6 +2310,9 @@ function isSearchBody(rest: Stmt[], lo: string, hi: string, mid: string): boolea
 /** A condition no input can change: no names at all, a comparison of a value with itself, or `a or not a` / `a and not a`. */
 function isTrivial(n: Node): boolean {
   if (!someNode(n, (m) => m.k === 'name')) return true
+  // Fix round 3: a literal operand of and, or or not makes the test always or never hold (`k > 0 or True`).
+  const isLiteral = (m: Node): boolean => ['num', 'const', 'list', 'set', 'dict', 'comp'].includes(m.k)
+  if (someNode(n, (m) => (m.k === 'bool' && (isLiteral(m.left) || isLiteral(m.right))) || (m.k === 'unary' && m.op === 'not' && isLiteral(m.arg)))) return true
   const same = (a: Node, b: Node): boolean => JSON.stringify(a) === JSON.stringify(b)
   return someNode(n, (m) => (m.k === 'cmp' && same(m.left, m.right)) || (m.k === 'bool' && (same(negate(m.left), m.right) || same(m.left, negate(m.right)))))
 }
