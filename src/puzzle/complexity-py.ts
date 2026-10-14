@@ -13,7 +13,7 @@
 // assignment raises. Each has its own allowlist below.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, isInert, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace } from './complexity'
+import { add, factor, hiddenScan, isInert, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -503,8 +503,8 @@ function parseLine(text: string): Line {
 
 /** `list`: a list (sortable in place); `seq`: Sequence or a variable tuple; `literal`: a Literal type, never a size; `fixed`: a fixed tuple; `other`: any other or no type. */
 type Kind = 'list' | 'seq' | 'str' | 'set' | 'map' | 'int' | 'float' | 'bool' | 'literal' | 'fixed' | 'other'
-/** What an element is: a primitive, or `opaque` (any other or unknown type). */
-type ElemType = 'int' | 'float' | 'bool' | 'str' | 'opaque'
+/** What an element is: a primitive, `object` (an instance of a class of the code's own: it takes attribute reads), or `opaque` (any other or unknown type). */
+type ElemType = 'int' | 'float' | 'bool' | 'str' | 'object' | 'opaque'
 /** A value's type: `coll` is any collection, which is never handed on as a value. */
 type VT = 'num' | 'str' | 'none' | 'opaque' | 'coll'
 /** `elem`: a collection's element type (a dict's value type); `key`: a dict's key type; `literal`: a Literal's value type. */
@@ -535,7 +535,13 @@ function closesAtEnd(toks: Tok[]): boolean {
   return false
 }
 
-const elemOf = (toks: Tok[]): ElemType => (toks.length === 1 && toks[0]!.t === 'id' && ['int', 'float', 'bool', 'str'].includes(toks[0]!.v) ? (toks[0]!.v as ElemType) : 'opaque')
+/** A primitive by name; a class of the code's own (a capitalized name of two letters or more, no typing or collection name: never None, a container or a primitive); anything else opaque. */
+function elemOf(toks: Tok[]): ElemType {
+  if (toks.length !== 1 || toks[0]!.t !== 'id') return 'opaque'
+  const w = toks[0]!.v
+  if (['int', 'float', 'bool', 'str'].includes(w)) return w as ElemType
+  return /^[A-Z][A-Za-z0-9_]+$/.test(w) && !COMPLEXITY.pythonNotClasses.includes(w) ? 'object' : 'opaque'
+}
 
 /** Spec "Typed receivers": the listed collections, bare or subscripted, optionally `Optional[...]` or `X | None`; numbers by value. */
 function classify(toks: Tok[]): Omit<Param, 'name'> {
@@ -687,8 +693,10 @@ type Val = { c: Cost; vt: VT }
 const STRICT_PLACE: HiddenPlace = { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false }
 const hasFactors = (c: Cost): boolean => c.some((t) => t.length > 0)
 const NOTHING: Cost = []
-const vtOf = (t: ElemType): VT => (t === 'str' ? 'str' : t === 'opaque' ? 'opaque' : 'num')
-const isPrimitive = (t: ElemType): boolean => t !== 'opaque'
+const vtOf = (t: ElemType): VT => (t === 'str' ? 'str' : t === 'opaque' || t === 'object' ? 'opaque' : 'num')
+const isPrimitive = (t: ElemType): boolean => t === 'int' || t === 'float' || t === 'bool' || t === 'str'
+/** A call that ends the process or raises a signal (fix round 1). */
+const isExitName = (name: string): boolean => COMPLEXITY.exitCalls.includes(name) || COMPLEXITY.exitWords.includes(name)
 const iterType = (s: Source): ElemType => (s.kind === 'map' ? s.key : s.elem)
 const indexable = (s: Source | undefined): boolean => s !== undefined && (s.kind === 'list' || s.kind === 'seq' || s.kind === 'str')
 const isEmptyLiteral = (n: Node): 'list' | 'set' | 'dict' | undefined => {
@@ -1163,7 +1171,7 @@ class Reader {
       case 'name':
         return this.nameVT(n.name, loops) ?? 'bad'
       case 'attr':
-        return this.typeOf(n.obj, loops) === 'opaque' ? 'opaque' : 'bad'
+        return this.isAttrReceiver(n.obj, loops) ? 'opaque' : 'bad'
       case 'index': {
         const s = isName(n.obj) ? this.sourceOfName(n.obj.name) : undefined
         return s && indexable(s) ? vtOf(s.elem) : 'bad'
@@ -1236,6 +1244,26 @@ class Reader {
   private getType(s: Source, d: Node | undefined, type: (d: Node) => VT | 'bad'): VT {
     const v = vtOf(s.elem)
     return d !== undefined && v !== 'opaque' && type(d) === v ? v : 'opaque'
+  }
+
+  /**
+   * Fix round 1: an attribute is read only on a loop's element of a class
+   * type of the code's own, or on the result of a helper or a module's
+   * function (by the rule, such a call returns its object). Never on None,
+   * a `get` result, a container, a primitive or an attribute's value.
+   */
+  private isAttrReceiver(n: Node, loops: Loop[]): boolean {
+    if (isName(n)) {
+      for (let k = loops.length - 1; k >= 0; k--) {
+        const b = loops[k]!.names.get(n.name)
+        if (b) return b.role === 'elem' && b.type === 'object'
+      }
+      return false
+    }
+    if (n.k !== 'call') return false
+    const c = n.callee
+    if (c.k === 'name') return !GLOBALS.has(c.name) && !this.isBound(c.name) && !isExitName(c.name)
+    return c.k === 'attr' && isName(c.obj) && !GLOBALS.has(c.obj.name) && !this.isBound(c.obj.name) && !isExitName(c.name)
   }
 
   private nameVT(name: string, loops: Loop[]): VT | undefined {
@@ -1536,15 +1564,16 @@ class Reader {
     const bound = new Set([...this.params.keys(), ...this.skipped, ...this.locals.keys(), ...this.loopNames, this.unit.name])
     const hidden = this.unit.hidden
     if (!hidden) refuse()
-    need(hidden((raw, at) => this.isHiddenOk(raw, at, bound)) === true)
+    const scan = hiddenScan(this.lines)
+    need(hidden((raw, at) => this.isHiddenOk(raw, at, bound, scan)) === true && scan.open === undefined)
   }
 
-  private isHiddenOk(raw: string, at: number, bound: ReadonlySet<string>): boolean {
+  private isHiddenOk(raw: string, at: number, bound: ReadonlySet<string>, scan: HiddenScan): boolean {
     const kept = this.lines[at]
     if (typeof raw !== 'string' || !Number.isInteger(at) || at < 1 || kept === undefined || !isBlankedLine(kept)) return false
-    if (!isInert(raw, kept, 'Python', bound, WORDS, this.places.get(at) ?? STRICT_PLACE)) return false
-    // A blanked opener is only an if, elif or else: its body runs at most once where it stands.
-    return !this.openers.has(at) || /^(?:if\b|elif\b|else\s*:)/.test(raw.trim())
+    if (!isInert(raw, kept, 'Python', bound, WORDS, this.places.get(at) ?? STRICT_PLACE, scan, at)) return false
+    // A blanked opener is only an else (fix round 1: a hidden test may raise); its body runs at most once where it stands.
+    return !this.openers.has(at) || /^else\s*:/.test(raw.trim())
   }
 
   /** Whether the blanked line at `at` holds an exit word (only a boolean leaves `hidden`). */
@@ -1897,9 +1926,9 @@ class Reader {
         return { c: NOTHING, vt }
       }
       case 'attr': {
-        const o = this.val(n.obj, env)
-        need(o.vt === 'opaque' && ctx !== 'test')
-        return { c: o.c, vt: 'opaque' }
+        // Fix round 1: an attribute read raises on None, a container or a primitive.
+        need(this.isAttrReceiver(n.obj, env.loops) && ctx !== 'test')
+        return { c: this.val(n.obj, env).c, vt: 'opaque' }
       }
       case 'index': {
         // A read by position only at a position its loop proves in range.
@@ -2028,6 +2057,8 @@ class Reader {
 
   private valCall(n: Extract<Node, { k: 'call' }>, env: Env, ctx: Ctx): Val {
     const callee = n.callee
+    // Fix round 1: a call that ends the process is an exit the input cannot avoid.
+    need(!(callee.k === 'name' && isExitName(callee.name)) && !(callee.k === 'attr' && isExitName(callee.name)))
     if (callee.k === 'name') {
       if (GLOBALS.has(callee.name)) return this.builtinCall(callee.name, n, env)
       // A helper: 1 by the rule. A bound name is never called.

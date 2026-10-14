@@ -344,8 +344,250 @@ function unpacksPython(raw: string): boolean {
   return false
 }
 
-/** Spec "What the reader reads", rules 1 to 4. `kept` is the blanked line as shown; `bound` every name bound in the unit plus the unit's own name; `words` the language's builtin and global names. */
-export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python' | 'PHP', bound: ReadonlySet<string>, words: ReadonlySet<string>, place: HiddenPlace): boolean {
+/**
+ * A string or comment a hidden line leaves open, carried to the next hidden
+ * line: the text that closes it. `last` is the previous hidden line's index;
+ * only blank lines may stand between the two.
+ */
+export type HiddenScan = { lines: readonly string[]; last: number; open: string | undefined }
+/** A fresh scan over a unit's `lines`, for one run of `hidden`; after it, `open` must be undefined. */
+export const hiddenScan = (lines: readonly string[]): HiddenScan => ({ lines, last: -1, open: undefined })
+
+/** Stands for one string literal in a line's skeleton. */
+const STR = '\u0001'
+
+/**
+ * Index just past `closer` from `from`, a backslash skipping the next
+ * character in strings; -1 when the line ends first, -2 on a forbidden text
+ * (an interpolation, which runs code).
+ */
+function closeAt(raw: string, from: number, closer: string, isString: boolean, forbid: readonly string[]): number {
+  for (let i = from; i < raw.length; i++) {
+    if (isString && raw[i] === '\\') {
+      i++
+      continue
+    }
+    if (forbid.some((f) => raw.startsWith(f, i))) return -2
+    if (raw.startsWith(closer, i)) return i + closer.length
+  }
+  return -1
+}
+
+/**
+ * The line with its comments dropped and each string literal read as one
+ * `STR`, and what it leaves open. Undefined when it holds what the forms
+ * never admit: a Python f- or t-string, a TS template with `${`, a PHP string
+ * with `$`, a PHP attribute or heredoc, a single-quoted string left open.
+ */
+function skeleton(raw: string, lang: 'TypeScript' | 'Python' | 'PHP', open: string | undefined): { code: string; open: string | undefined } | undefined {
+  let out = ''
+  let i = 0
+  const forbidOf = (closer: string): string[] => (closer === '`' ? ['${'] : lang === 'PHP' && closer === '"' ? ['$'] : [])
+  /** Continues a string or comment closed by `closer`; false when the line ends inside it. */
+  const run = (closer: string): boolean | undefined => {
+    const isComment = closer === '*/'
+    const at = closeAt(raw, i, closer, !isComment, forbidOf(closer))
+    if (at === -2) return undefined
+    if (!isComment) out += STR
+    if (at === -1) {
+      i = raw.length
+      return false
+    }
+    i = at
+    return true
+  }
+  if (open !== undefined) {
+    const r = run(open)
+    if (r === undefined) return undefined
+    if (!r) return { code: out, open }
+  }
+  while (i < raw.length) {
+    const c = raw[i]!
+    const rest = raw.slice(i)
+    if ((lang === 'Python' && c === '#') || (lang !== 'Python' && rest.startsWith('//'))) break
+    if (lang === 'PHP' && c === '#') {
+      if (rest.startsWith('#[')) return undefined
+      break
+    }
+    if (lang !== 'Python' && rest.startsWith('/*')) {
+      i += 2
+      const r = run('*/')
+      if (r === undefined) return undefined
+      if (!r) return { code: out, open: '*/' }
+      continue
+    }
+    if (lang === 'PHP' && rest.startsWith('<<<')) return undefined
+    if (c === "'" || c === '"' || (lang === 'TypeScript' && c === '`')) {
+      let closer = c
+      if (lang === 'Python') {
+        // A prefix stands right before the quote: r, b, u and their pairs only (f and t strings run code).
+        const prefix = /[A-Za-z_\d]*$/.exec(out)![0]
+        if (prefix !== '' && !/^[rRbBuU]{1,2}$/.test(prefix)) return undefined
+        out = out.slice(0, out.length - prefix.length)
+        if (rest.startsWith(c.repeat(3))) closer = c.repeat(3)
+      }
+      i += closer.length
+      const r = run(closer)
+      if (r === undefined) return undefined
+      if (!r) {
+        // Only a triple-quoted Python string, a TS template or a PHP string runs on.
+        if (lang === 'Python' ? closer.length === 3 : lang === 'PHP' || closer === '`') return { code: out, open: closer }
+        return undefined
+      }
+      continue
+    }
+    out += c
+    i++
+  }
+  return { code: out, open: undefined }
+}
+
+type HTok = { t: 'id' | 'num' | 'str' | 'p'; v: string }
+
+/** The skeleton as tokens; undefined on any character outside names, numbers, strings and a few marks. */
+function skeletonTokens(code: string, lang: 'TypeScript' | 'Python' | 'PHP'): HTok[] | undefined {
+  const out: HTok[] = []
+  const id = lang === 'PHP' ? /^\$?[A-Za-z_][A-Za-z0-9_]*/ : /^[A-Za-z_][A-Za-z0-9_]*/
+  let i = 0
+  while (i < code.length) {
+    const rest = code.slice(i)
+    if (/^\s/.test(rest)) {
+      i++
+      continue
+    }
+    if (rest[0] === STR) {
+      out.push({ t: 'str', v: '' })
+      i++
+      continue
+    }
+    const num = /^\d+(?:\.\d+)?/.exec(rest)
+    if (num) {
+      if (/^[A-Za-z0-9_.]/.test(rest.slice(num[0].length))) return undefined
+      out.push({ t: 'num', v: num[0] })
+      i += num[0].length
+      continue
+    }
+    const name = id.exec(rest)
+    if (name) {
+      out.push({ t: 'id', v: lang === 'PHP' ? name[0].toLowerCase() : name[0] })
+      i += name[0].length
+      continue
+    }
+    if (!'(),.;:{}=-'.includes(rest[0]!)) return undefined
+    out.push({ t: 'p', v: rest[0]! })
+    i++
+  }
+  return out
+}
+
+const LITERAL_WORDS: Record<string, readonly string[]> = { Python: ['True', 'False', 'None'], TypeScript: ['true', 'false', 'null', 'undefined'], PHP: ['true', 'false', 'null'] }
+
+/**
+ * Fix round 1 (task 6): a hidden line is one of a closed set of forms, so it
+ * can neither raise nor exit but where an exit is allowed. `plain`: a
+ * comment, a string statement, a call of a name (or `module.name`) with
+ * literal arguments, a literal given to a name, an else or a close; `exit`:
+ * a return or raise of literals, a break or continue, a call of an exit name.
+ * Undefined for anything else.
+ */
+function hiddenForm(toks: HTok[], lang: 'TypeScript' | 'Python' | 'PHP'): 'plain' | 'exit' | undefined {
+  let ts = toks
+  if (lang !== 'Python' && ts.length > 0 && ts.at(-1)!.t === 'p' && ts.at(-1)!.v === ';') ts = ts.slice(0, -1)
+  let k = 0
+  const is = (v: string, t?: HTok['t']): boolean => ts[k] !== undefined && ts[k]!.v === v && (t === undefined || ts[k]!.t === t)
+  const p = (v: string): boolean => is(v, 'p')
+  const w = (v: string): boolean => is(v, 'id')
+  const done = (): boolean => k === ts.length
+  const lit = (): boolean => {
+    if (p('-') && ts[k + 1]?.t === 'num') {
+      k += 2
+      return true
+    }
+    const t = ts[k]
+    if (t && (t.t === 'str' || t.t === 'num' || (t.t === 'id' && LITERAL_WORDS[lang]!.includes(t.v)))) {
+      k++
+      return true
+    }
+    return false
+  }
+  const name = (): string | undefined => {
+    const t = ts[k]
+    if (t?.t !== 'id') return undefined
+    k++
+    return t.v
+  }
+  /** `(lit, lit, …)`, a trailing comma allowed. */
+  const litArgs = (): boolean => {
+    if (!p('(')) return false
+    k++
+    while (!p(')')) {
+      if (!lit()) return false
+      if (p(',')) k++
+      else if (!p(')')) return false
+    }
+    k++
+    return true
+  }
+  const exitName = (n: string): boolean => COMPLEXITY.exitCalls.includes(n.replace(/^\$/, '')) || COMPLEXITY.exitWords.includes(n)
+  if (done()) return 'plain'
+  if (ts.every((t) => t.t === 'str')) return 'plain'
+  const words = ts.map((t) => (t.t === 'p' || t.t === 'id' ? t.v : t.t)).join(' ')
+  if (lang === 'Python' && (words === 'pass' || words === 'else :')) return 'plain'
+  if (lang !== 'Python' && (words === '}' || words === '} else {' || words === 'else {')) return 'plain'
+  if (words === 'break' || words === 'continue') return 'exit'
+  if (w('return')) {
+    k++
+    return done() || (lit() && done()) ? 'exit' : undefined
+  }
+  if (lang === 'Python' && w('raise')) {
+    k++
+    if (done()) return 'exit'
+    if (name() === undefined) return undefined
+    return done() || (litArgs() && done()) ? 'exit' : undefined
+  }
+  if (lang !== 'Python' && w('throw')) {
+    k++
+    if (!w('new')) return undefined
+    k++
+    return name() !== undefined && litArgs() && done() ? 'exit' : undefined
+  }
+  if (lang === 'PHP' && (w('exit') || w('die'))) {
+    k++
+    return done() || (litArgs() && done()) ? 'exit' : undefined
+  }
+  // A literal given to a fresh name (the names rule keeps it fresh).
+  const start = k
+  const declared = lang === 'TypeScript' && (w('const') || w('let'))
+  if (declared) k++
+  const target = name()
+  // TypeScript declares it (assigning an undeclared name throws in strict code); PHP's is a variable.
+  if (target !== undefined && (lang === 'TypeScript' ? declared : lang !== 'PHP' || target.startsWith('$')) && p('=')) {
+    k++
+    if (lit() && done()) return 'plain'
+    return undefined
+  }
+  // A call of a name or `module.name` with literal arguments.
+  k = start
+  const first = name()
+  if (first === undefined || first.startsWith('$')) return undefined
+  let fn = first
+  if (lang !== 'PHP' && p('.')) {
+    k++
+    const second = name()
+    if (second === undefined) return undefined
+    fn = second
+  }
+  if (!litArgs() || !done()) return undefined
+  return exitName(fn) || exitName(first) ? 'exit' : 'plain'
+}
+
+/**
+ * Spec "What the reader reads", rules 1 to 5. `kept` is the blanked line as
+ * shown; `bound` every name bound in the unit plus the unit's own name;
+ * `words` the language's builtin and global names. `scan` and `at` carry a
+ * string or comment over consecutive hidden lines (a docstring).
+ */
+export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python' | 'PHP', bound: ReadonlySet<string>, words: ReadonlySet<string>, place: HiddenPlace, scan?: HiddenScan, at?: number): boolean {
   if (!isBlankedLine(kept) || ODD_BREAK.test(raw)) return false
   if (!hasKeptStructure(raw, kept, lang)) return false
   const names = namesIn(raw, lang)
@@ -355,6 +597,24 @@ export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python'
   if (lang === 'Python' && unpacksPython(raw)) return false
   // PHP variable variables (`${'it'.'ems'}`, `$$name`) reach a name without writing it.
   if (lang === 'PHP' && (raw.includes('${') || raw.includes('$$'))) return false
-  if (holds(COMPLEXITY.exitWords)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
+  // Rule 5: a closed set of forms. An open string or comment carries over blank lines only.
+  const open = scan?.open
+  if (open !== undefined) {
+    if (at === undefined || scan!.last < 0 || at <= scan!.last) return false
+    for (let k = scan!.last + 1; k < at; k++) if ((scan!.lines[k] ?? 'x').trim() !== '') return false
+  }
+  const sk = skeleton(raw, lang, open)
+  if (!sk) return false
+  // Without a scan a line may open nothing.
+  if (sk.open !== undefined && !scan) return false
+  const toks = skeletonTokens(sk.code, lang)
+  if (!toks) return false
+  const form = hiddenForm(toks, lang)
+  if (!form) return false
+  if (scan) {
+    scan.open = sk.open
+    if (at !== undefined) scan.last = at
+  }
+  if (form === 'exit' || holds(COMPLEXITY.exitWords) || holds(COMPLEXITY.exitCalls)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
   return true
 }

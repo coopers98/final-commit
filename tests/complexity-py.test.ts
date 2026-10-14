@@ -62,16 +62,16 @@ test('hidden lines: inert passes, a hidden cost fails, a hidden line without hid
   expect(answer({ ...py(...lines), hidden: check => check("        return 'x'", 3) })).toBe(undefined)
 })
 
-test('a hidden block opener is an if whose body costs 1 and never exits', async () => {
-  const lines = ['def f(items: list[int], ids: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '            t += 1', '    return t']
-  const at = (raw: string, body: string): Unit => {
-    const l = [...lines.slice(0, 4), `            ${body}`, lines[5]!]
-    return { ...py(...l), hidden: check => check(raw, 3) }
-  }
-  expect(answer(at("        if mode == 'fast':", 't += 1'))).toBe('O(n)')
-  expect(answer(at("        if mode == 'fast':", 't += ids.count(x)'))).toBe(undefined)
-  expect(answer(at("        if mode == 'fast':", 'break'))).toBe(undefined)
-  expect(answer(at("        try:  # 'x'", 't += 1'))).toBe(undefined)
+test('a hidden block opener is an else whose body costs 1 and never exits', async () => {
+  const lines = ['def f(items: list[int], ids: list[int]) -> int:', '    t = 0', '    for x in items:', '        t += x', '    …', '        t += 1', '    return t']
+  const at = (raw: string, body: string): Unit => ({ ...py(...lines.slice(0, 5), `        ${body}`, lines[6]!), hidden: check => check(raw, 4) })
+  expect(answer(at('    else:  # never broke', 't += 1'))).toBe('O(n)')
+  expect(answer(at('    else:  # never broke', 't += sum(ids)'))).toBe(undefined)
+  expect(answer(at('    else:  # never broke', 'return 0'))).toBe(undefined)
+  // Fix round 1: a hidden test may raise, so an if or elif opener fails.
+  expect(answer(at("    if mode == 'fast':", 't += 1'))).toBe(undefined)
+  expect(answer(at("    elif mode == 'fast':", 't += 1'))).toBe(undefined)
+  expect(answer(at("    try:  # 'x'", 't += 1'))).toBe(undefined)
 })
 
 // --- Signature (gate 3) --------------------------------------------------------
@@ -522,4 +522,50 @@ test('blanked lines in the untrimmed unit are read at their place; the explanati
   const lines = ['def f(items: list[int]) -> int:', '    …', '    t = 0', '    for x in items:', '        t += x', '    return t']
   const u: Unit = { lang: 'Python', name: 'f', lines: lines.slice(2), full: { lines, offset: 2 }, hidden: check => check('    """Sum."""', 1) }
   expect(costOf(u)?.explanation).toBe('Line 2: loop over items. n = O(n).')
+})
+
+// --- Fix round 1 (task 6 review) -----------------------------------------------
+
+test('fix round 1: a hidden line that may raise or exit fails, in a loop, as an opener, or before the loop', async () => {
+  const inLoop = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '        t += x', '    return t']
+  const root = ['def f(items: list[int]) -> int:', '    …', '    t = 0', '    for x in items:', '        t += x', '    return t']
+  const mk = (lines: string[], at: number, raw: string): Unit => ({ ...py(...lines), hidden: check => check(raw, at) })
+  expect(answer(mk(inLoop, 3, "        log('step')"))).toBe('O(n)')
+  expect(answer(mk(root, 1, '    """Add them up."""'))).toBe('O(n)')
+  for (const raw of ['z = 1 / 0  # boom', 'os._exit(1)  # stop', 'sys.exit(1)  # stop', 'z = [][0]  # c', "z = {}['k']  # c", "z = 'a' + 1  # c", "z = qqq + 'a'  # c", 'z = q.r  # c']) {
+    expect([raw, answer(mk(inLoop, 3, `        ${raw}`))]).toEqual([raw, undefined])
+    expect([raw, answer(mk(root, 1, `    ${raw}`))]).toEqual([raw, undefined])
+  }
+  const opener = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        …', '            t += 1', '    return t']
+  expect(answer(mk(opener, 3, '        if 1 / 0:  # c'))).toBe(undefined)
+})
+
+test('fix round 1: a docstring over several hidden lines is read in order', async () => {
+  const lines = ['def f(items: list[int]) -> int:', '    …', '    …', '', '    …', '    t = 0', '    for x in items:', '        t += x', '    return t']
+  const mk = (raws: string[]): Unit => ({ ...py(...lines), hidden: check => [1, 2, 4].every((at, k) => check(raws[k]!, at)) })
+  expect(answer(mk(['    """Add them up.', '    Each one once.', '    """']))).toBe('O(n)')
+  expect(answer(mk(['    """Add them up.', '    Each one once.', '    """ + q']))).toBe(undefined)
+  expect(answer(mk(['    """Add them up.', '    """', '    z = 1 / 0  # c']))).toBe(undefined)
+})
+
+test('fix round 1: an attribute is read only on an element of a class type, or on a helper or module result', async () => {
+  const read = (params: string, line: string): Unit => fn(params, 't = 0', 'for r in rows:', `    ${line}`, '    t += 1', 'return t')
+  expect(answer(read('rows: list[Foo]', 'w = r.size'))).toBe('O(n)')
+  expect(answer(read('rows: list[int]', 'w = helper(r).size'))).toBe('O(n)')
+  expect(answer(read('rows: list[int]', 'w = repo.get(r).size'))).toBe('O(n)')
+  for (const [params, line] of [['rows: list[list[int]]', 'w = r.size'], ['rows: list[dict[str, int]]', 'w = r.size'], ['rows: list[int]', 'w = r.real'], ['rows: list[str]', 'w = r.size'], ['rows: list[Foo]', 'w = r.a.b'], ['rows: list[T]', 'w = r.size'], ['rows: list[Any]', 'w = r.size'], ['rows: list[Optional[Foo]]', 'w = r.size'], ['rows: list', 'w = r.size']]) {
+    expect([params, line, answer(read(params!, line!))]).toEqual([params, line, undefined])
+  }
+  expect(answer(fn('a: list[int]', 't = 0', 'for x in a:', '    v = None', '    w = v.real', '    t += x', 'return t'))).toBe(undefined)
+  expect(answer(fn('a: list[int]', 'seen = {}', 't = 0', 'for x in a:', '    v = seen.get(x)', '    w = v.real', '    t += x', 'return t'))).toBe(undefined)
+  expect(answer(fn('a: list[int], d: dict[int, Foo]', 't = 0', 'for x in a:', '    w = d.get(x).size', '    t += x', 'return t'))).toBe(undefined)
+  expect(answer(fn('a: list[Foo]', 'best = None', 'for x in a:', '    best = x', '    w = best.size', 'return 0'))).toBe(undefined)
+})
+
+test('fix round 1: a call to an exit or abort name fails', async () => {
+  expect(answer(fn('a: list[int]', 't = 0', 'for x in a:', '    t += x', 'repo.save(t)', 'return t'))).toBe('O(n)')
+  for (const line of ['sys.exit(0)', 'os._exit(0)', 'os.abort()', 'os.kill(1, 9)', 'signal.raise_signal(2)', 'lib.quit()', 'lib.die()']) {
+    expect([line, answer(fn('a: list[int]', 't = 0', 'for x in a:', '    t += x', line, 'return t'))]).toEqual([line, undefined])
+    expect([line, answer(fn('a: list[int]', 't = 0', 'for x in a:', '    t += x', `    ${line}`, 'return t'))]).toEqual([line, undefined])
+  }
 })

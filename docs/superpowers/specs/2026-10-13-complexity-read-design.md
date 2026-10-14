@@ -125,12 +125,27 @@ A hidden line passes only when it is **inert**:
    constant or failing) or any global builtin name of its language, and
    no spread or unpacking (`...`, `*` or `**` before a name).
 4. **Exits:** an exit word (`return`, `break`, `continue`, `throw`,
-   `raise`, `exit`, `die`) passes only on the last statement at body level,
-   or inside an `if` block that is outside every loop (a guard; its
-   condition is shown and goes through gate 10).
+   `raise`, `exit`, `die`), an exit or abort name (`_exit`, `abort`,
+   `kill`, `raise_signal`, `quit`) or an exit form passes only on the last
+   statement at body level, or inside an `if` block that is outside every
+   loop (a guard; its condition is shown and goes through gate 10).
+5. **Forms** (task 6 fix round 1): with its comments dropped, it is one
+   of a closed set, so it can neither raise nor exit but where rule 4
+   allows: empty (a comment); a string-literal statement (a docstring,
+   read across hidden lines in order, over blank lines only); a call
+   `name(…)` or `mod.fn(…)` of unbound names, not an exit name, whose
+   arguments are string, number, boolean or null literals; a string or
+   number literal given to a fresh name (TS `const`/`let`, PHP `$name`);
+   `pass`, an `else` or a close; and, under rule 4, `return` of nothing or
+   a literal, `raise Name(literals)` / `throw new Name(literals)`, `break`,
+   `continue`, an exit-name call with literals. Anything else fails:
+   arithmetic, subscripts, attribute reads, other assignments, f-strings,
+   template interpolation, and openers with a test (a hidden opener is only
+   an `else`).
 
-The answer then holds under the stated rule, since hidden lines add only
-constant work and cannot cut a loop short.
+The answer then holds under the stated rule: a hidden line does constant
+work and cannot raise, so it cannot cut a loop short (a helper it calls
+returns, by the rule).
 
 ## The reader (`src/puzzle/complexity.ts`)
 
@@ -471,6 +486,27 @@ Fix round 3 (default-refuse rules):
   reading `mid` whose branches set exactly `lo` and `hi`, one each. Any
   other body fails.
 
+Task 6 fix round 1 (raises and exits the input cannot avoid):
+
+- **Property reads and writes** throw on null or undefined, so a read
+  (`.length` and `.size` included) or a property or index write takes
+  only a receiver that is never either: a typed collection parameter or
+  derived value, an accumulator, a number, boolean or literal parameter,
+  a loop's index or primitive element, an element of an object or array
+  type (an object literal type, or a capitalized named type of two
+  letters or more that is no global), a declared non-optional property
+  of an object literal element type (`x.tags.length`), an element read of
+  such a parameter, a local every write of which is never null (a
+  literal, a fresh collection, a builtin's copy, index or string method
+  result), or a helper's or module's result. Never a local that may hold
+  null or an opaque value, a lookup's result (`m.get(k).a`), a chain
+  through another property, `this`, or an untyped or other-typed
+  parameter.
+- **Exit calls.** No call whose function or method name is an exit or
+  abort name (`process.exit`, `lib.abort`, `exit`, `kill`, `quit`, `die`).
+- **Hidden lines** are closed forms (rule 5 under "What the reader
+  reads"); a hidden opener is only an `else`.
+
 ### Stricter readings (Python reader, Task 6)
 
 The Python reader applies the TypeScript families above as allowlists
@@ -521,8 +557,14 @@ read before its first assignment raises. Each is a test.
   (or a binary search's mid); no dict is read by subscript; a divisor is
   a nonzero literal, a number parameter or a number element over a
   parameter; orderings compare numbers with numbers or strs with strs;
-  bitwise operators and `~` fail (a float raises). Calls are assumed to
-  return (the rule), as are hidden lines.
+  bitwise operators and `~` fail (a float raises). A helper or module
+  call returns, by the rule, but no call of an exit or abort name (`exit`,
+  `_exit`, `abort`, `kill`, `raise_signal`, `quit`, `die`, the exit
+  words) is read, in any reader. Hidden lines are closed forms (rule 5
+  above). An attribute is read only on a loop's element of a class type
+  of the code's own (a capitalized name, no typing or collection name) or
+  on a helper's or module's result: never on None, a `get` result, a
+  container, a primitive or another attribute.
 - **Growth.** `**` and `<<` fail. In a loop a number local is either an
   accumulator (`+=`, `-=`, or `t = max(t, v)`/`min`) whose added values
   read no accumulator, or a temporary whose writes read only other

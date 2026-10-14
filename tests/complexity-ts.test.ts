@@ -494,7 +494,7 @@ test('the explanation names shown lines', async () => {
   expect(costOf(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  t += ids.indexOf(x)', '}', 'return t'))?.explanation).toBe('Line 3: loop over items; line 4: indexOf on ids. n × m = O(n·m).')
 })
 
-test('Python and PHP units are not read yet', async () => {
+test('an untyped Python parameter is no loop source, and SQL has no reader', async () => {
   expect(costOf({ lang: 'Python', name: 'f', lines: ['def f(items):', '    for x in items:', '        pass'] })).toBe(undefined)
   expect(costOf({ lang: 'SQL', name: 'q', lines: ['select 1'] })).toBe(undefined)
 })
@@ -507,9 +507,12 @@ test('every blanked line is checked, a blanked lone close included', async () =>
   expect(answer(withHidden(lines, { 4: '  } while (g()) // c' }))).toBe(undefined)
 })
 
-test('a blanked opener must be an if or else; its body counts, and an exit inside it fails', async () => {
+test('a blanked opener must be an else; its body counts, and an exit inside it fails', async () => {
   const lines = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    …{', '      t += x', '    }', '  }', '  return t', '}']
-  expect(answer(withHidden(lines, { 3: "    if (mode() === 'a') {" }))).toBe('O(n)')
+  // Task 6 fix round 1: a hidden test may raise (`if (1 / q.r) {`), so a hidden opener is only an else.
+  expect(answer(withHidden(lines, { 3: "    if (mode() === 'a') {" }))).toBe(undefined)
+  const elseLines = ['function f(items: number[], k: number): number {', '  let t = 0', '  if (k === 1) {', '    t = 1', '  }…{', '    t = 2', '  }', '  for (const x of items) {', '    t += x', '  }', '  return t', '}']
+  expect(answer(withHidden(elseLines, { 4: '  } else { // c' }))).toBe('O(n)')
   // Its test is unknown and may never hold: a costly body under it fails.
   const costly = ['function f(items: number[]): number {', '  let t = 0', '  …{', '    for (const x of items) {', '      t += x', '    }', '  }', '  return t', '}']
   expect(answer(withHidden(costly, { 2: '  if (false) { // off' }))).toBe(undefined)
@@ -863,4 +866,48 @@ test('fix round 5: a literal-typed parameter is no size, loop source or length',
   expect(answer(fn("s: 'ab' | 'cd'", 'let t = 0', 'for (const k in s) {', '  t += 1', '}', 'return t'))).toBe(undefined)
   expect(answer(fn("s: 'ab' | 'cd'", 'let t = 0', 'for (const k of Object.keys(s)) {', '  t += 1', '}', 'return t'))).toBe(undefined)
   expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'if (s.length > 1) {', '  for (const x of items) {', '    t += x', '  }', '}', 'return t'))).toBe(undefined)
+})
+
+// --- Task 6 fix round 1: raises and exits the input cannot avoid -----------------
+
+test('task 6 fix round 1: a hidden line that may raise or exit fails, in a loop or before it', async () => {
+  const inLoop = ['function f(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    …', '    t += x', '  }', '  return t', '}']
+  const before = ['function f(items: number[]): number {', '  …', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  return t', '}']
+  expect(answer(withHidden(inLoop, { 3: "    log('step')" }))).toBe('O(n)')
+  expect(answer(withHidden(before, { 1: '  // note' }))).toBe('O(n)')
+  for (const raw of ['const z = (1 as any).x.y // c', 'process.exit(1) // stop', "JSON.parse('') // c", 'const z = q.r // c', "lib.abort('x') // c", 'const z = 1 / q // c']) {
+    expect([raw, answer(withHidden(inLoop, { 3: `    ${raw}` }))]).toEqual([raw, undefined])
+    expect([raw, answer(withHidden(before, { 1: `  ${raw}` }))]).toEqual([raw, undefined])
+  }
+})
+
+test('task 6 fix round 1: a property is read only on an element of an object type, or on a helper or module result', async () => {
+  const read = (params: string, line: string): Unit => fn(params, 'let t = 0', 'for (const x of items) {', `  ${line}`, '  t += 1', '}', 'return t')
+  expect(answer(read('items: Foo[]', 'const w = x.a'))).toBe('O(n)')
+  expect(answer(read('items: { a: number }[]', 'const w = x.a'))).toBe('O(n)')
+  expect(answer(read('items: number[]', 'const w = lib.get(x).a'))).toBe('O(n)')
+  for (const [params, line] of [['items: number[][]', 'const w = x.size.a'], ['items: number[]', 'const w = x.a.b'], ['items: Foo[]', 'const w = x.a.b'], ['items: T[]', 'const w = x.a'], ['items: string[]', 'const w = x.a.b']]) {
+    expect([params, line, answer(read(params!, line!))]).toEqual([params, line, undefined])
+  }
+  expect(answer(fn('items: number[]', 'let t = 0', 'const v = null', 'for (const x of items) {', '  const w = v.a', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  const v = undefined', '  const w = v.a', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'const m = new Map()', 'let t = 0', 'for (const x of items) {', '  const w = m.get(x).a', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], opts: Opts', 'let t = 0', 'for (const x of items) {', '  const w = opts.a.b', '  t += x', '}', 'return t'))).toBe(undefined)
+})
+
+test('task 6 fix round 1: a call to an exit or abort name fails', async () => {
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'lib.log(t)', 'return t'))).toBe('O(n)')
+  for (const line of ['process.exit(0)', 'lib.abort()', 'proc.kill(1)', 'exit(0)', 'lib.quit()', 'lib.die()']) {
+    expect([line, answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', '}', line, 'return t'))]).toEqual([line, undefined])
+    expect([line, answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', `  ${line}`, '}', 'return t'))]).toEqual([line, undefined])
+  }
+})
+
+test('task 6 fix round 1: a property or index write needs a receiver that is never null', async () => {
+  const write = (decl: string, line: string): Unit => fn('items: number[]', 'let t = 0', decl, 'for (const x of items) {', `  ${line}`, '  t += x', '}', 'return t')
+  expect(answer(write('const v = { a: 0 }', 'v.a = x'))).toBe('O(n)')
+  expect(answer(write('const v = new Map<number, number>()', 'v.set(x, 1)'))).toBe('O(n)')
+  expect(answer(write('const v = null', 'v.a = x'))).toBe(undefined)
+  expect(answer(write('const v = null', 'v[x] = 1'))).toBe(undefined)
+  expect(answer(write('const v = lib.make()', 'v.a = x'))).toBe(undefined)
 })

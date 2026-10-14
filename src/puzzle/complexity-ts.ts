@@ -6,7 +6,7 @@
 // not, so every doubt refuses.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, isInert, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace } from './complexity'
+import { add, factor, hiddenScan, isInert, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -128,7 +128,7 @@ const isWord = (t: Tok | undefined, v: string): boolean => t?.t === 'id' && t.v 
 
 type Node =
   | { k: 'id'; name: string }
-  | { k: 'lit'; kind: 'num' | 'str' | 're' | 'other'; v?: number }
+  | { k: 'lit'; kind: 'num' | 'str' | 're' | 'other'; v?: number; nullish?: boolean }
   | { k: 'this' }
   | { k: 'member'; obj: Node; name: string }
   | { k: 'index'; obj: Node; index: Node }
@@ -149,6 +149,10 @@ const KEYWORDS = new Set(['yield', 'function', 'class', 'goto', 'do', 'switch', 
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=', '&&=', '||=', '??='])
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6, '===': 6, '!==': 6, '<': 7, '>': 7, '<=': 7, '>=': 7, instanceof: 7, in: 7, '<<': 8, '>>': 8, '>>>': 8, '+': 9, '-': 9, '*': 10, '/': 10, '%': 10, '**': 11 }
 
+/** A function or method that ends the process or raises a signal (task 6 fix round 1). */
+/** String and number methods that always return a string or number (`at` and `codePointAt` may return undefined). */
+const NON_NULL_METHODS = new Set(['charAt', 'charCodeAt', 'toFixed'])
+const isExitName = (name: string): boolean => COMPLEXITY.exitCalls.includes(name) || COMPLEXITY.exitWords.includes(name)
 const isTarget = (n: Node): boolean => n.k === 'id' || n.k === 'member' || n.k === 'index'
 const numberOf = (v: string): number | undefined => (/^\d+$/.test(v) ? Number(v) : undefined)
 
@@ -318,7 +322,8 @@ class Parser {
       refuse()
     }
     if (t.v === 'this') return { k: 'this' }
-    if (['true', 'false', 'null', 'undefined'].includes(t.v)) return { k: 'lit', kind: 'other' }
+    if (t.v === 'null' || t.v === 'undefined') return { k: 'lit', kind: 'other', nullish: true }
+    if (t.v === 'true' || t.v === 'false') return { k: 'lit', kind: 'other' }
     // NaN equals nothing: no value a test can choose.
     if (t.v === 'NaN') return { k: 'lit', kind: 'other' }
     if (t.v === 'Infinity') return { k: 'lit', kind: 'num' }
@@ -638,7 +643,11 @@ type Kind = 'array' | 'string' | 'set' | 'map' | 'numeric' | 'bool' | 'fixed' | 
 type ElemType = 'number' | 'string' | 'boolean' | 'opaque'
 /** `elem`: an array's or Set's element type, a Map's value type; `key`: a Map's key type. */
 /** `literal`: for kind `literal`, whether its literals are strings or numbers (ruling C). */
-type Param = { name: string; kind: Kind; elem?: ElemType; key?: ElemType; literal?: 'string' | 'number' }
+/** `shape`: an element (a Map's value) that is an object or an array, never null (task 6 fix round 1: it takes property reads). */
+type Param = { name: string; kind: Kind; elem?: ElemType; key?: ElemType; literal?: 'string' | 'number'; shape?: Shape; props?: Props }
+type Shape = 'object' | 'array'
+/** An object literal type's declared, non-optional properties: an object or array, or a primitive (never null). */
+type Props = ReadonlyMap<string, Shape | 'primitive'>
 
 /** Splits `toks` at `sep` outside brackets of any kind. */
 function splitTop(toks: Tok[], sep: string): Tok[][] {
@@ -666,6 +675,33 @@ function closesAtEnd(toks: Tok[]): boolean {
   return false
 }
 
+/**
+ * Whether an element type is an object (an object literal type, or a named
+ * type of the code's own: capitalized, two letters or more, no global) or an
+ * array, so it is never null or undefined and takes a property read.
+ */
+function shapeOf(toks: Tok[]): Shape | undefined {
+  if (toks.length >= 3 && isP(toks.at(-2), '[') && isP(toks.at(-1), ']')) return 'array'
+  if ((isWord(toks[0], 'Array') || isWord(toks[0], 'ReadonlyArray')) && closesAtEnd(toks)) return 'array'
+  if (isP(toks[0], '{') && isP(toks.at(-1), '}') && splitTop(toks, '|').length === 1) return 'object'
+  if (toks.length === 1 && toks[0]!.t === 'id' && /^[A-Z][A-Za-z0-9_$]+$/.test(toks[0]!.v) && !GLOBALS.has(toks[0]!.v)) return 'object'
+  return undefined
+}
+
+/** An object literal type's declared properties that are never null: `{ tags: number[]; id: number }` (an optional `?` one is left out). */
+function propsOf(toks: Tok[]): Props | undefined {
+  if (!isP(toks[0], '{') || !isP(toks.at(-1), '}')) return undefined
+  const out = new Map<string, Shape | 'primitive'>()
+  for (const part of splitTop(toks.slice(1, -1), ',').flatMap((q) => splitTop(q, ';'))) {
+    if (part.length < 3 || part[0]!.t !== 'id' || !isP(part[1], ':')) continue
+    const type = part.slice(2)
+    const shape = shapeOf(type)
+    if (shape) out.set(part[0]!.v, shape)
+    else if (type.length === 1 && ['number', 'string', 'boolean', 'bigint'].includes(type[0]!.v)) out.set(part[0]!.v, 'primitive')
+  }
+  return out
+}
+
 /** A primitive element type by name; anything else (objects, tuples, named or generic types) is opaque. */
 function elemTypeOf(toks: Tok[]): ElemType {
   if (toks.length !== 1 || toks[0]!.t !== 'id') return 'opaque'
@@ -685,13 +721,14 @@ function classify(type: Tok[]): Omit<Param, 'name'> {
   if (p.length === 1 && isWord(p[0], 'boolean')) return { kind: 'bool' }
   const readonly = isWord(p[0], 'readonly')
   if (readonly) p = p.slice(1)
-  if (p.length >= 3 && isP(p.at(-2), '[') && isP(p.at(-1), ']')) return { kind: 'array', elem: elemTypeOf(p.slice(0, -2)) }
+  const shaped = (t: Tok[]): { shape?: Shape; props?: Props } => (shapeOf(t) ? { shape: shapeOf(t)!, ...(propsOf(t) ? { props: propsOf(t)! } : {}) } : {})
+  if (p.length >= 3 && isP(p.at(-2), '[') && isP(p.at(-1), ']')) return { kind: 'array', elem: elemTypeOf(p.slice(0, -2)), ...shaped(p.slice(0, -2)) }
   if (isP(p[0], '[') || isP(p[0], '{')) return { kind: 'fixed' }
   if (readonly) return { kind: 'other' }
   const args = closesAtEnd(p) ? splitTop(p.slice(2, -1), ',') : []
-  if ((isWord(p[0], 'Array') || isWord(p[0], 'ReadonlyArray')) && args.length === 1) return { kind: 'array', elem: elemTypeOf(args[0]!) }
-  if (isWord(p[0], 'Set') && args.length === 1) return { kind: 'set', elem: elemTypeOf(args[0]!) }
-  if (isWord(p[0], 'Map') && args.length === 2) return { kind: 'map', key: elemTypeOf(args[0]!), elem: elemTypeOf(args[1]!) }
+  if ((isWord(p[0], 'Array') || isWord(p[0], 'ReadonlyArray')) && args.length === 1) return { kind: 'array', elem: elemTypeOf(args[0]!), ...shaped(args[0]!) }
+  if (isWord(p[0], 'Set') && args.length === 1) return { kind: 'set', elem: elemTypeOf(args[0]!), ...shaped(args[0]!) }
+  if (isWord(p[0], 'Map') && args.length === 2) return { kind: 'map', key: elemTypeOf(args[0]!), elem: elemTypeOf(args[1]!), ...shaped(args[1]!) }
   return { kind: 'other' }
 }
 
@@ -881,7 +918,7 @@ function endsInTransfer(body: Stmt[]): boolean {
  * element bound directly over a parameter or a filter of one, the only kind an
  * exit or choose test may read (spec "Stricter readings", fix round 2).
  */
-type Elem = { origin: string; distinct: boolean; yields?: 'keys' | 'entries' | 'pairs'; numericKeys?: boolean; type: ElemType; key?: ElemType; atom: boolean }
+type Elem = { origin: string; distinct: boolean; yields?: 'keys' | 'entries' | 'pairs'; numericKeys?: boolean; type: ElemType; key?: ElemType; atom: boolean; shape?: Shape; props?: Props }
 type LoopKind = 'of' | 'count' | 'halving' | 'literal' | 'search' | 'callback' | 'comparator'
 /** `positions`: names holding an index (keys, entry indices) besides `index`; never elements. */
 /** `walks`: the source whose positions `index` and `positions` are, from 0 to its length (fix round 3, ruling A). */
@@ -1276,15 +1313,16 @@ class Reader {
     const bound = new Set([...this.params.keys(), ...this.decls.keys(), ...this.loopNames, this.unit.name])
     const hidden = this.unit.hidden
     if (!hidden) refuse()
-    need(hidden((raw, at) => this.isHiddenOk(raw, at, bound)) === true)
+    const scan = hiddenScan(this.lines)
+    need(hidden((raw, at) => this.isHiddenOk(raw, at, bound, scan)) === true && scan.open === undefined)
   }
 
-  private isHiddenOk(raw: string, at: number, bound: ReadonlySet<string>): boolean {
+  private isHiddenOk(raw: string, at: number, bound: ReadonlySet<string>, scan: HiddenScan): boolean {
     const kept = this.lines[at]
     if (typeof raw !== 'string' || !Number.isInteger(at) || at <= this.opener || kept === undefined || !isBlankedLine(kept)) return false
-    if (!isInert(raw, kept, 'TypeScript', bound, WORDS, this.places.get(at) ?? STRICT_PLACE)) return false
-    // A blanked opener is only an if or else: its body runs at most once where it stands.
-    return !this.openers.has(at) || /^\}?\s*(?:if\s*\(|else\b)/.test(raw.trim())
+    if (!isInert(raw, kept, 'TypeScript', bound, WORDS, this.places.get(at) ?? STRICT_PLACE, scan, at)) return false
+    // A blanked opener is only an else (task 6 fix round 1: a hidden test may raise); its body runs at most once where it stands.
+    return !this.openers.has(at) || /^\}?\s*else\s*\{/.test(raw.trim())
   }
 
   /** Whether the blanked line at `at` holds an exit word (only a boolean leaves `hidden`). */
@@ -1499,13 +1537,13 @@ class Reader {
     if (p) {
       switch (p.kind) {
         case 'array':
-          return { origin: name, distinct: false, type: p.elem ?? 'opaque', atom: true }
+          return { origin: name, distinct: false, type: p.elem ?? 'opaque', atom: true, ...(p.shape ? { shape: p.shape } : {}), ...(p.props ? { props: p.props } : {}) }
         case 'string':
           return { origin: name, distinct: false, type: 'string', atom: true }
         case 'set':
-          return { origin: name, distinct: true, type: p.elem ?? 'opaque', atom: true }
+          return { origin: name, distinct: true, type: p.elem ?? 'opaque', atom: true, ...(p.shape ? { shape: p.shape } : {}), ...(p.props ? { props: p.props } : {}) }
         case 'map':
-          return { origin: name, distinct: true, yields: 'pairs', type: p.elem ?? 'opaque', key: p.key ?? 'opaque', atom: true }
+          return { origin: name, distinct: true, yields: 'pairs', type: p.elem ?? 'opaque', key: p.key ?? 'opaque', atom: true, ...(p.shape ? { shape: p.shape } : {}), ...(p.props ? { props: p.props } : {}) }
         case 'other':
           return { origin: name, distinct: true, type: 'opaque', atom: true }
         default:
@@ -2278,7 +2316,85 @@ class Reader {
     need(isSize || !METHODS.has(n.name))
     const recv = this.receiverOf(n.obj)
     if (['array', 'string', 'set', 'map', 'derived', 'acc'].includes(recv)) need(isSize)
+    need(this.isPropertyReceiver(n.obj, env))
     return this.costOfObject(n.obj, env)
+  }
+
+  /**
+   * Task 6 fix round 1: a property read throws on null or undefined, so it
+   * reads only a value that is never either: a typed parameter or derived
+   * value, an accumulator, a proven scalar local, a number, boolean or literal
+   * parameter, a loop's index or primitive, object or array element, an
+   * element read of such a parameter, or the result of a helper or a module's
+   * function. Never a closed local (`const v = null`), a lookup's result
+   * (`m.get(k)`), another property (`x.a.b`), `this` or an untyped parameter.
+   */
+  private isPropertyReceiver(obj: Node, env: Env): boolean {
+    const shaped = (e: Elem | undefined): boolean => e !== undefined && (e.type !== 'opaque' || e.shape !== undefined)
+    if (obj.k === 'id') {
+      const p = this.params.get(obj.name)
+      if (p) return ['array', 'string', 'set', 'map', 'numeric', 'bool', 'literal'].includes(p.kind)
+      const l = this.locals.get(obj.name)
+      if (l) return l.k === 'derived' || l.k === 'acc' || this.isNonNullLocal(obj.name, env)
+      const e = elementsOf(env.loops).get(obj.name)
+      if (e) return shaped(e)
+      return this.loopNumeric(obj.name, env) || env.loops.some((lp) => lp.index === obj.name || lp.positions?.includes(obj.name))
+    }
+    // A declared, non-optional property of an object literal element type: `x.tags.length`.
+    if (obj.k === 'member' && obj.obj.k === 'id') return elementsOf(env.loops).get(obj.obj.name)?.props?.has(obj.name) === true
+    if (obj.k === 'index' && obj.obj.k === 'id') return shaped(this.sourceOfName(obj.obj.name))
+    if (obj.k === 'call') {
+      const c = obj.callee
+      if (c.k === 'id') return !GLOBALS.has(c.name) && !this.isBound(c.name) && !isExitName(c.name)
+      if (c.k !== 'member') return false
+      // A builtin that always returns a value: a copy, a search's index, a string or number method's result.
+      if (this.isNonNull(obj, env, new Set())) return true
+      return c.obj.k === 'id' && !GLOBALS.has(c.obj.name) && !this.isBound(c.obj.name) && !isExitName(c.name)
+    }
+    return false
+  }
+
+  /** A local every write of which is never null or undefined (task 6 fix round 1). */
+  private isNonNullLocal(name: string, env: Env, seen = new Set<string>()): boolean {
+    const d = this.decls.get(name)
+    if (!d?.line.init || seen.has(name)) return false
+    seen.add(name)
+    const values = [d.line.init, ...this.assignments.filter((a) => a.name === name && a.whole).map((a) => a.value)]
+    return values.every((v) => v !== undefined && this.isNonNull(v, env, seen))
+  }
+
+  private isNonNull(n: Node, env: Env, seen: Set<string>): boolean {
+    switch (n.k) {
+      case 'lit':
+        return n.nullish !== true
+      case 'array':
+      case 'object':
+      case 'new':
+      case 'unary':
+      case 'update':
+        return true
+      case 'bin':
+        return n.op === '&&' || n.op === '||' || n.op === '??' ? this.isNonNull(n.left, env, seen) && this.isNonNull(n.right, env, seen) : true
+      case 'cond':
+        return this.isNonNull(n.yes, env, seen) && this.isNonNull(n.no, env, seen)
+      case 'id': {
+        const p = this.params.get(n.name)
+        if (p) return ['array', 'string', 'set', 'map', 'numeric', 'bool', 'literal'].includes(p.kind)
+        if (this.locals.has(n.name)) return this.isNonNullLocal(n.name, env, seen)
+        return false
+      }
+      case 'call': {
+        const c = n.callee
+        if (c.k === 'id') return c.name === 'Number' || c.name === 'parseInt'
+        if (c.k !== 'member') return false
+        if (isId(c.obj, 'Math') || ((isId(c.obj, 'Array') || isId(c.obj, 'Object')) && ['from', 'keys', 'values', 'entries'].includes(c.name))) return true
+        const r = this.receiverOf(c.obj)
+        if ((r === 'array' || r === 'derived') && ['slice', 'concat', 'filter', 'map', 'toSorted', 'toReversed', 'indexOf', 'lastIndexOf', 'findIndex', 'includes', 'some', 'every', 'join'].includes(c.name)) return true
+        return NON_NULL_METHODS.has(c.name) && (this.isPrimitiveValue(c.obj, env) || (c.obj.k === 'id' && this.params.get(c.obj.name)?.kind === 'literal'))
+      }
+      default:
+        return false
+    }
   }
 
   /** `keys`: a lookup, key or append, which may take an opaque value; nothing else is handed one. */
@@ -2291,6 +2407,8 @@ class Reader {
 
   private costOfCall(n: Extract<Node, { k: 'call' }>, env: Env, ctx: Ctx): Cost {
     const callee = n.callee
+    // Task 6 fix round 1: a call that ends the process is an exit the input cannot avoid.
+    need(!((callee.k === 'id' || callee.k === 'member') && isExitName(callee.name)))
     if (callee.k === 'id') {
       const f = callee.name
       need(f !== this.unit.name && !FAILS.has(f))
@@ -2500,6 +2618,8 @@ class Reader {
     let c = value ? this.cost(value, env) : NOTHING
     if (target.k === 'index') c = add(c, this.cost(target.index, env))
     if (target.k !== 'id') c = add(c, this.costOfObject(target.k === 'index' || target.k === 'member' ? target.obj : target, env))
+    // Task 6 fix round 1: a write to a property or index of null throws.
+    if (target.k === 'member' || target.k === 'index') need(this.isPropertyReceiver(target.obj, env))
     if (this.searchVars.has(name)) return c
     need(!this.loopNames.has(name))
     const local = this.locals.get(name)
@@ -2533,7 +2653,7 @@ function elementsOf(loops: Loop[]): Map<string, Elem> {
  * hold numbers.
  */
 function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; positions: string[]; numeric: string[] } {
-  const elem = (type: ElemType): Elem => ({ origin: src.origin, distinct: src.distinct, type, atom: src.atom })
+  const elem = (type: ElemType, shaped = true): Elem => ({ origin: src.origin, distinct: src.distinct, type, atom: src.atom, ...(shaped && src.shape ? { shape: src.shape } : {}), ...(shaped && src.props ? { props: src.props } : {}) })
   const whole = (n: string): Elem => ({ origin: src.origin, distinct: src.distinct, type: 'opaque', atom: false })
   const numeric = (m: Map<string, Elem>, pos: string[]): string[] => [...[...m].filter(([, e]) => e.type === 'number').map(([n]) => n), ...(src.numericKeys ? pos : [])]
   let elements: Map<string, Elem>
@@ -2544,7 +2664,7 @@ function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; pos
     positions = names.length === 2 ? [names[0]!] : []
     elements = names.length === 2 ? new Map([[names[1]!, elem(src.type)]]) : new Map([[names[0]!, whole(names[0]!)]])
   } else if (src.yields === 'pairs') {
-    elements = names.length === 2 ? new Map([[names[0]!, elem(src.key ?? 'opaque')], [names[1]!, elem(src.type)]]) : new Map([[names[0]!, whole(names[0]!)]])
+    elements = names.length === 2 ? new Map([[names[0]!, elem(src.key ?? 'opaque', false)], [names[1]!, elem(src.type)]]) : new Map([[names[0]!, whole(names[0]!)]])
   } else elements = new Map(names.map((n) => [n, elem(src.type)]))
   return { elements, positions, numeric: numeric(elements, positions) }
 }

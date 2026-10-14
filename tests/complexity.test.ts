@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { missionUnits, type MaterialIo } from '../src/puzzle/material'
-import { add, factor, isInert, mul, ONE, readCost, simplify, treeByBraces, treeByIndent, type Factor } from '../src/puzzle/complexity'
+import { add, factor, hiddenScan, isInert, mul, ONE, readCost, simplify, treeByBraces, treeByIndent, type Factor } from '../src/puzzle/complexity'
 
 // Invented code only (SPEC 15).
 
@@ -176,7 +176,7 @@ test('inert words: closures, Python unpacking, exits in strings', async () => {
   expect(isInert('    g(a, **kw)', '    …', 'Python', none, none, out)).toBe(false)
   expect(isInert('    x = [*a]', '    …', 'Python', none, none, out)).toBe(false)
   expect(isInert('    return *a, b', '    …', 'Python', none, none, { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(false)
-  expect(isInert('    log(a * b, 2 ** c)', '    …', 'Python', none, none, out)).toBe(true)
+  expect(isInert('    log(a * b, 2 ** c)', '    …', 'Python', none, none, out)).toBe(false)
   expect(isInert("log('return')", '…', 'TypeScript', none, none, out)).toBe(false)
   expect(isInert("log('done')", '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(true)
   expect(isInert('break', '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
@@ -184,6 +184,41 @@ test('inert words: closures, Python unpacking, exits in strings', async () => {
   expect(isInert('        case *rest, x:  # n', '        …', 'Python', new Set(['v']), none, out)).toBe(false)
   expect(isInert('    match *a, b:  # n', '    …', 'Python', new Set(['v']), none, out)).toBe(false)
   expect(isInert('    with *a:  # n', '    …', 'Python', none, none, out)).toBe(false)
+})
+
+test('fix round 1: a hidden line is one of a closed set of forms (a raise or an exit cuts a loop short)', async () => {
+  const py = (raw: string, place = out): boolean => isInert(raw, '    …', 'Python', none, none, place)
+  const ts = (raw: string, kept = '…', place = out): boolean => isInert(raw, kept, 'TypeScript', none, none, place)
+  // Admitted: comments, string statements, literal-argument calls, a literal to a fresh name, structure.
+  for (const raw of ['    # note', "    '''Doc.'''", '    """Sum."""  # n', "    log('step')", "    log.info('x', 1, True, None)  # c", "    z = 'a'", '    z = -3  # c', '    pass  # c', '    else:  # c']) expect([raw, py(raw)]).toEqual([raw, true])
+  for (const raw of ['// note', "'use strict'", "log('step');", "lib.log('x', 1, true) // c", "const z = 'a' // c", '/* note */']) expect([raw, ts(raw)]).toEqual([raw, true])
+  expect(ts('} // end', '}…')).toBe(true)
+  expect(ts('} else { // c', '}…{')).toBe(true)
+  // Refused: anything that may raise, exit or compute.
+  for (const raw of ['    z = 1 / 0  # boom', '    os._exit(1)  # stop', '    sys.exit(1)  # stop', '    z = [][0]  # c', "    z = {}['k']  # c", "    z = 'a' + 1  # c", "    z = qqq + 'a'  # c", '    log(x)  # c', "    log(f'{x}')", '    z = q.r  # c', '    abort()  # c', "    kill('x')"]) expect([raw, py(raw)]).toEqual([raw, false])
+  expect(isInert('    if 1 / 0:  # c', '    …', 'Python', none, none, out)).toBe(false)
+  for (const raw of ['const z = (1 as any).x.y // c', 'process.exit(1) // stop', "throw_it('x') + 1", 'const z = `${q}` // c', 'z = 1 // c', 'z.y = 1 // c']) expect([raw, ts(raw)]).toEqual([raw, false])
+  expect(ts("if (mode() === 'a') {", '…{')).toBe(false)
+  // Exit forms keep their places.
+  expect(py("    raise ValueError('bad')", { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(true)
+  expect(py('    sys.exit(1)  # stop', { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(true)
+  expect(py('    os._exit(1)  # stop', { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
+  expect(py("    raise ValueError('a' + q)", { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
+  expect(py('    return q.r', { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(false)
+})
+
+test('fix round 1: a string over several hidden lines is read in order, and only over blank lines', async () => {
+  const lines = ['def f():', '    …', '    …', '', '    …', '    x = 1']
+  const run = (raws: Record<number, string>): boolean => {
+    const scan = hiddenScan(lines)
+    return Object.entries(raws).every(([at, raw]) => isInert(raw, lines[Number(at)]!, 'Python', none, none, out, scan, Number(at))) && scan.open === undefined
+  }
+  expect(run({ 1: '    """Sum the items.', 2: '    More (text).', 4: '    """' })).toBe(true)
+  expect(run({ 1: '    """Sum the items.', 2: '    More text.', 4: '    """ + q' })).toBe(false)
+  // Left open: the string would run into a shown line.
+  expect(run({ 1: '    """Sum the items.', 2: '    More text.', 4: '    end' })).toBe(false)
+  // Code after the close.
+  expect(run({ 1: '    """Sum.', 2: '    """; z = 1 / 0', 4: '    # c' })).toBe(false)
 })
 
 test('PHP variable variables fail: a name reached without being written', async () => {
