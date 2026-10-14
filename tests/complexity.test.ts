@@ -61,3 +61,14 @@ test('the explanation names sites in line order with pane line numbers, and the 
 test('simplify keeps one copy of equal-shaped terms', async () => {
   expect(simplify(add(factor(f('a', 1)), factor(f('a', 5)))).length).toBe(1)
 })
+
+test('two-size explanations write n first: n × m and n + m', async () => {
+  const prod = readCost(mul(factor(f('ids', 4)), factor(f('items', 2))), [], 0)
+  expect(prod?.explanation).toBe('Line 3: loop over items; line 5: loop over ids. n × m = O(n·m).')
+  const sum = readCost(add(factor(f('ids', 5)), factor(f('items', 2))), [], 0)
+  expect(sum?.explanation).toBe('Line 3: loop over items; line 6: loop over ids. n + m = O(n + m).')
+})
+
+test('simplify keeps the equal-shaped term with the earliest site', async () => {
+  expect(simplify(add(factor(f('a', 5)), factor(f('a', 1))))[0]?.[0]?.at).toBe(1)
+})

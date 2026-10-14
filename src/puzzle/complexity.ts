@@ -52,17 +52,19 @@ function dominatedBy(a: Map<string, Degree>, b: Map<string, Degree>): boolean {
   return true
 }
 
+const firstAt = (t: Term): number => Math.min(...t.map((f) => f.at))
+
 /** Drops every term dominated in every size by another (per size, (power, log count) compared lexicographically), and duplicates by shape. */
 export function simplify(c: Cost): Cost {
-  const seen = new Set<string>()
-  const unique: { t: Term; d: Map<string, Degree> }[] = []
+  const byShape = new Map<string, { t: Term; d: Map<string, Degree> }>()
   for (const t of c) {
     const d = degrees(t)
     const k = shapeKey(d)
-    if (seen.has(k)) continue
-    seen.add(k)
-    unique.push({ t, d })
+    const kept = byShape.get(k)
+    // Of equal shapes keep the one whose first site is earliest, so the explanation names it.
+    if (!kept || firstAt(t) < firstAt(kept.t)) byShape.set(k, { t, d })
   }
+  const unique = [...byShape.values()]
   // Shapes are distinct here, so domination is strict: no pair removes each other.
   return unique.filter((x) => !unique.some((y) => y !== x && dominatedBy(x.d, y.d))).map((x) => x.t)
 }
@@ -105,7 +107,7 @@ function categoryOf(terms: Cost, answer: Ladder): Category {
 /** `term` written in n and m: sizes in name order, plain factors then logs, joined by ×. */
 function product(t: Term, name: (s: string) => string): string {
   const parts: string[] = []
-  for (const [s, e] of [...degrees(t)].sort((a, b) => name(a[0]).localeCompare(name(b[0])))) {
+  for (const [s, e] of [...degrees(t)].sort((a, b) => Number(name(a[0]) === 'm') - Number(name(b[0]) === 'm'))) {
     for (let i = 0; i < e.pow; i++) parts.push(name(s))
     for (let i = 0; i < e.logs; i++) parts.push(`log ${name(s)}`)
   }
@@ -130,7 +132,9 @@ export function readCost(cost: Cost, numeric: readonly string[], offset: number)
     seen.add(k)
     sites.push(`${sites.length === 0 ? 'Line' : 'line'} ${f.at - offset + 1}: ${f.what}`)
   }
-  const explanation = `${sites.join('; ')}. ${terms.map((t) => product(t, name)).join(' + ')} = ${answer}.`
+  // n first, then m: a term holding n sorts before one holding only m.
+  const products = [...terms].sort((a, b) => Number(!a.some((f) => f.size === n)) - Number(!b.some((f) => f.size === n))).map((t) => product(t, name))
+  const explanation = `${sites.join('; ')}. ${products.join(' + ')} = ${answer}.`
   return {
     answer,
     category: categoryOf(terms, answer),
