@@ -49,6 +49,7 @@ const from = xs => Counted.from(xs)
 
 /** The entry's function, built once from its instrumented, type-stripped text. */
 function build(entry) {
+  // The corpus is fixed, test-only text in this repository.
   return new Function('__c', `${stripTypeScriptTypes(instrument(entry.lines))}\nreturn ${entry.name}`)(__c)
 }
 
@@ -70,10 +71,23 @@ function ratios(entry, ofM) {
 
 const near = (r, want) => Math.abs(r - want) <= want * NEAR
 
+const sizeOf = x => (Array.isArray(x) || typeof x === 'string' ? x.length : x instanceof Map || x instanceof Set ? x.size : x)
+/** True when the entry's inputs take a second size: m changes some argument. */
+const takesM = entry => {
+  const [a, b] = [entry.inputs(HELD, HELD, from), entry.inputs(HELD, 2 * HELD, from)]
+  return a.some((x, i) => sizeOf(x) !== sizeOf(b[i]))
+}
+const ONE_SIZE = ['O(log n)', 'O(n)', 'O(n log n)', 'O(n²)', 'O(n³)']
+
 /** Asserts the measured growth matches the key's class. */
 function check(entry) {
   const { counts, ratios: rs } = ratios(entry, false)
   const say = `${entry.name} (${entry.answer}): counts ${counts.join(', ')}, ratios ${rs.map(r => r.toFixed(3)).join(', ')}`
+  if (ONE_SIZE.includes(entry.answer) && takesM(entry)) {
+    // A one-size key: the second size must leave the count flat.
+    const m = ratios(entry, true)
+    assert.ok(m.ratios.every(r => Math.abs(r - 1) <= NEAR), `${say}; in m: counts ${m.counts.join(', ')}, ratios ${m.ratios.map(r => r.toFixed(3)).join(', ')}`)
+  }
   switch (entry.answer) {
     case 'O(log n)': {
       // A constant difference: the ratio falls toward 1.
@@ -94,7 +108,9 @@ function check(entry) {
     case 'O(n + m)': {
       const m = ratios(entry, true)
       const sayM = `${say}; in m: counts ${m.counts.join(', ')}, ratios ${m.ratios.map(r => r.toFixed(3)).join(', ')}`
-      const fits = entry.answer === 'O(n·m)' ? r => near(r, 2) : r => r > 1 && r < 2
+      // n + m stays below 1.8 in each variable: true n·m measures 1.98 to 1.99
+      // in m (the outer loop's own count), which a bound of 2 would pass.
+      const fits = entry.answer === 'O(n·m)' ? r => near(r, 2) : r => r > 1 && r < 2 * (1 - NEAR)
       return assert.ok([...rs, ...m.ratios].every(fits), sayM)
     }
     default:

@@ -50,6 +50,18 @@ export const CORPUS: readonly Entry[] = [
     lines: ['function mapTotal(m: Map<string, number>): number {', '  let t = 0', '  for (const [k, v] of m) {', '    t += v', '  }', '  return t', '}'],
     inputs: (n) => [new Map(range(n).map((i) => [`k${i}`, i]))],
   },
+  {
+    name: 'tallyAndCount', answer: 'O(n)', category: 'linear scan',
+    // ids is read once, by its length: its size must not change the count.
+    lines: ['function tallyAndCount(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  t += ids.length', '  return t', '}'],
+    inputs: (n, m, from) => [from(range(n)), from(range(m))],
+  },
+  {
+    name: 'guardedTotal', answer: 'O(n)', category: 'linear scan',
+    // ids is never empty: the guard never fires.
+    lines: ['function guardedTotal(items: number[], ids: number[]): number {', '  if (ids.length === 0) {', '    return 0', '  }', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  return t', '}'],
+    inputs: (n, m, from) => [from(range(n)), from(range(m))],
+  },
   // Halving.
   {
     name: 'doublings', answer: 'O(log n)', category: 'halving',
@@ -114,6 +126,11 @@ export const CORPUS: readonly Entry[] = [
     lines: ['function cube(n: number): number {', '  let t = 0', '  for (let i = 0; i < n; i++) {', '    for (let j = 0; j < n; j++) {', '      for (let k = 0; k < n; k++) {', '        t += 1', '      }', '    }', '  }', '  return t', '}'],
     inputs: (n) => [n],
   },
+  {
+    name: 'pairsAndCount', answer: 'O(n²)', category: 'nested loops',
+    lines: ['function pairsAndCount(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    for (const y of items) {', '      t += ids.length', '    }', '  }', '  return t', '}'],
+    inputs: (n, m, from) => [from(range(n)), from(range(m))],
+  },
   // Hidden linear calls.
   {
     name: 'ranks', answer: 'O(n²)', category: 'hidden linear call',
@@ -140,6 +157,27 @@ export const CORPUS: readonly Entry[] = [
     // Every element is known: every never stops early.
     lines: ['function allKnown(items: number[], ids: number[]): number {', '  const ok = items.every(x => ids.includes(x))', '  return ok ? 1 : 0', '}'],
     inputs: (n, m, from) => [from(range(n).map((i) => i % m)), from(range(m))],
+  },
+  {
+    name: 'copies', answer: 'O(n²)', category: 'hidden linear call',
+    lines: ['function copies(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    const d = items.slice()', '    t += d.length', '  }', '  return t', '}'],
+    inputs: (n, _m, from) => [from(range(n))],
+  },
+  {
+    name: 'joined', answer: 'O(n²)', category: 'hidden linear call',
+    lines: ['function joined(items: number[]): number {', '  let t = 0', '  for (const x of items) {', '    const s = items.join()', '    t += 1', '  }', '  return t', '}'],
+    inputs: (n, _m, from) => [from(range(n))],
+  },
+  {
+    name: 'merged', answer: 'O(n·m)', category: 'hidden linear call',
+    // concat with no argument: a copy of items per id.
+    lines: ['function merged(items: number[], ids: number[]): number {', '  let t = 0', '  for (const y of ids) {', '    const d = items.concat()', '    t += 1', '  }', '  return t', '}'],
+    inputs: (n, m, from) => [from(range(n)), from(range(m))],
+  },
+  {
+    name: 'reversals', answer: 'O(n·m)', category: 'hidden linear call',
+    lines: ['function reversals(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    const r = ids.toReversed()', '    t += r.length', '  }', '  return t', '}'],
+    inputs: (n, m, from) => [from(range(n)), from(range(m))],
   },
   // Two inputs.
   {

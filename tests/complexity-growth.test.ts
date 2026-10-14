@@ -7,7 +7,10 @@ import { CORPUS, instrument } from './complexity-growth-corpus'
 // checked by scripts/growth-check.mjs (node), since generated code cannot run
 // here. Invented code only (SPEC 15).
 
-const LADDER: Ladder[] = ['O(log n)', 'O(n)', 'O(n log n)', 'O(n²)', 'O(n³)', 'O(n·m)', 'O(n + m)']
+// Every rung but O(1), which is never an answer (a constant cost reads as
+// undefined); a new rung fails typecheck here until the corpus covers it.
+const RUNGS: Record<Exclude<Ladder, 'O(1)'>, true> = { 'O(log n)': true, 'O(n)': true, 'O(n log n)': true, 'O(n²)': true, 'O(n³)': true, 'O(n·m)': true, 'O(n + m)': true }
+const LADDER = Object.keys(RUNGS) as Ladder[]
 const CATEGORIES: Category[] = ['halving', 'sorting', 'hidden linear call', 'two inputs', 'nested loops', 'linear scan']
 
 test('the corpus holds at least 20 distinct functions and covers every answer and category', async () => {
