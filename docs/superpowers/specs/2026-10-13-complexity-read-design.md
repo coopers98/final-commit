@@ -423,6 +423,41 @@ everything else fails.
   declaration or assignment), handed to another call, spread or iterated.
   A map's results are opaque.
 
+Fix round 3 (default-refuse rules):
+
+- **Element positions (A).** `p[i]` is an element of `p` only when `i`
+  is the index of a counting loop from 0 while `i < p.length` by 1, or
+  the index of `p.keys()`, `p.entries()` or a callback on `p` itself.
+  Any other index (another source's, a literal, a start other than 0)
+  reads no element.
+- **No `async` or `await` (B).** Async functions, `await`, `yield` and
+  generators fail.
+- **Plain values (B).** A value is plain only when proven: a literal, a
+  number or boolean parameter, element or element read, `.length`/`.size`,
+  a proven-scalar local or loop number, and arithmetic or comparisons of
+  these (`-`, `+`, `!`, `~`, `typeof` over such operands). Everything else,
+  call results included, is opaque. A call is proven scalar only on a
+  known collection kind whose listed method returns a number or boolean.
+- **Methods on strings and numbers (C).** A string or number value
+  (literal, scalar local, parameter, element) takes only `charAt`,
+  `charCodeAt`, `codePointAt`, `at`, and `toFixed` with a literal
+  argument. A value that is neither a known collection nor such a value
+  takes no method. An unbound name (a module) keeps the rule: other calls
+  cost 1.
+- **reduce (D).** The accumulator is a number only when its start is a
+  number and every return of the callback is proven a number, assuming
+  the accumulator is.
+- **Element exits (E).** An exit counts only as `===`/`==` on a number or
+  string element itself against a literal or a value from another
+  source. `!==`, orderings, membership, properties, booleans, literal
+  unions, named and other types fail. Several `===` exits on one element
+  may be avoided together.
+- **Binary search (F).** After `mid`: an optional equality exit (`S[mid]
+  === v`, S the search's number or string source, v a literal or another
+  parameter; a lone return or break), then one if/else on a comparison
+  reading `mid` whose branches set exactly `lo` and `hi`, one each. Any
+  other body fails.
+
 ### Combining
 
 - Sequential costs add; nested costs multiply; branches count as all

@@ -206,7 +206,7 @@ test('binary search refuses other mid forms, hi = mid with <=, mid not first, a 
 // --- Builtins by receiver -----------------------------------------------------
 
 test('each linear builtin on an array parameter costs its size', async () => {
-  for (const call of ['ids.includes(x)', 'ids.indexOf(x)', 'ids.lastIndexOf(x)', 'ids.join()', 'ids.join(sep)', 'ids.toReversed()', 'ids.slice()', 'ids.concat()', 'Array.from(ids)', 'Object.keys(ids)', 'new Set(ids)', '[...ids]', 'JSON.stringify(ids)', 'Math.max(...ids)', 'Math.min(...ids)', 'ids.reduceRight(merge, 0)']) {
+  for (const call of ['ids.includes(x)', 'ids.indexOf(x)', 'ids.lastIndexOf(x)', 'ids.join()', "ids.join(',')", 'ids.toReversed()', 'ids.slice()', 'ids.concat()', 'Array.from(ids)', 'Object.keys(ids)', 'new Set(ids)', '[...ids]', 'JSON.stringify(ids)', 'Math.max(...ids)', 'Math.min(...ids)', 'ids.reduceRight(merge, 0)']) {
     expect([call, answer(inLoop(`const r = ${call}`))]).toEqual([call, 'O(n·m)'])
   }
   // entries, keys and values are lazy iterators: costly only as a for-of source.
@@ -239,7 +239,7 @@ test('a short-circuit callback must be able to run to the end', async () => {
 
 test('each constant builtin keeps the loop O(n)', async () => {
   const params = 'items: number[], s: Set<number>, m: Map<number, number>, text: string, ids: number[]'
-  for (const call of ['s.has(x)', 'm.has(x)', 'm.get(x)', 'ids.length', 's.size', 'text.length', 'Math.abs(x)', 'Math.max(x, 1)', 'Number(x)', 'parseInt(x)', 'lookup(x)', 'x.toFixed()']) {
+  for (const call of ['s.has(x)', 'm.has(x)', 'm.get(x)', 'ids.length', 's.size', 'text.length', 'Math.abs(x)', 'Math.max(x, 1)', 'Number(x)', 'parseInt(x)', 'lookup(x)', 'x.toFixed(2)']) {
     expect([call, answer(inLoop(`const r = ${call}`, params))]).toEqual([call, 'O(n)'])
   }
   // Reads by position take a loop's index.
@@ -402,10 +402,11 @@ test('a condition that cannot depend on the input fails', async () => {
 
 test('an ordinary search that may find its target keeps the worst case', async () => {
   expect(answer(fn('items: number[], x: number', 'for (let i = 0; i < items.length; i++) {', '  if (items[i] === x) {', '    return i', '  }', '}', 'return -1'))).toBe('O(n)')
-  expect(answer(fn('items: number[], ids: number[]', 'for (const x of items) {', '  if (ids.includes(x)) {', '    return 1', '  }', '}', 'return 0'))).toBe('O(n·m)')
+  // Since fix round 3 (ruling E), a membership exit refuses.
+  expect(answer(fn('items: number[], ids: number[]', 'for (const x of items) {', '  if (ids.includes(x)) {', '    return 1', '  }', '}', 'return 0'))).toBe(undefined)
   expect(answer(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  for (const y of ids) {', '    if (y === x) {', '      break', '    }', '    t += 1', '  }', '}', 'return t'))).toBe('O(n·m)')
-  // Two indices that are never equal compare distinct elements.
-  expect(answer(fn('items: number[]', 'for (let i = 0; i < items.length; i++) {', '  for (let j = i + 1; j < items.length; j++) {', '    if (items[i] === items[j]) {', '      return 1', '    }', '  }', '}', 'return 0'))).toBe('O(n²)')
+  // Since fix round 3 (ruling A), an index from i + 1 does not walk items: no element.
+  expect(answer(fn('items: number[]', 'for (let i = 0; i < items.length; i++) {', '  for (let j = i + 1; j < items.length; j++) {', '    if (items[i] === items[j]) {', '      return 1', '    }', '  }', '}', 'return 0'))).toBe(undefined)
   // A throw with a target.
   expect(answer(fn('items: number[], x: number', 'let t = 0', 'for (const y of items) {', '  if (y === x) {', '    throw fault(y)', '  }', '  t += y', '}', 'return t'))).toBe('O(n)')
 })
@@ -695,8 +696,9 @@ test('family 4: a local not proven scalar is closed-list', async () => {
   // A copy's elements are the parameter's: no mutation through it.
   expect(answer(fn('grid: number[][]', 'let t = 0', 'for (const x of grid) {', '  const a = grid.slice()', '  a[0].push(1)', '  t += 1', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('grid: number[][]', 'let t = 0', 'for (const x of grid) {', '  const a = [x]', '  a[0].push(1)', '  t += 1', '}', 'return t'))).toBe(undefined)
-  // A proven scalar takes any method.
-  expect(answer(use(["const s = 'ab'"], 's.toUpperCase().length'))).toBe('O(n)')
+  // A proven scalar takes the O(1) list (fix round 3, ruling C).
+  expect(answer(use(["const s = 'ab'"], 's.charAt(0).length'))).toBe('O(n)')
+  expect(answer(use(["const s = 'ab'"], 's.toUpperCase().length'))).toBe(undefined)
 })
 
 test('family 5: + and += take only proven numbers', async () => {
@@ -743,4 +745,89 @@ test('family 7: values reached from an opaque element take no method call, + or 
   expect(answer(fn('m: Map<string, number[]>', 'let t = 0', 'for (const v of m.values()) {', '  t += v.toString().length', '}', 'return t'))).toBe(undefined)
   // Allowed: a comparison, a key, a push, a property's length.
   expect(answer(fn(`${tags}, k: number`, 'const seen = new Set<number>()', 'const out: number[][] = []', 'let t = 0', 'for (const x of items) {', '  if (x.tags.length === k) {', '    t += 1', '  }', '  seen.add(x)', '  out.push(x.tags)', '  t += x.tags.length', '}', 'return t'))).toBe('O(n)')
+})
+
+// --- Fix round 3: default-refuse rules (task re-review of 93b7239) -------------
+
+test('ruling A: p[i] is an element only for an index that walks p from 0 to p.length', async () => {
+  const choose = (head: string[], close: string) => fn('items: number[], ids: number[]', 'let t = 0', ...head, '  if (items[i] === 0) {', '    t += ids.indexOf(1)', '  }', close, 'return t')
+  // Reviewer: indices of another source.
+  expect(answer(choose(['for (let i = 0; i < ids.length; i++) {'], '}'))).toBe(undefined)
+  expect(answer(choose(['for (const i of ids.keys()) {'], '}'))).toBe(undefined)
+  expect(answer(choose(['for (const [i, y] of ids.entries()) {'], '}'))).toBe(undefined)
+  expect(answer(choose(['ids.forEach((y, i) => {'], '})'))).toBe(undefined)
+  // Own: a literal position, a binary search's mid over another source, a start other than 0.
+  expect(answer(fn('items: number[], ids: number[], k: number', 'let t = 0', 'for (const x of ids) {', '  t += ids.indexOf(x)', '  if (items[0] === k) {', '    return t', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], k: number', 'for (let i = 0; i < items.length; i++) {', '  for (let j = i + 1; j < items.length; j++) {', '    if (items[j] === k) {', '      return 1', '    }', '  }', '}', 'return 0'))).toBe(undefined)
+  // Walking its own source: still an element.
+  expect(answer(choose(['for (const i of items.keys()) {'], '}'))).toBe('O(n·m)')
+  expect(answer(choose(['items.forEach((y, i) => {'], '})'))).toBe('O(n·m)')
+})
+
+test('ruling B: no await or async; any value not proven plain is opaque', async () => {
+  const af = (params: string, ...body: string[]): Unit => ({ lang: 'TypeScript', name: 'f', lines: [`async function f(${params}): Promise<number> {`, ...body.map((l) => `  ${l}`), '}'] })
+  // Reviewer.
+  expect(answer(af('items: { tags: number[] }[]', 'let t = 0', 'for (const x of items) {', '  const a = await x.tags', '  t += a.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(af('items: number[], ids: number[]', 'const a = await ids.slice()', 'let t = 0', 'for (const x of items) {', '  t += a.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(af('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[][]', 'let t = 0', 'for (let i = 0; i < items.length; i++) {', '  t += items.at(i).toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('m: Map<string, number[]>, keys: string[]', 'let t = 0', 'for (const k of keys) {', '  t += m.get(k).toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: { tags: number[] }[]', 'const c = items.map(x => x.tags)', 'let t = 0', 'for (let i = 0; i < c.length; i++) {', '  t += c.at(i).toString().length', '}', 'return t'))).toBe(undefined)
+  // Own: a result through a find, a property of this, and a boolean proven by name alone.
+  expect(answer(fn('items: { id: number; tags: number[] }[], ids: number[]', 'let t = 0', 'for (const k of ids) {', '  t += items.find(x => x.id === k).tags.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(inLoop('const r = this.items.size()'))).toBe(undefined)
+  expect(answer(fn('items: number[], opts: Store', 'const a = opts.has(1)', 'let t = 0', 'for (const x of items) {', '  t += a.toString().length', '}', 'return t'))).toBe(undefined)
+})
+
+test('ruling C: methods on a string or number take only a closed O(1) list', async () => {
+  // Reviewer.
+  expect(answer(fn('n: number', 'let t = 0', 'for (let i = 0; i < n; i++) {', "  t += 'a'.repeat(n).length", '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('n: number', "const s = 'a'", 'let t = 0', 'for (let i = 0; i < n; i++) {', '  t += s.repeat(n).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', "  t += ''.padStart(items.length).length", '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('words: string[], n: number', 'let t = 0', 'for (const w of words) {', '  t += w.repeat(n).length', '}', 'return t'))).toBe(undefined)
+  // Own.
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', '  t += w.toUpperCase().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], k: number', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(k).length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], n: number', 'let t = 0', 'for (const x of items) {', '  t += n.toString().length', '}', 'return t'))).toBe(undefined)
+  // The list itself.
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', "  if (w.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
+})
+
+test('ruling D: a reduce accumulator is a number only when every return of its callback is', async () => {
+  expect(answer(fn('items: number[]', "const s = items.reduce((a, x) => x < 0 ? 'z' : a + x, 0)", 'return s'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'const s = items.reduce((a, x) => x < 0 ? [] : a + x, 0)', 'return s'))).toBe(undefined)
+  expect(answer(fn('items: number[], k: number', 'const s = items.reduce((a, x) => x === k ? load() : a + x, 0)', 'return s'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'const s = items.reduce((a, x) => x < 0 ? a : a + x, 0)', 'return s'))).toBe('O(n)')
+})
+
+test('ruling E: an element exit counts only as === on a number or string element', async () => {
+  const exits = (params: string, a: string, b: string) => fn(`${params}, ids: number[]`, 'let t = 0', 'for (const x of items) {', '  t += ids.indexOf(1)', `  if (${a}) {`, '    return t', '  }', `  if (${b}) {`, '    return t', '  }', '}', 'return t')
+  // Reviewer.
+  expect(answer(exits("items: ('a' | 'b')[]", "x === 'a'", "x === 'b'"))).toBe(undefined)
+  expect(answer(exits('items: (0 | 1)[]', 'x === 0', 'x === 1'))).toBe(undefined)
+  expect(answer(exits('items: Dir[]', "x === 'a'", "x === 'b'"))).toBe(undefined)
+  expect(answer(exits('items: number[], k: number', 'x < k', 'x >= k'))).toBe(undefined)
+  expect(answer(exits('items: number[]', 'x === 5', 'x !== 5'))).toBe(undefined)
+  // Own: a boolean element, a membership test, a property of an element.
+  expect(answer(exits('items: boolean[], k: boolean', 'x === k', 'x === k'))).toBe(undefined)
+  expect(answer(fn('items: number[], ids: number[]', 'for (const x of items) {', '  if (ids.includes(x)) {', '    return 1', '  }', '}', 'return 0'))).toBe(undefined)
+  expect(answer(fn('items: { id: number }[], k: number', 'for (const x of items) {', '  if (x.id === k) {', '    return 1', '  }', '}', 'return 0'))).toBe(undefined)
+  // Several === exits on one number element can all be avoided.
+  expect(answer(exits('items: number[], k: number, j: number', 'x === k', 'x === j'))).toBe('O(n·m)')
+})
+
+test('ruling F: a binary search is mid, an optional equality exit, then an if/else setting lo and hi', async () => {
+  const bs = (cond: string, hi: string, ...body: string[]) => fn('items: number[], x: number', 'let t = 0', 'let lo = 0', `let hi = ${hi}`, `while (${cond}) {`, '  const mid = (lo + hi) >> 1', ...body.map((l) => `  ${l}`), '}', 'return t')
+  // Reviewer.
+  expect(answer(bs('lo <= hi', 'items.length - 1', 't += items.indexOf(mid)', 'lo = mid + 1', 'hi = mid - 1'))).toBe(undefined)
+  expect(answer(bs('lo < hi', 'items.length', 'lo = mid + 1', 'hi = mid'))).toBe(undefined)
+  expect(answer(bs('lo <= hi', 'items.length - 1', 'if (items[mid] < x) {', '  lo = mid + 1', '}', 'hi = mid - 1'))).toBe(undefined)
+  // Own: an else-if instead of an else; a test that does not read mid; the exit after the halving.
+  expect(answer(bs('lo <= hi', 'items.length - 1', 'if (items[mid] < x) {', '  lo = mid + 1', '} else if (items[mid] > x) {', '  hi = mid - 1', '}'))).toBe(undefined)
+  expect(answer(bs('lo <= hi', 'items.length - 1', 'if (t < x) {', '  lo = mid + 1', '} else {', '  hi = mid - 1', '}'))).toBe(undefined)
+  expect(answer(bs('lo <= hi', 'items.length - 1', 'if (items[mid] < x) {', '  lo = mid + 1', '} else {', '  hi = mid - 1', '}', 'if (items[mid] === x) {', '  return mid', '}'))).toBe(undefined)
+  // The accepted shape, with and without the equality exit.
+  expect(answer(bs('lo <= hi', 'items.length - 1', 'if (items[mid] === x) {', '  return mid', '}', 'if (items[mid] < x) {', '  lo = mid + 1', '} else {', '  hi = mid - 1', '}'))).toBe('O(log n)')
+  expect(answer(bs('lo < hi', 'items.length', 'if (items[mid] < x) {', '  lo = mid + 1', '} else {', '  hi = mid', '}'))).toBe('O(log n)')
 })
