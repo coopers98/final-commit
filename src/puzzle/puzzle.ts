@@ -3,6 +3,7 @@ import type { Rng } from '../rng'
 import type { PuzzleStat } from '../store/schema'
 import type { Complete } from '../world/generate'
 import { buildBugHunt } from './bug-hunt'
+import { buildComplexityRead } from './complexity-read'
 import { buildPatternId } from './pattern-id'
 import type { TraceCapability } from './trace'
 import type { Unit } from './units'
@@ -57,7 +58,7 @@ export function puzzleBonus(tier: Tier, isCorrect: boolean, elapsedMs: number): 
 
 /**
  * A puzzle for `tier`. Pattern ID is made from `units` (what may go to a model), never `localUnits`;
- * Bug Hunt and Trace read `localUnits` (the pane's own text, which never leaves the machine), else `units`. `complete` is the model call; without
+ * Bug Hunt, Complexity Read and Trace read `localUnits` (the pane's own text, which never leaves the machine), else `units`. `complete` is the model call; without
  * one (puzzles set to local, or the strict filter) Pattern ID is not built,
  * and nothing is sent. `trace` runs a unit locally (SPEC 8.3 rule 3); it is
  * handed in only when a runner is available. A type that cannot be made
@@ -77,10 +78,13 @@ export async function buildPuzzle(req: {
 }): Promise<Puzzle | undefined> {
   const local = req.localUnits ?? req.units
   if (req.units.length === 0 && local.length === 0) return undefined
-  const built: PuzzleType[] = [...(req.complete && req.units.length > 0 ? ['pattern-id' as const] : []), ...(req.trace ? ['trace' as const] : []), 'bug-hunt']
+  const built: PuzzleType[] = [...(req.complete && req.units.length > 0 ? ['pattern-id' as const] : []), 'complexity-read', ...(req.trace ? ['trace' as const] : []), 'bug-hunt']
   const first = puzzleTypeFor(req.tier, built)
   for (const type of [first, ...built.filter(t => t !== first)]) {
-    if (type === 'bug-hunt') {
+    if (type === 'complexity-read') {
+      const p = buildComplexityRead(local, req.rng, req.stats ? categoryWeights(req.stats, 'complexity-read') : undefined)
+      if (p) return p
+    } else if (type === 'bug-hunt') {
       const p = buildBugHunt(local, req.rng, req.stats ? categoryWeights(req.stats, 'bug-hunt') : undefined)
       if (p) return p
     } else if (type === 'pattern-id' && req.complete) {

@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
-import { PUZZLE } from '../src/config'
+import { COMPLEXITY, PUZZLE } from '../src/config'
 import { createRng } from '../src/rng'
 import { analyzeKey, analyzeView, resultLines } from '../src/puzzle/analyze'
 import { buildBugHunt } from '../src/puzzle/bug-hunt'
+import { buildComplexityRead } from '../src/puzzle/complexity-read'
 import { buildPatternId, parseCheck, parseGenerated } from '../src/puzzle/pattern-id'
 import { buildPuzzle, categoryWeights, puzzleBonus, puzzleTypeFor } from '../src/puzzle/puzzle'
 import type { Unit } from '../src/puzzle/units'
@@ -221,4 +222,51 @@ test('Bug Hunt never changes a line that is mostly placeholders', async () => {
     expect(p.code[1]).toBe(soup.lines[1])
   }
   expect(built).toBeGreaterThan(0)
+})
+
+const NESTED: Unit = { lang: 'TypeScript', name: 'pairs', lines: ['function pairs(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    for (const y of ids) {', '      t += x * y', '    }', '  }', '  return t', '}'] }
+
+test('Complexity Read asks the Big-O with the size line and rule, and four choices from the table', async () => {
+  const p = buildComplexityRead([NESTED], createRng(7))!
+  expect(p.type).toBe('complexity-read')
+  expect(p.question).toBe(`What is the time complexity of pairs(items, ids)?\nn = size of items, m = size of ids. ${COMPLEXITY.ruleText}`)
+  expect(p.choices[p.answer]).toBe('O(n·m)')
+  expect([...p.choices].sort()).toEqual(['O(n + m)', 'O(n)', 'O(n²)', 'O(n·m)'].sort())
+  expect(p.code).toEqual(NESTED.lines)
+  expect(p.category).toBe('two inputs')
+})
+
+test('Complexity Read reads full, shows lines, and numbers its explanation as the pane does', async () => {
+  const full = ['def f(items: list[int]) -> int:', '    t = 0', '    for x in items:', '        t += x', '    …']
+  const u: Unit = { lang: 'Python', name: 'f', lines: full.slice(0, 4), full: { lines: full, offset: 0 }, hidden: check => check('    # done', 4) }
+  const p = buildComplexityRead([u], createRng(1))
+  expect(p?.code).toEqual(u.lines)
+  expect(p?.explanation).toBe('Line 3: loop over items. n = O(n).')
+  const inner = ['function f(items: number[]): number {', '  …', '  let t = 0', '  for (const x of items) {', '    t += x', '  }', '  return t', '}']
+  const v: Unit = { lang: 'TypeScript', name: 'f', lines: inner, full: { lines: inner, offset: 0 }, hidden: check => check('  // start', 1) }
+  expect(buildComplexityRead([v], createRng(1))?.explanation).toBe('Line 4: loop over items. n = O(n).')
+})
+
+test('Complexity Read picks a weak category first when weights are given', async () => {
+  const SORT: Unit = { lang: 'TypeScript', name: 's', lines: ['function s(items: number[]): number[] {', '  const out = items.toSorted()', '  return out', '}'] }
+  const counts: Record<string, number> = {}
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const p = buildComplexityRead([NESTED, SORT], createRng(seed), c => (c === 'sorting' ? 9 : 1))!
+    counts[p.category] = (counts[p.category] ?? 0) + 1
+  }
+  expect((counts.sorting ?? 0) > (counts['two inputs'] ?? 0) * 4).toBe(true)
+})
+
+test('Complexity Read gives none when no unit has a cost; buildPuzzle falls through', async () => {
+  expect(buildComplexityRead([FLAT], createRng(1))).toBe(undefined)
+  const p = await buildPuzzle({ units: [UNIT], tier: 'uncommon', rng: createRng(3) })
+  expect(p?.type).toBe('bug-hunt')
+})
+
+test('tiers: Uncommon asks Complexity Read; with puzzles local, Common does too; with no runner, Rare does', async () => {
+  expect(puzzleTypeFor('uncommon', ['pattern-id', 'complexity-read', 'trace', 'bug-hunt'])).toBe('complexity-read')
+  expect(puzzleTypeFor('common', ['complexity-read', 'trace', 'bug-hunt'])).toBe('complexity-read')
+  expect(puzzleTypeFor('rare', ['complexity-read', 'bug-hunt'])).toBe('complexity-read')
+  const p = await buildPuzzle({ units: [NESTED], tier: 'uncommon', rng: createRng(3) })
+  expect(p?.type).toBe('complexity-read')
 })
