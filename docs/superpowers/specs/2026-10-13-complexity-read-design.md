@@ -326,6 +326,53 @@ Costs (S a typed parameter or derived value; n = size(S)):
   library function in TS or Python called through a module) costs 1 by
   the rule.
 
+### Stricter readings (TypeScript reader, Task 4)
+
+Where the rules above leave room, or a counterexample showed a wrong
+key, the TypeScript reader takes the stricter reading. Each is a test.
+
+- **Closed statement set.** Each shown line is a declaration (one name,
+  `const`/`let`), an expression, `return`, `throw`, `break`, `continue`,
+  or the header of `if`/`else`, `for`, a binary search `while`, or a
+  block callback (`… => {` closed by a lone `})`). `switch`, `try`, `var`,
+  destructuring declarations and object or method definitions fail.
+- **Exits** must stand behind a test the input can make false at every
+  iteration: `e === v` with `e` an element (or `p[i]`) and `v` a literal
+  or a value from another source (another parameter, or the same source
+  at an index that counts up from `i + 1`), or `S.includes(e)`/`S.has(e)`
+  with S another parameter. `!==`, orderings and helper results do not
+  qualify. A short-circuit callback (`find`, `findIndex`, `some`) needs the
+  same of its test, `every` membership; a block body or a helper there
+  fails. Elements of every enclosing loop count as elements.
+- **Costly work behind a test** inside a loop counts at every iteration
+  only when the tests on its path can all hold at once at every
+  iteration: tests that do not vary (parameters, derived values), tests
+  that avoid values (`!==`, not a member), or one test that chooses them
+  (`===` on a source that may repeat, an ordering against another value,
+  membership), and then no exit from those loops. Indices, locals, flags,
+  helpers and hidden tests there fail. A branch that leaves a loop, a tiny
+  guard's branch and a hidden if's body must cost 1. Code after an if
+  whose branch may leave stands behind that branch's test being false.
+- **Dead code.** A statement that always leaves (or an if/else whose
+  every branch does) must be last in its body.
+- **Sizes.** A number parameter is a size only where it can bound a loop
+  (a counting header, or a local holding it, such as a search's `hi`);
+  elsewhere it is a value. Tuple and object-literal types are never
+  sizes. An untyped or other-typed parameter is iterated only outside
+  every loop (it may be a one-shot iterator). A count that starts at an
+  enclosing index needs that loop to run over the same size.
+- **Builtins.** `entries`, `keys` and `values` of an array are lazy:
+  counted only as a for-of source. `includes`, `indexOf`, `lastIndexOf`
+  and `join` take at most one argument (no start index); `findLast` and
+  `findLastIndex` fail. A `filter` gives a derived value only when its
+  test can hold for every element. No mutating call reaches a parameter
+  through an element, a loop variable or a call's result. Names may not
+  shadow a global, a parameter or a visible loop name.
+- **Conditions** with no names, a value compared with itself, or `a || !a`
+  / `a && !a` fail. Residual: a contradiction or tautology the reader
+  cannot see (`k > 0 && k < 0`) still counts its branch; an unknown name
+  or helper in a test is read as able to take any value.
+
 ### Combining
 
 - Sequential costs add; nested costs multiply; branches count as all

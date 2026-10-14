@@ -5,7 +5,9 @@
 // language readers build on it.
 
 import { COMPLEXITY } from '../config'
+import { readTypeScript } from './complexity-ts'
 import { isBlankedLine } from './readable'
+import type { Unit } from './units'
 
 /** What a factor came from: the category and the explanation read it. */
 export type FactorKind = 'loop' | 'callback' | 'builtin' | 'sort' | 'halving' | 'search'
@@ -148,6 +150,14 @@ export function readCost(cost: Cost, numeric: readonly string[], offset: number)
     numeric: [n, ...(m === undefined ? [] : [m])].filter((s) => numeric.includes(s)),
     explanation,
   }
+}
+
+/** A unit's answer and its parameter names for the question, by its language's reader; undefined when the reader cannot place it. Python and PHP have no reader yet. */
+export function costOf(unit: Unit): (Reading & { params: string[] }) | undefined {
+  const read = unit.lang === 'TypeScript' ? readTypeScript(unit) : undefined
+  if (!read) return undefined
+  const reading = readCost(read.cost, read.numeric, unit.full?.offset ?? 0)
+  return reading && { ...reading, params: read.params }
 }
 
 /** A line and the lines nested under it; `at` indexes the lines read. */

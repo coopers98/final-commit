@@ -267,9 +267,21 @@ export const COMPLEXITY = {
     'O(n·m)': ['O(n + m)', 'O(n²)', 'O(n)'],
     'O(n + m)': ['O(n·m)', 'O(n)', 'O(n²)'],
   } as Record<string, readonly string[]>,
-  // Filled by Tasks 4, 6 and 7: { sort, linear, constant, fails, derive, mutate, globals, iterators }
-  // per language, each a readonly string[] copied from the spec's "Builtins" section.
-  builtins: {} as Record<string, Record<string, readonly string[]>>,
+  // Spec "Builtins", per language: { sort, linear, constant, fails, derive, mutate, globals, iterators },
+  // each a readonly string[] copied from the spec. Python and PHP are filled by Tasks 6 and 7.
+  builtins: {
+    TypeScript: {
+      sort: ['sort', 'toSorted'],
+      linear: ['includes', 'indexOf', 'lastIndexOf', 'find', 'findIndex', 'findLast', 'findLastIndex', 'filter', 'map', 'reduce', 'reduceRight', 'some', 'every', 'forEach', 'slice', 'concat', 'join', 'toReversed', 'entries', 'keys', 'values', 'Array.from', 'Object.keys', 'Object.values', 'Object.entries', 'Set', 'Map', 'JSON.stringify', 'Math.max', 'Math.min'],
+      constant: ['has', 'get', 'set', 'add', 'delete', 'push', 'pop', 'at', 'length', 'size', 'charAt', 'charCodeAt', 'codePointAt', 'Math', 'Number', 'parseInt'],
+      fails: ['flat', 'flatMap', 'split', 'replace', 'replaceAll', 'splice', 'Object.assign', 'JSON.parse', 'structuredClone', 'eval', 'Function', 'arguments', 'Reflect'],
+      derive: ['filter', 'map', 'slice', 'toSorted', 'toReversed', 'Array.from', 'Object.keys', 'Object.values', 'Object.entries'],
+      mutate: ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear'],
+      // The ECMAScript global functions, constructors and namespaces, and the reflective names that reach bound values unnamed.
+      globals: ['AggregateError', 'Array', 'ArrayBuffer', 'Atomics', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean', 'DataView', 'Date', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'Error', 'escape', 'eval', 'EvalError', 'FinalizationRegistry', 'Float32Array', 'Float64Array', 'Function', 'globalThis', 'Int8Array', 'Int16Array', 'Int32Array', 'Intl', 'isFinite', 'isNaN', 'Iterator', 'JSON', 'Map', 'Math', 'Number', 'Object', 'parseFloat', 'parseInt', 'Promise', 'Proxy', 'RangeError', 'ReferenceError', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol', 'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'unescape', 'URIError', 'WeakMap', 'WeakRef', 'WeakSet', 'arguments', 'this'],
+      iterators: ['forEach', 'map', 'filter', 'find', 'findIndex', 'some', 'every', 'reduce'],
+    },
+  } as Record<string, Record<'sort' | 'linear' | 'constant' | 'fails' | 'derive' | 'mutate' | 'globals' | 'iterators', readonly string[]>>,
   // Spec "What the reader reads", rules 3 and 4: a hidden line holds none of
   // the loop or closure words or symbols, and an exit word only in place.
   loopWords: ['for', 'foreach', 'while', 'do'] as readonly string[],
