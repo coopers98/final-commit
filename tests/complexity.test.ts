@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { missionUnits, type MaterialIo } from '../src/puzzle/material'
 import { add, factor, isInert, mul, ONE, readCost, simplify, treeByBraces, treeByIndent, type Factor } from '../src/puzzle/complexity'
 
 // Invented code only (SPEC 15).
@@ -190,4 +191,82 @@ test('PHP variable variables fail: a name reached without being written', async 
   expect(isInert("log(${'it'.'ems'}); // n", '…', 'PHP', items, none, out)).toBe(false)
   expect(isInert('log($$n); // n', '…', 'PHP', items, none, out)).toBe(false)
   expect(isInert("log('x'); // n", '…', 'PHP', items, none, out)).toBe(true)
+})
+
+/** A stand-in repository: one file changed on `lines`, read as `source`. */
+const ioOf = (path: string, source: string, lines: string): MaterialIo => ({
+  git: async args => {
+    if (args[0] === 'rev-list') return { exitCode: 0, stdout: 'abc123\n' }
+    if (args.includes('--raw')) return { exitCode: 0, stdout: `:100644 100644 aaa bbb M\0${path}\0` }
+    return { exitCode: 0, stdout: `diff --git a/${path} b/${path}\n+++ b/${path}\n@@ -0,0 +${lines} @@\n` }
+  },
+  read: async p => (p === path ? source : undefined),
+})
+
+/** Neither `units` nor `localUnits` hold `raw`, `fileLines` or `dedent` in any field. */
+function expectNoRaw(value: { units: unknown[]; localUnits: unknown[] }, raw: string) {
+  for (const list of [value.units, value.localUnits] as { hidden?: unknown }[][]) {
+    expect(JSON.stringify(list).includes(raw)).toBe(false)
+    expect(JSON.stringify(structuredClone(list.map(({ hidden, ...u }) => u))).includes(raw)).toBe(false)
+    expect(JSON.stringify(list).includes('fileLines')).toBe(false)
+    expect(JSON.stringify(list).includes('dedent')).toBe(false)
+  }
+}
+
+test('local units carry full and hidden; prompt units never do; raw text is in no field', async () => {
+  const RAW = 'NOVA_RAW_ONLY_7731'
+  const source = [
+    'def pairs(items: list):',
+    '    out = []',
+    '    for x in items:',
+    '        out.append(x)',
+    `    return ', '.join(sorted(out))  # ${RAW}`,
+    '',
+  ].join('\n')
+  const result = await missionUnits(ioOf('nova/pairs.py', source, '1,5'), 0, 'strict')
+  const { units, localUnits } = result
+  expect(units.length).toBe(1)
+  expect(units.every(u => u.full === undefined && u.hidden === undefined)).toBe(true)
+  const local = localUnits[0]!
+  expect(local.full?.lines.length).toBe(5)
+  expect(local.full?.offset).toBe(0)
+  expect(local.lines.length).toBe(4)
+  let seen = ''
+  expect(local.hidden?.((raw, at) => { seen = `${at}:${raw.includes(RAW)}`; return true })).toBe(true)
+  expect(seen).toBe('4:true')
+  expect(local.hidden?.(() => false)).toBe(false)
+  expect(local.hidden?.(() => { throw new Error('x') })).toBe(false)
+  expectNoRaw(result, RAW)
+})
+
+test('hidden hands each blanked line inside a nested body its raw text, dedented as the unit is', async () => {
+  const RAW = 'NOVA_RAW_TS_4410'
+  const source = [
+    'class Tally {',
+    '  countOf(items: number[]): number {',
+    '    // ' + RAW,
+    '    let n = 0',
+    '',
+    '    for (const x of items) {',
+    `      log("${RAW}") // note`,
+    '      n += x',
+    '    }',
+    '    return n',
+    '  }',
+    '}',
+  ].join('\r\n')
+  const result = await missionUnits(ioOf('nova/tally.ts', source, '2,10'), 0, 'strict')
+  const local = result.localUnits[0]!
+  expect(local.name).toBe('countOf')
+  // A function's unit opens on its signature, so nothing is trimmed from its start.
+  expect(local.full?.offset).toBe(0)
+  expect(local.full?.lines).toEqual(['countOf(items: number[]): number {', '  …', '  let n = 0', '  for (const x of items) {', '    …', '    n += x', '  }', '  return n', '}'])
+  const seen: string[] = []
+  expect(local.hidden?.((raw, at) => (seen.push(`${at}:${raw}`), true))).toBe(true)
+  expect(seen).toEqual([`1:  // ${RAW}`, `4:    log("${RAW}") // note`])
+  // Stops at the first false.
+  let calls = 0
+  expect(local.hidden?.(() => (calls += 1, false))).toBe(false)
+  expect(calls).toBe(1)
+  expectNoRaw(result, RAW)
 })

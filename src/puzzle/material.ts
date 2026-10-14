@@ -1,6 +1,6 @@
 import { PUZZLE } from '../config'
 import type { PrivacyMode } from './privacy-filter'
-import { readableUnit } from './readable'
+import { isBlankedLine, readableUnit } from './readable'
 import { ADAPTERS, changedLines, isSafePath, type Unit } from './units'
 
 // SPEC 8: a puzzle's material is the code a mission changed: its commits
@@ -39,7 +39,53 @@ export { hasJsx } from './units'
 /** A mission's units: `units` for a prompt, `localUnits` for the pane alone (puzzle view spec, section 4). */
 export type MissionUnits = { units: Unit[]; localUnits: Unit[] }
 
-const gated = (units: readonly Unit[]) => units.flatMap(u => readableUnit(u) ?? [])
+/** `unit` without what only `missionUnits` reads (its file lines and removed indent). */
+function bare(unit: Unit): Unit {
+  const { fileLines: _lines, dedent: _dedent, ...rest } = unit
+  return rest
+}
+
+/** Prompt units: gated, and nothing but their filtered text. */
+const gated = (units: readonly Unit[]) => units.flatMap(u => {
+  const shown = readableUnit(u)
+  return shown ? [bare(shown)] : []
+})
+
+/**
+ * Local units: gated, each with its untrimmed lines (`full`) and, when the
+ * adapter gave its file lines, `hidden`. `raw` and `shown` are the file's
+ * lines as written and as the pane's filter gave them. The raw text of the
+ * blanked lines is held only inside `hidden`, which returns a boolean.
+ */
+function gatedLocal(units: readonly Unit[], raw: readonly string[], shown: readonly string[]): Unit[] {
+  return units.flatMap(u => {
+    const kept = readableUnit(u)
+    if (!kept) return []
+    const { fileLines, dedent } = u
+    if (fileLines === undefined || dedent === undefined || fileLines.length !== u.lines.length) return [bare(kept)]
+    let offset = 0
+    while (offset < u.lines.length && isBlankedLine(u.lines[offset]!)) offset += 1
+    // Each blanked line's raw text less the indent the unit's lines lost, or undefined when
+    // the raw line does not begin with exactly that indent (its check then fails).
+    const hiddenLines = u.lines.flatMap((line, at) => {
+      if (!isBlankedLine(line)) return []
+      const row = fileLines[at]! - 1
+      const text = raw[row]
+      const filtered = shown[row]
+      const isSameIndent = text !== undefined && filtered !== undefined && filtered.length >= dedent && text.slice(0, dedent) === filtered.slice(0, dedent)
+      return [{ at, text: isSameIndent ? text.slice(dedent) : undefined }]
+    })
+    const hidden = (check: (raw: string, at: number) => boolean): boolean => {
+      try {
+        for (const h of hiddenLines) if (h.text === undefined || check(h.text, h.at) !== true) return false
+        return true
+      } catch {
+        return false
+      }
+    }
+    return [{ ...bare(kept), full: { lines: [...u.lines], offset }, hidden }]
+  })
+}
 
 /** Filtered units from the code changed since `startedAt`, gated for readability: at most `PUZZLE.maxUnits` of each set. */
 export async function missionUnits(io: MaterialIo, startedAt: number, mode: PrivacyMode): Promise<MissionUnits> {
@@ -74,10 +120,11 @@ export async function missionUnits(io: MaterialIo, startedAt: number, mode: Priv
     const filtered = adapter.filter(text, mode)
     const shown = adapter.filterLocal ? adapter.filterLocal(text, mode) : filtered
     // Line numbers from the diff must still point at the same lines, in both texts.
-    const lines = text.replace(/\r(?=\n)/g, '').split('\n').length
-    if (filtered.split('\n').length !== lines || shown.split('\n').length !== lines) continue
+    const raw = text.replace(/\r(?=\n)/g, '').split('\n')
+    const shownLines = shown.split('\n')
+    if (filtered.split('\n').length !== raw.length || shownLines.length !== raw.length) continue
     units.push(...gated(adapter.units(filtered, changed)))
-    localUnits.push(...gated(adapter.units(shown, changed)))
+    localUnits.push(...gatedLocal(adapter.units(shown, changed), raw, shownLines))
     if (units.length >= PUZZLE.maxUnits && localUnits.length >= PUZZLE.maxUnits) break
   }
   return { units: units.slice(0, PUZZLE.maxUnits), localUnits: localUnits.slice(0, PUZZLE.maxUnits) }

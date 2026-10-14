@@ -10,7 +10,19 @@ import type { PrivacyMode } from './privacy-filter'
 // the glue reads the diff and the files and hands them in.
 
 /** A unit: a function (or a document's section) the mission touched, already filtered, its lines without blank ones. */
-export type Unit = { lang: string; name: string; lines: string[] }
+export type Unit = {
+  lang: string
+  name: string
+  lines: string[]
+  /** From an adapter only (TypeScript, Python, PHP): each line's 1-based line in the file. `missionUnits` never returns it. */
+  fileLines?: number[]
+  /** From an adapter only, with `fileLines`: the shared indent removed from each line. `missionUnits` never returns it. */
+  dedent?: number
+  /** The unit before trimming (filtered text) and where `lines` starts in it. Local units only. */
+  full?: { lines: string[]; offset: number }
+  /** Runs `check` on the raw, dedented text of each blanked line of `full` (`at`: its index in `full.lines`); true when every call returns true. Catches any throw and gives false. Local units only; never a field holding raw text. */
+  hidden?: (check: (raw: string, at: number) => boolean) => boolean
+}
 
 /** One content adapter: which files it claims and how it finds units in filtered source. */
 export type ContentAdapter = {
@@ -173,9 +185,9 @@ export const TS_ADAPTER: ContentAdapter = {
       }
       const size = filled[end + 1]! - filled[i]!
       const isTouched = touched[end + 1]! - touched[i]! > 0
-      const body = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? lines.slice(i, end + 1).filter(l => l.trim() !== '') : []
-      if (body.length > 0 && !body.some(isUnsafeLine)) {
-        out.push({ lang: this.lang, name, lines: dedent(body) })
+      const kept = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? keptLines(lines, i, end) : []
+      if (kept.length > 0 && !kept.some(k => isUnsafeLine(k.line))) {
+        out.push(codeUnit(this.lang, name, kept))
         i = end + 1
       } else {
         // A long function is skipped whole, but a short one inside it may still be a unit.
@@ -233,7 +245,7 @@ export const PY_ADAPTER: ContentAdapter = {
       const size = filled[end + 1]! - filled[i]!
       const isTouched = touched[end + 1]! - touched[i]! > 0
       if (isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines) {
-        out.push({ lang: this.lang, name, lines: dedent(lines.slice(i, end + 1).filter(l => l.trim() !== '')) })
+        out.push(codeUnit(this.lang, name, keptLines(lines, i, end)))
         i = end + 1
       } else i += 1
     }
@@ -289,9 +301,9 @@ export const PHP_ADAPTER: ContentAdapter = {
       }
       const size = filled[end + 1]! - filled[i]!
       const isTouched = touched[end + 1]! - touched[i]! > 0
-      const body = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? lines.slice(i, end + 1).filter(l => l.trim() !== '') : []
-      if (body.length > 0 && !body.some(isUnsafeLine)) {
-        out.push({ lang: this.lang, name, lines: dedent(body) })
+      const kept = isTouched && size >= PUZZLE.unitMinLines && size <= PUZZLE.unitMaxLines ? keptLines(lines, i, end) : []
+      if (kept.length > 0 && !kept.some(k => isUnsafeLine(k.line))) {
+        out.push(codeUnit(this.lang, name, kept))
         i = end + 1
       } else i += 1
     }
@@ -406,8 +418,22 @@ export function isUnsafeLine(line: string): boolean {
   return line.includes('```') || /(?:^|[(=?:,{}]|&&|\|\||\breturn)\s*<\/?[A-Za-z>]/.test(line) || /<\/|<>|\/>/.test(line)
 }
 
+/** The shared leading indent of `lines`, in characters. */
+const indentWidth = (lines: readonly string[]) => Math.min(...lines.map(l => l.length - l.trimStart().length))
+
 /** `lines` less their shared leading indent. */
 function dedent(lines: string[]): string[] {
-  const indent = Math.min(...lines.map(l => l.length - l.trimStart().length))
+  const indent = indentWidth(lines)
   return lines.map(l => l.slice(indent))
+}
+
+/** The non-blank lines from `from` to `to` (0-based, inclusive), each with its 1-based file line. */
+function keptLines(lines: readonly string[], from: number, to: number): { line: string; at: number }[] {
+  return lines.slice(from, to + 1).flatMap((line, k) => (line.trim() === '' ? [] : [{ line, at: from + k + 1 }]))
+}
+
+/** A function's unit: its kept lines dedented, with their file lines and the indent removed. */
+function codeUnit(lang: string, name: string, kept: readonly { line: string; at: number }[]): Unit {
+  const indent = indentWidth(kept.map(k => k.line))
+  return { lang, name, lines: kept.map(k => k.line.slice(indent)), fileLines: kept.map(k => k.at), dedent: indent }
 }

@@ -2,7 +2,9 @@ import { expect, test } from 'claude-code/testing'
 import { filterCode, isPlainLine, scanLiterals, shownLines, stripLiterals } from '../src/puzzle/code-filter'
 import { createRng } from '../src/rng'
 import { EMPTY_TREE, hasJsx, missionUnits, regularFiles } from '../src/puzzle/material'
-import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, TS_ADAPTER } from '../src/puzzle/units'
+import { filterPhp } from '../src/puzzle/php-filter'
+import { filterPython } from '../src/puzzle/python-filter'
+import { blockEnd, changedLines, functionName, isSafePath, isUnsafeLine, PHP_ADAPTER, PY_ADAPTER, TS_ADAPTER } from '../src/puzzle/units'
 
 // Invented code only (SPEC 15).
 
@@ -99,6 +101,22 @@ test('the adapter keeps functions the diff touched, within the size limits, with
   expect(units[0]!.lines[0]).toBe('export function totalOf(items: number[]): number {')
   expect(units[0]!.lines.length).toBe(7)
   expect(TS_ADAPTER.units(FILE, new Set([1]))).toEqual([])
+})
+
+test('TypeScript, Python and PHP units carry each kept line\'s file line and the indent removed', async () => {
+  // An empty line inside each function is skipped; each function is nested one level.
+  const ts = ['class Box {', '  total(items: number[]): number {', '    let sum = 0', '', '    for (const n of items) sum += n', '    return sum', '  }', '}'].join('\n')
+  const [t] = TS_ADAPTER.units(filterCode(ts, 'standard'), new Set([5]))
+  expect(t?.fileLines).toEqual([2, 3, 5, 6, 7])
+  expect(t?.dedent).toBe(2)
+  const py = ['class Box:', '    def total(self, items):', '        t = 0', '', '        for x in items:', '            t = t + x', '        return t'].join('\n')
+  const [p] = PY_ADAPTER.units(filterPython(py, 'standard'), new Set([5]))
+  expect(p?.fileLines).toEqual([2, 3, 5, 6, 7])
+  expect(p?.dedent).toBe(4)
+  const php = ['<?php', 'class Box', '{', '    public function total(array $items): int', '    {', '        $t = 0;', '', '        foreach ($items as $x) { $t += $x; }', '        return $t;', '    }', '}'].join('\n')
+  const [h] = PHP_ADAPTER.units(filterPhp(php, 'standard'), new Set([8]))
+  expect(h?.fileLines).toEqual([4, 5, 6, 8, 9, 10])
+  expect(h?.dedent).toBe(4)
 })
 
 test('the adapter claims TypeScript and JavaScript sources, not declarations or other files', async () => {
