@@ -179,8 +179,9 @@ function braceEnds(line: string): { closes: number; opens: number } | undefined 
   return { closes, opens: open.length }
 }
 
-/** A shown line that only closes: `}`, `})`, `});`. It ends a block and is no statement. */
-const isCloseOnly = (line: string): boolean => !isBlankedLine(line) && /^}[\s)\];,]*$/.test(line.trim())
+/** A line that only closes: shown `}`, `})`, `});`, or blanked keeping a lone `}` (`}…`, `… }`). It ends a block and is no statement; a blanked one's raw text is still checked through `hidden`. */
+const isCloseOnly = (line: string): boolean =>
+  isBlankedLine(line) ? line.replace(/[^{}]/g, '') === '}' : /^}[\s)\];,]*$/.test(line.trim())
 
 /**
  * The line the root's `{` opens on: the first holding a brace, when every
@@ -320,7 +321,7 @@ function holdsName(names: ReadonlySet<string>, name: string, lang: string): bool
 }
 
 /** Python words after which `*` cannot be multiplication. */
-const BEFORE_UNPACK = /(?:^|[^\p{ID_Continue}])(?:return|yield|await|in|is|not|and|or|if|elif|else|while|for|assert|del|lambda|import|print)$/u
+const BEFORE_UNPACK = /(?:^|[^\p{ID_Continue}])(?:return|yield|await|in|is|not|and|or|if|elif|else|while|for|assert|del|lambda|import|from|print|match|case|with|as|except)$/u
 
 /** Python unpacking: a `*` or `**` not after an operand (a name, number, closing bracket or quote), or after a keyword. Over-strict on purpose. */
 function unpacksPython(raw: string): boolean {
@@ -341,6 +342,8 @@ export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python'
   if (holds(bound) || holds(words) || holds(COMPLEXITY.loopWords) || holds(COMPLEXITY.closureWords)) return false
   if (COMPLEXITY.inertSymbols.some((s) => raw.includes(s))) return false
   if (lang === 'Python' && unpacksPython(raw)) return false
+  // PHP variable variables (`${'it'.'ems'}`, `$$name`) reach a name without writing it.
+  if (lang === 'PHP' && (raw.includes('${') || raw.includes('$$'))) return false
   if (holds(COMPLEXITY.exitWords)) return !place.isInLoop && (place.isLastAtBodyLevel || place.isInGuard)
   return true
 }

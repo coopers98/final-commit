@@ -118,10 +118,10 @@ test('Python: raw indent must equal the kept indent, brackets balance, no traili
 test('treeByBraces: blanked lines keep their braces, close-only lines are no blocks, the root must close last', async () => {
   // TypeScript keeps a leading close before the `…`; PHP puts every brace after it.
   const ts = treeByBraces(['function f(a) {', '  …{', '    g(a)', '  }…', '  h(a)', '}'])
-  expect(ts?.children.map(b => b.at)).toEqual([1, 3, 4])
+  expect(ts?.children.map(b => b.at)).toEqual([1, 4])
   expect(ts?.children[0]?.children[0]?.at).toBe(2)
   const php = treeByBraces(['function f($a) {', '  … {', '    g($a);', '  … }', '}'])
-  expect(php?.children.map(b => b.at)).toEqual([1, 3])
+  expect(php?.children.map(b => b.at)).toEqual([1])
   expect(treeByBraces(['  items.forEach(x => {', '    g(x)', '  })', '}'])).toBe(undefined)
   expect(treeByBraces(['function f(a) {', '  a.forEach(x => {', '    g(x)', '  })', '}'])?.children.length).toBe(1)
   expect(treeByBraces(['function f(a) {', '  g(a)', '}', 'h()'])).toBe(undefined)
@@ -133,6 +133,15 @@ test('treeByBraces: blanked lines keep their braces, close-only lines are no blo
   expect(treeByBraces(['function f(', '  $a,', ') {', '  g($a);', '}'])?.children.map(b => b.at)).toEqual([3])
   expect(treeByBraces(['function f(', '  …', ') {', '  g($a);', '}'])).toBe(undefined)
   expect(treeByBraces(['function f(a) }', '}'])).toBe(undefined)
+})
+
+test('treeByBraces: a blanked line keeping a lone close only closes, like a shown one', async () => {
+  const t = treeByBraces(['function f() {', '  g()', '}…'])
+  expect(t?.children.map(b => b.at)).toEqual([1])
+  const nested = treeByBraces(['function f(a) {', '  if (a) {', '    g(a)', '  }…', '  h(a)', '  if (a) {', '    … }', '}'])
+  expect(nested?.children.map(b => b.at)).toEqual([1, 4, 5])
+  expect(nested?.children[0]?.children.map(b => b.at)).toEqual([2])
+  expect(nested?.children[2]?.children.length).toBe(0)
 })
 
 test('treeByIndent: blanked openers, a dedent to an unopened level, and a deeper line under a plain statement', async () => {
@@ -170,4 +179,15 @@ test('inert words: closures, Python unpacking, exits in strings', async () => {
   expect(isInert("log('return')", '…', 'TypeScript', none, none, out)).toBe(false)
   expect(isInert("log('done')", '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(true)
   expect(isInert('break', '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
+  // Soft keywords: `match` and `case` take an unpacking subject or pattern.
+  expect(isInert('        case *rest, x:  # n', '        …', 'Python', new Set(['v']), none, out)).toBe(false)
+  expect(isInert('    match *a, b:  # n', '    …', 'Python', new Set(['v']), none, out)).toBe(false)
+  expect(isInert('    with *a:  # n', '    …', 'Python', none, none, out)).toBe(false)
+})
+
+test('PHP variable variables fail: a name reached without being written', async () => {
+  const items = new Set(['items'])
+  expect(isInert("log(${'it'.'ems'}); // n", '…', 'PHP', items, none, out)).toBe(false)
+  expect(isInert('log($$n); // n', '…', 'PHP', items, none, out)).toBe(false)
+  expect(isInert("log('x'); // n", '…', 'PHP', items, none, out)).toBe(true)
 })
