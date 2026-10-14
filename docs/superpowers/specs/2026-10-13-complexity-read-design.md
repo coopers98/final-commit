@@ -369,9 +369,36 @@ key, the TypeScript reader takes the stricter reading. Each is a test.
   through an element, a loop variable or a call's result. Names may not
   shadow a global, a parameter or a visible loop name.
 - **Conditions** with no names, a value compared with itself, or `a || !a`
-  / `a && !a` fail. Residual: a contradiction or tautology the reader
-  cannot see (`k > 0 && k < 0`) still counts its branch; an unknown name
-  or helper in a test is read as able to take any value.
+  / `a && !a` fail. Two tests that do not vary and name the same value on
+  one path, at any depth (`k > 0` then `k < 0`, or both in one `&&`), fail.
+  Residual: a tautology the reader cannot see still counts its branch; an
+  unknown name or helper in a test is read as able to take any value.
+
+Fix round 1 (task review):
+
+- **Indices are not elements.** `for…in`, an array's `keys()`,
+  `Object.keys`, and the first name of an `entries()` pair (or a whole
+  pair) hold indices: a test on one never counts as an exit or a choice,
+  for a loop, a callback or a derived value of keys or entries.
+- **Reads by position** (`p[e]`, `p.at(e)`, `charAt`, `charCodeAt`,
+  `codePointAt`, `e in p`) on a size source, a collection local or an
+  array accumulator take a loop's index (or `mid`, a key, a callback
+  index), plus or minus a literal, anywhere; a fixed position probes the
+  size (`items[16] !== undefined`). A literal loop's index is fixed.
+- **`.length` / `.size`** of anything but a parameter, a derived value or
+  an element is a size the reader cannot name: any test on it fails.
+- **Two sizes** compared for equality (`===`, `!==`, `==`, `!=`), or with
+  `<` one way and `>` the other, fail: they make n·m read as n².
+- **Collection locals** (a copy, a string or a non-empty literal from a
+  builtin, a filled Set or Map) take only lookups and appends; their bare
+  value is not handed on. A plain local holding something reached through
+  a parameter or loop name is never mutated (no mutating call, no element
+  or property write).
+- **NaN** is no value a test can choose.
+- **reduce** starts from a number or an empty collection; a string start,
+  or none, may concatenate and fails.
+- **Arrays of object or tuple types** are arrays; their elements take
+  property reads but no method calls.
 
 ### Combining
 

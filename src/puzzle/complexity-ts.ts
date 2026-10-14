@@ -42,6 +42,10 @@ const METHODS = setOf(COUNTED, LISTS.mutate, LISTS.constant.filter((w) => !GLOBA
 const SHORT = new Set(['find', 'findIndex', 'some', 'every'])
 const STRING_METHODS = new Set(['at', 'charAt', 'charCodeAt', 'codePointAt'])
 const ACC_METHODS = new Set(['push', 'add', 'set', 'has', 'get', 'delete', 'pop', 'at'])
+/** A collection local the reader cannot size: lookups and appends only. */
+const COLL_METHODS = new Set(['has', 'get', 'at', 'charAt', 'charCodeAt', 'codePointAt', 'push', 'add', 'set', 'delete', 'pop'])
+/** Reads by position: on a size source, at a loop's index only (fix round 1). */
+const POSITIONAL = new Set(['at', 'charAt', 'charCodeAt', 'codePointAt'])
 /** Spec "What the reader reads", rule 3: every builtin and global name, and the reflective names. */
 const WORDS: ReadonlySet<string> = setOf(...Object.values(LISTS), ['arguments', 'eval', 'Function', 'globalThis', 'Reflect', 'this'])
 
@@ -311,7 +315,9 @@ class Parser {
     }
     if (t.v === 'this') return { k: 'this' }
     if (['true', 'false', 'null', 'undefined'].includes(t.v)) return { k: 'lit', kind: 'other' }
-    if (t.v === 'NaN' || t.v === 'Infinity') return { k: 'lit', kind: 'num' }
+    // NaN equals nothing: no value a test can choose.
+    if (t.v === 'NaN') return { k: 'lit', kind: 'other' }
+    if (t.v === 'Infinity') return { k: 'lit', kind: 'num' }
     if (t.v === 'new') return this.construct()
     if (KEYWORDS.has(t.v)) refuse()
     return { k: 'id', name: t.v }
@@ -621,7 +627,8 @@ function simpleLine(toks: Tok[]): Simple {
 
 /** `fixed`: a tuple or object type, whose size does not grow; `other`: any other or no type. */
 type Kind = 'array' | 'string' | 'set' | 'map' | 'numeric' | 'fixed' | 'other'
-type Param = { name: string; kind: Kind }
+/** `opaque`: an array whose element type is an object or tuple literal (property reads only, no method calls). */
+type Param = { name: string; kind: Kind; opaque?: boolean }
 
 /** Splits `toks` at `sep` outside brackets of any kind. */
 function splitTop(toks: Tok[], sep: string): Tok[][] {
@@ -650,22 +657,23 @@ function closesAtEnd(toks: Tok[]): boolean {
 }
 
 /** Spec "Typed receivers": arrays, `string`, `Set<…>`, `Map<…>` (optionally `| undefined`/`| null`); numbers are sizes by value. */
-function classify(type: Tok[]): Kind {
+function classify(type: Tok[]): { kind: Kind; opaque?: boolean } {
   const parts = splitTop(type, '|').filter((p) => !(p.length === 1 && (isWord(p[0], 'undefined') || isWord(p[0], 'null'))))
-  if (parts.length !== 1) return 'other'
+  if (parts.length !== 1) return { kind: 'other' }
   let p = parts[0]!
-  if (p.length === 1 && (isWord(p[0], 'number') || isWord(p[0], 'bigint'))) return 'numeric'
-  if (p.length === 1 && isWord(p[0], 'string')) return 'string'
+  if (p.length === 1 && (isWord(p[0], 'number') || isWord(p[0], 'bigint'))) return { kind: 'numeric' }
+  if (p.length === 1 && isWord(p[0], 'string')) return { kind: 'string' }
   const readonly = isWord(p[0], 'readonly')
   if (readonly) p = p.slice(1)
-  if (isP(p[0], '[') || isP(p[0], '{')) return 'fixed'
-  const isArray = p.length >= 3 && isP(p.at(-2), '[') && isP(p.at(-1), ']')
-  if (isArray) return 'array'
-  if (readonly) return 'other'
-  if ((isWord(p[0], 'Array') || isWord(p[0], 'ReadonlyArray')) && closesAtEnd(p)) return 'array'
-  if (isWord(p[0], 'Set') && closesAtEnd(p)) return 'set'
-  if (isWord(p[0], 'Map') && closesAtEnd(p)) return 'map'
-  return 'other'
+  // An object or tuple element type makes its elements opaque.
+  const opaque = (elem: Tok[]): boolean => elem.some((t) => isP(t, '{') || isP(t, '[') || isP(t, '('))
+  if (p.length >= 3 && isP(p.at(-2), '[') && isP(p.at(-1), ']')) return { kind: 'array', opaque: opaque(p.slice(0, -2)) }
+  if (isP(p[0], '[') || isP(p[0], '{')) return { kind: 'fixed' }
+  if (readonly) return { kind: 'other' }
+  if ((isWord(p[0], 'Array') || isWord(p[0], 'ReadonlyArray')) && closesAtEnd(p)) return { kind: 'array', opaque: opaque(p.slice(2, -1)) }
+  if (isWord(p[0], 'Set') && closesAtEnd(p)) return { kind: 'set' }
+  if (isWord(p[0], 'Map') && closesAtEnd(p)) return { kind: 'map' }
+  return { kind: 'other' }
 }
 
 const LITERAL_DEFAULTS = [['num'], ['str'], ['-', 'num'], ['true'], ['false'], ['null'], ['undefined'], ['[', ']'], ['{', '}']]
@@ -676,12 +684,15 @@ function readParam(toks: Tok[]): Param {
   need(name !== 'this' && !['readonly', 'override'].includes(name))
   if (p.is('?')) p.i++
   let kind: Kind = 'other'
+  let opaque = false
   if (p.is(':')) {
     p.i++
     const type: Tok[] = []
     while (!p.done && !p.is('=')) type.push(p.toks[p.i++]!)
     need(type.length > 0 && !type.some((t) => isP(t, '=>')))
-    kind = classify(type)
+    const c = classify(type)
+    kind = c.kind
+    opaque = c.opaque === true
   }
   if (p.is('=')) {
     p.i++
@@ -690,7 +701,7 @@ function readParam(toks: Tok[]): Param {
     p.i = p.toks.length
   }
   p.end()
-  return { name, kind }
+  return { name, kind, ...(opaque ? { opaque } : {}) }
 }
 
 const MODIFIERS = ['export', 'default', 'async', 'public', 'private', 'protected', 'static', 'readonly', 'override']
@@ -847,10 +858,13 @@ function endsInTransfer(body: Stmt[]): boolean {
 // ---------------------------------------------------------------------------
 // The reader
 
-type Elem = { origin: string; distinct: boolean }
+/** A source's elements: `yields` keys or entries when its values are indices (never elements); `opaque` elements take no method calls. */
+type Elem = { origin: string; distinct: boolean; yields?: 'keys' | 'entries'; opaque?: boolean }
 type LoopKind = 'of' | 'count' | 'halving' | 'literal' | 'search' | 'callback' | 'comparator'
-type Loop = { at: number; kind: LoopKind; index?: string; start?: { from: string; plus: number }; elements: Map<string, Elem>; factor: Cost; hasExit: boolean }
-type Local = { k: 'derived'; origin: string; distinct: boolean } | { k: 'acc' } | { k: 'plain'; numeric: boolean }
+/** `positions`: names holding an index (keys, entry indices) besides `index`; never elements. */
+type Loop = { at: number; kind: LoopKind; index?: string; positions?: string[]; start?: { from: string; plus: number }; elements: Map<string, Elem>; factor: Cost; hasExit: boolean }
+/** `coll`: a collection the reader can see but not size (a copy, a literal, a string from a parameter); `reaches`: a plain local holding something reached through a parameter or loop name. */
+type Local = ({ k: 'derived' } & Elem) | { k: 'acc'; array: boolean } | { k: 'coll' } | { k: 'plain'; numeric: boolean; reaches: boolean }
 type Decl = { name: string; at: number; line: Extract<Simple, { k: 'decl' }>; inLoop: boolean }
 type Assignment = { name: string; whole: boolean; op: string; value?: Node; at: number }
 /** A condition on the path to a site; `depth` is the number of loops around it. `opaque`: a hidden condition. */
@@ -880,6 +894,8 @@ class Reader {
   readonly openers = new Set<number>()
   readonly tinyGuards = new Set<Node>()
   readonly guardBranches = new Set<number>()
+  /** Each pair of sizes compared, and which way (spec gate 10, fix round 1). */
+  readonly sizeOrders = new Map<string, 'lt' | 'gt'>()
   closers = new Map<number, number>()
   opener = 0
 
@@ -1084,11 +1100,13 @@ class Reader {
     const written = this.assignments.some((a) => a.name === name)
     if (init && isEmptyCollection(init)) {
       need(!this.assignments.some((a) => a.name === name && a.whole))
-      return { k: 'acc' }
+      return { k: 'acc', array: init.k === 'array' }
     }
     const derived = init && !d.inLoop && !written && !this.mutated.has(name) ? this.derivedFrom(init) : undefined
     if (derived) return { k: 'derived', ...derived }
-    return { k: 'plain', numeric: d.line.type === 'numeric' || (init !== undefined && this.isNumericInit(init)) }
+    if (init && isCollectionInit(init)) return { k: 'coll' }
+    const reaches = init !== undefined && someNode(init, (c) => c.k === 'id' && c.name !== name && (this.params.has(c.name) || this.loopNames.has(c.name) || this.decls.has(c.name)))
+    return { k: 'plain', numeric: d.line.type === 'numeric' || (init !== undefined && this.isNumericInit(init)), reaches }
   }
 
   /** Spec "Builtins", derived values: one parameter through a builtin that returns at most its size and takes no limit. */
@@ -1110,7 +1128,7 @@ class Reader {
     }
     if (isId(obj, 'Object') && ['keys', 'values', 'entries'].includes(m) && args.length === 1) {
       const p = param(args[0], ['array', 'other'])
-      return p && { origin: p.name, distinct: true }
+      return p && { origin: p.name, distinct: true, ...(m === 'values' ? {} : { yields: m === 'keys' ? ('keys' as const) : ('entries' as const) }) }
     }
     const p = param(obj, ['array'])
     if (!p) return undefined
@@ -1119,13 +1137,14 @@ class Reader {
       const cb = args[0]
       if (args.length !== 1 || cb?.k !== 'arrow' || cb.body === 'block' || cb.params.length !== 1) return undefined
       const elems = new Map([[cb.params[0]!, { origin: p.name, distinct: false }]])
-      return this.canHoldAlways(cb.body, elems) ? { origin: p.name, distinct: false } : undefined
+      return this.canHoldAlways(cb.body, elems) ? { origin: p.name, distinct: false, ...(p.opaque ? { opaque: true } : {}) } : undefined
     }
     const shaped =
       (m === 'map' && args.length === 1 && (args[0]!.k === 'arrow' || args[0]!.k === 'id')) ||
       ((m === 'slice' || m === 'toReversed') && args.length === 0) ||
       (m === 'toSorted' && args.length <= 1)
-    return shaped ? { origin: p.name, distinct: false } : undefined
+    // map's results are new values; the copies keep their elements.
+    return shaped ? { origin: p.name, distinct: false, ...(p.opaque && m !== 'map' ? { opaque: true } : {}) } : undefined
   }
 
   private isNumericInit(n: Node): boolean {
@@ -1239,6 +1258,7 @@ class Reader {
         for (const b of s.branches) {
           if (b.cond) {
             need(!isTrivial(b.cond))
+            this.checkConsistent([...env.path, ...prev], b.cond)
             this.approveGuard(b, env)
             this.sizesIn(b.cond, env, true)
           }
@@ -1303,8 +1323,8 @@ class Reader {
       const src = this.sourceOf(h.source, h.k)
       // An untyped or other-typed parameter may be a one-shot iterator: iterated inside a loop, it runs once.
       if (h.k === 'of' && h.source.k === 'id' && this.params.get(h.source.name)?.kind === 'other') need(env.loops.length === 0)
-      const elements = new Map(h.names.map((n) => [n, { origin: src.origin, distinct: src.distinct }]))
-      return { at: s.at, kind: 'of', elements, factor: factor({ size: src.origin, log: false, kind: 'loop', at: s.at, what: `loop over ${src.origin}` }), hasExit: false }
+      const { elements, positions } = rolesOf(h.names, src)
+      return { at: s.at, kind: 'of', elements, positions, factor: factor({ size: src.origin, log: false, kind: 'loop', at: s.at, what: `loop over ${src.origin}` }), hasExit: false }
     }
     need(h.test.k === 'bin' && isId(h.test.left, h.name))
     const test = h.test as Extract<Node, { k: 'bin' }>
@@ -1371,19 +1391,22 @@ class Reader {
   /** A parameter (not a number) or a derived value, as a size source. */
   private sourceOfName(name: string): Elem | undefined {
     const p = this.params.get(name)
-    if (p) return p.kind === 'numeric' || p.kind === 'fixed' ? undefined : { origin: name, distinct: p.kind !== 'array' && p.kind !== 'string' }
+    if (p) return p.kind === 'numeric' || p.kind === 'fixed' ? undefined : { origin: name, distinct: p.kind !== 'array' && p.kind !== 'string', ...(p.opaque ? { opaque: true } : {}) }
     const l = this.locals.get(name)
-    return l?.k === 'derived' ? { origin: l.origin, distinct: l.distinct } : undefined
+    if (l?.k !== 'derived') return undefined
+    const { k: _, ...elem } = l
+    return elem
   }
 
-  /** Spec "size source" for a for-of or for-in header. */
+  /** Spec "size source" for a for-of or for-in header; `yields` says when its values are indices or entries. */
   private sourceOf(n: Node, kind: 'of' | 'in'): Elem {
     if (n.k === 'id') {
       const p = this.params.get(n.name)
       if (kind === 'in') need(p !== undefined && (p.kind === 'array' || p.kind === 'other'))
       const s = this.sourceOfName(n.name)
       if (!s) refuse()
-      return s
+      // for-in yields keys: indices of an array.
+      return kind === 'in' ? { origin: s.origin, distinct: true, yields: 'keys' } : s
     }
     need(kind === 'of' && n.k === 'call' && n.callee.k === 'member')
     const call = n as Extract<Node, { k: 'call' }>
@@ -1394,14 +1417,21 @@ class Reader {
       const name = (call.args[0] as { name: string }).name
       const p = this.params.get(name)
       need(p === undefined ? this.locals.get(name)?.k === 'derived' : p.kind === 'array' || p.kind === 'other')
-      return { origin: this.sourceOfName(name)!.origin, distinct: true }
+      const s = this.sourceOfName(name)!
+      need(s.yields === undefined)
+      return m === 'values' ? { ...s, distinct: true } : { origin: s.origin, distinct: true, yields: m === 'keys' ? 'keys' : 'entries' }
     }
     need(call.args.length === 0 && obj.k === 'id')
     const name = (obj as { name: string }).name
     const p = this.params.get(name)
     need(p === undefined ? this.locals.get(name)?.k === 'derived' : ['array', 'set', 'map'].includes(p.kind))
     const s = this.sourceOfName(name)!
-    return { origin: s.origin, distinct: m === 'values' ? s.distinct : true }
+    need(s.yields === undefined)
+    // An array's keys are indices and its entries pair an index with a value; a Set's or Map's are its data.
+    const isArray = p === undefined || p.kind === 'array'
+    if (isArray && m === 'keys') return { origin: s.origin, distinct: true, yields: 'keys' }
+    if (isArray && m === 'entries') return { ...s, yields: 'entries' }
+    return { ...s, distinct: m === 'values' ? s.distinct : true }
   }
 
   /** A block callback's loop: an iteration builtin (not a short-circuit one) or a sort's comparator, on a typed array or derived value. */
@@ -1423,7 +1453,8 @@ class Reader {
     need(params.length >= (isReduce ? 2 : 1) && params.length <= (isReduce ? 3 : 2))
     const element = params[isReduce ? 1 : 0]!
     const index = params[isReduce ? 2 : 1]
-    return { at, kind: 'callback', ...(index ? { index } : {}), elements: new Map([[element, src]]), factor: factor({ size: src.origin, log: false, kind: 'callback', at, what: `${m} over ${recv}` }), hasExit: false }
+    const { elements, positions } = rolesOf([element], src)
+    return { at, kind: 'callback', ...(index ? { index } : {}), positions, elements, factor: factor({ size: src.origin, log: false, kind: 'callback', at, what: `${m} over ${recv}` }), hasExit: false }
   }
 
   // --- Binary search (spec "Binary search") ------------------------------------
@@ -1471,9 +1502,11 @@ class Reader {
   private sizes(n: Node): Set<string> {
     const out = new Set<string>()
     const visit = (m: Node): void => {
-      if (m.k === 'member' && (m.name === 'length' || m.name === 'size') && m.obj.k === 'id') {
-        const s = this.sourceOfName(m.obj.name)
+      if (m.k === 'member' && (m.name === 'length' || m.name === 'size')) {
+        const s = m.obj.k === 'id' ? this.sourceOfName(m.obj.name) : undefined
+        // Any other length is a size the reader cannot name ('?'), unless it is an element's.
         if (s) out.add(s.origin)
+        else if (!this.isElementValue(m.obj)) out.add('?')
         return
       }
       if (m.k === 'id') {
@@ -1487,6 +1520,12 @@ class Reader {
     }
     visit(n)
     return out
+  }
+
+  /** An element: through an index read, or rooted at a loop name (element, index, arrow parameter). */
+  private isElementValue(n: Node): boolean {
+    while (n.k === 'member') n = n.obj
+    return n.k === 'index' || (n.k === 'id' && this.loopNames.has(n.name))
   }
 
   private directSize(n: Node): boolean {
@@ -1558,9 +1597,17 @@ class Reader {
       (m.k === 'id' && (this.sizeLocals.has(m.name) || indices.has(m.name))) ||
       (m.k === 'bin' && ARITHMETIC.has(m.op) && plain(m.left) && plain(m.right)) ||
       (m.k === 'unary' && (m.op === '-' || m.op === '+') && plain(m.arg))
-    need(plain(n.left) && plain(n.right))
+    need(plain(n.left) && plain(n.right) && !left.has('?') && !right.has('?'))
     if (left.size > 0 && right.size > 0) {
       need(![...left].some((o) => right.has(o)))
+      // Equal sizes make one size of two (n·m reads as n²); so do a < and a > on the same two.
+      need(!['===', '!==', '==', '!='].includes(n.op))
+      const [a, b] = [[...left].sort().join(','), [...right].sort().join(',')]
+      const less = n.op === '<' || n.op === '<='
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      const way = a < b === less ? 'lt' : 'gt'
+      need((this.sizeOrders.get(key) ?? way) === way)
+      this.sizeOrders.set(key, way)
       return
     }
     need(someNode(left.size > 0 ? n.right : n.left, (m) => m.k === 'id' && indices.has(m.name)))
@@ -1624,7 +1671,7 @@ class Reader {
       if (n.k === 'index' && n.obj.k === 'id' && !elems.has(n.obj.name)) {
         const s = this.sourceOfName(n.obj.name)
         const pos = n.index.k === 'id' ? n.index.name : n.index.k === 'lit' ? '#' : undefined
-        return s && pos !== undefined ? { ...s, chain, pos } : undefined
+        return s && s.yields === undefined && pos !== undefined ? { ...s, chain, pos } : undefined
       }
       if ((n.k === 'member' && n.name !== 'length' && n.name !== 'size') || (n.k === 'index' && n.index.k === 'lit')) {
         n = n.obj
@@ -1662,7 +1709,8 @@ class Reader {
     if (n.k !== 'call' || n.callee.k !== 'member' || n.callee.obj.k !== 'id' || n.args.length !== 1) return false
     const m = n.callee.name
     const recv = n.callee.obj.name
-    const kind = this.params.get(recv)?.kind ?? (this.locals.get(recv)?.k === 'derived' ? 'array' : undefined)
+    const local = this.locals.get(recv)
+    const kind = this.params.get(recv)?.kind ?? (local?.k === 'derived' && local.yields === undefined ? 'array' : undefined)
     if (!((m === 'includes' && kind === 'array') || (m === 'has' && (kind === 'set' || kind === 'map')))) return false
     const e = this.elemRef(n.args[0]!, elems)
     return e !== undefined && e.origin !== this.sourceOfName(recv)?.origin
@@ -1733,6 +1781,21 @@ class Reader {
       return this.readsOnly(test, elems) && (!kinds.includes('choose') || kinds.length === 1)
     } catch {
       return false
+    }
+  }
+
+  /**
+   * Two tests that do not vary, on one path (at any depth), may contradict
+   * each other (`k > 0` then `k < 0`) and leave a branch that never runs:
+   * refuse any two that name the same value.
+   */
+  private checkConsistent(path: Entry[], cond: Node): void {
+    const atoms = [...path.flatMap((e) => (e.cond === undefined ? [] : e.neg ? [e.cond] : conjuncts(e.cond))), ...conjuncts(cond)].filter((a) => this.isInvariant(a))
+    const seen = new Set<string>()
+    for (const a of atoms) {
+      const refs = refsOf(a)
+      need(![...refs].some((r) => seen.has(r)))
+      for (const r of refs) seen.add(r)
     }
   }
 
@@ -1840,6 +1903,8 @@ class Reader {
         return this.costOfMember(n, env)
       case 'index':
         need(!(n.obj.k === 'id' && GLOBALS.has(n.obj.name)))
+        // A read at a fixed position probes the size (`items[16] !== undefined`).
+        if (n.obj.k === 'id' && this.isSequence(n.obj.name)) need(this.isPosition(n.index, env))
         return add(this.costOfObject(n.obj, env), this.cost(n.index, env))
       case 'call':
         return this.costOfCall(n, env, ctx)
@@ -1853,12 +1918,15 @@ class Reader {
         return this.costOfAssign(n.target, n.op, n.value, env)
       case 'bin':
         if (n.op === '&&' || n.op === '||' || n.op === '??') {
+          if (n.op !== '??') this.checkConsistent(env.path, n.left)
           const guard: Entry = n.op === '??' ? { neg: false, depth, opaque: true } : { cond: n.left, neg: n.op === '||', depth }
           return add(this.cost(n.left, env, n.op === '??' ? 'value' : 'test'), this.cost(n.right, { ...env, path: [...env.path, guard] }, ctx === 'test' ? 'test' : 'value'))
         }
+        if (n.op === 'in' && n.right.k === 'id' && this.isSequence(n.right.name)) need(this.isPosition(n.left, env))
         if (COMPARE.has(n.op) || n.op === 'in') return add(this.cost(n.left, env, 'compare'), this.cost(n.right, env, 'compare'))
         return add(this.cost(n.left, env), this.cost(n.right, env))
       case 'cond': {
+        this.checkConsistent(env.path, n.test)
         const arm = ctx === 'test' ? 'test' : 'value'
         const yes = this.cost(n.yes, { ...env, path: [...env.path, { cond: n.test, neg: false, depth }] }, arm)
         const no = this.cost(n.no, { ...env, path: [...env.path, { cond: n.test, neg: true, depth }] }, arm)
@@ -1878,17 +1946,49 @@ class Reader {
     need(name !== this.unit.name && !GLOBALS.has(name) && !FAILS.has(name))
     const p = this.params.get(name)
     const l = this.locals.get(name)
-    const collection = (p !== undefined && p.kind !== 'numeric') || l?.k === 'derived' || l?.k === 'acc'
+    const collection = (p !== undefined && p.kind !== 'numeric') || l?.k === 'derived' || l?.k === 'acc' || l?.k === 'coll'
     if (collection) need(ctx === 'test' || ctx === 'ret' || ctx === 'compare')
   }
 
   /** What a receiver is: a parameter's kind, a local's kind, or `expr` for anything but a name. */
-  private receiverOf(obj: Node): Kind | 'derived' | 'acc' | 'plain' | 'expr' {
+  private receiverOf(obj: Node): Kind | 'derived' | 'acc' | 'coll' | 'plain' | 'expr' {
     if (obj.k !== 'id') return 'expr'
     const p = this.params.get(obj.name)
     if (p) return p.kind
     const l = this.locals.get(obj.name)
-    return l?.k === 'derived' || l?.k === 'acc' ? l.k : 'plain'
+    return l?.k === 'derived' || l?.k === 'acc' || l?.k === 'coll' ? l.k : 'plain'
+  }
+
+  /** A loop's index (counting, halving, search `mid`, callback index, keys), plus or minus a literal; a literal loop's is a fixed position. */
+  private isPosition(n: Node | undefined, env: Env): boolean {
+    if (n?.k === 'bin' && (n.op === '+' || n.op === '-') && numLit(n.right) !== undefined) n = n.left
+    if (n?.k !== 'id') return false
+    const name = n.name
+    return env.loops.some((l) => (l.kind !== 'literal' && l.index === name) || l.positions?.includes(name))
+  }
+
+  /** A receiver reached from an element whose type is an object or tuple literal. */
+  private isOpaque(obj: Node, env: Env): boolean {
+    const elems = elementsOf(env.loops)
+    for (let n = obj; ; ) {
+      if (n.k === 'index' && n.obj.k === 'id' && this.sourceOfName(n.obj.name)?.opaque) return true
+      if (n.k === 'id') return elems.get(n.name)?.opaque === true
+      if (n.k === 'member' || n.k === 'index') n = n.obj
+      else if (n.k === 'call') n = n.callee
+      else return false
+    }
+  }
+
+  /** A value whose positions reveal a size: a size source, a collection local, an array accumulator. */
+  private isSequence(name: string): boolean {
+    const l = this.locals.get(name)
+    return this.sourceOfName(name) !== undefined || l?.k === 'coll' || (l?.k === 'acc' && l.array)
+  }
+
+  /** A plain local holding something reached through a parameter or loop name. */
+  private reaches(name: string): boolean {
+    const l = this.locals.get(name)
+    return l?.k === 'plain' && l.reaches
   }
 
   private costOfObject(obj: Node, env: Env): Cost {
@@ -1909,7 +2009,7 @@ class Reader {
     // A listed method read as a value escapes the lists.
     need(isSize || !METHODS.has(n.name))
     const recv = this.receiverOf(n.obj)
-    if (['array', 'string', 'set', 'map', 'derived', 'acc'].includes(recv)) need(isSize)
+    if (['array', 'string', 'set', 'map', 'derived', 'acc', 'coll'].includes(recv)) need(isSize)
     return this.costOfObject(n.obj, env)
   }
 
@@ -1941,7 +2041,7 @@ class Reader {
     const root = receiverRoot(obj)
     // Gate 9: no mutating call on a parameter or anything reached through one (an element, a loop
     // variable, a call's result), but an in-place sort of a parameter as a statement outside loops.
-    if (root && (this.params.has(root.name) || this.loopNames.has(root.name)) && MUTATE.has(m)) {
+    if (root && (this.params.has(root.name) || this.loopNames.has(root.name) || this.reaches(root.name)) && MUTATE.has(m)) {
       need(m === 'sort' && root.whole && recv === 'array' && ctx === 'stmt' && env.loops.length === 0)
       return this.costOfSort(root.name, n.args, env)
     }
@@ -1951,7 +2051,7 @@ class Reader {
       case 'derived':
         return this.costOfArrayCall(name, m, n.args, env)
       case 'string':
-        need(STRING_METHODS.has(m))
+        need(STRING_METHODS.has(m) && this.isPosition(n.args[0], env))
         return this.costOfArgs(n.args, env)
       case 'set':
         need(m === 'has')
@@ -1961,9 +2061,14 @@ class Reader {
         return this.costOfArgs(n.args, env)
       case 'acc':
         need(ACC_METHODS.has(m))
+        if (m === 'at') need(this.isPosition(n.args[0], env))
+        return this.costOfArgs(n.args, env)
+      case 'coll':
+        need(COLL_METHODS.has(m))
+        if (POSITIONAL.has(m)) need(this.isPosition(n.args[0], env))
         return this.costOfArgs(n.args, env)
       default:
-        need(!COUNTED.has(m))
+        need(!COUNTED.has(m) && !this.isOpaque(obj, env))
         return add(this.costOfObject(obj, env), this.costOfArgs(n.args, env))
     }
   }
@@ -1978,7 +2083,7 @@ class Reader {
     // A search from a start index, or a join, takes no limit: the whole receiver is read.
     if (['includes', 'indexOf', 'lastIndexOf', 'join', 'at'].includes(m)) need(args.length <= 1)
     if (LINEAR.has(m) && m !== 'findLast' && m !== 'findLastIndex') return add(this.costOfArgs(args, env), this.site(env, recv, 'builtin', `${m} on ${recv}`))
-    need(m === 'at')
+    need(m === 'at' && this.isPosition(args[0], env))
     return this.costOfArgs(args, env)
   }
 
@@ -2021,6 +2126,11 @@ class Reader {
         body = this.cost(cb.body, inner, SHORT.has(m) || m === 'filter' ? 'test' : 'value')
       }
     } else need(cb.k === 'id' && !SHORT.has(m) && !this.isBound(cb.name) && !GLOBALS.has(cb.name) && !FAILS.has(cb.name))
+    // A reduce starts from a number or an empty collection: a string start, or the first element, may concatenate.
+    if (m === 'reduce' || m === 'reduceRight') {
+      const start = rest[0]
+      need(start !== undefined && (numLit(start) !== undefined || (start.k === 'lit' && start.kind === 'num') || (start.k === 'unary' && start.op === '-' && start.arg.k === 'lit' && start.arg.kind === 'num') || isEmptyCollection(start)))
+    }
     const init = this.costOfArgs(rest, env)
     const f = factor({ size: src.origin, log: false, kind: 'callback', at: env.at, what: `${m} over ${recv}` })
     return add(init, this.costly(env, mul(f, add(ONE, body))))
@@ -2102,7 +2212,8 @@ class Reader {
     if (!local) refuse()
     const inLoop = env.loops.length > 0
     if (local.k === 'derived') refuse()
-    if (local.k === 'acc') need(!root.whole && target.k === 'index')
+    if (local.k === 'acc' || local.k === 'coll') need(!root.whole && target.k === 'index')
+    if (!root.whole) need(!this.reaches(name))
     if (root.whole) {
       if (inLoop && (op === '+=' || (op === '=' && value !== undefined && mentions(value, name)))) need(local.k === 'plain' && local.numeric)
     } else if (inLoop && op === '+=') need(numLit(value) !== undefined)
@@ -2113,11 +2224,42 @@ class Reader {
 // ---------------------------------------------------------------------------
 // Helpers over shapes
 
+/** An expression the reader can see makes a collection or string: a copy or a string from a builtin, a non-empty literal, a filled Set or Map. */
+function isCollectionInit(n: Node): boolean {
+  if (n.k === 'array') return n.items.length > 0
+  if (n.k === 'new') return (n.callee === 'Set' || n.callee === 'Map') && n.args.length > 0
+  if (n.k !== 'call' || n.callee.k !== 'member') return false
+  const { obj, name } = n.callee
+  if (isId(obj, 'Array') || isId(obj, 'Object') || isId(obj, 'JSON')) return true
+  return ['concat', 'slice', 'filter', 'map', 'toSorted', 'toReversed', 'toSpliced', 'join', 'flat', 'flatMap', 'split', 'sort', 'reverse', 'fill'].includes(name)
+}
+
 const isEmptyCollection = (n: Node): boolean => (n.k === 'array' || n.k === 'object' ? n.items.length === 0 : n.k === 'new' && (n.callee === 'Set' || n.callee === 'Map') && n.args.length === 0)
 
 function elementsOf(loops: Loop[]): Map<string, Elem> {
   const out = new Map<string, Elem>()
   for (const l of loops) for (const [k, v] of l.elements) out.set(k, v)
+  return out
+}
+
+/** Which loop names are elements and which hold indices: keys are indices; an entry's first name is one, and a whole entry is no element. */
+function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; positions: string[] } {
+  const elem: Elem = { origin: src.origin, distinct: src.distinct, ...(src.opaque ? { opaque: true } : {}) }
+  if (src.yields === 'keys') return { elements: new Map(), positions: names }
+  if (src.yields === 'entries') return names.length === 2 ? { elements: new Map([[names[1]!, elem]]), positions: [names[0]!] } : { elements: new Map(), positions: [] }
+  return { elements: new Map(names.map((n) => [n, elem])), positions: [] }
+}
+
+/** The values a test names: names and their property paths (`opts.a`), indexed objects by name. */
+function refsOf(n: Node): Set<string> {
+  const out = new Set<string>()
+  const path = (m: Node): string | undefined => (m.k === 'id' ? m.name : m.k === 'member' ? (p => p && `${p}.${m.name}`)(path(m.obj)) : undefined)
+  const visit = (m: Node): void => {
+    const p = path(m)
+    if (p !== undefined) out.add(p)
+    else childrenOf(m).forEach(visit)
+  }
+  visit(n)
   return out
 }
 
