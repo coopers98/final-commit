@@ -177,7 +177,8 @@ test('binary search: an exit by return only outside loops, break anywhere; insid
 test('comprehensions and generator expressions are loops; a filter guards only constant work', async () => {
   expect(answer(fn('a: list[int]', 'return sum(x * 2 for x in a)'))).toBe('O(n)')
   expect(answer(fn('a: list[int]', 's = {x for x in a}', 'return len(s)'))).toBe('O(n)')
-  expect(answer(fn('a: list[int], b: list[int]', 'out = [b.count(x) for x in a]', 'return len(out)'))).toBe('O(n·m)')
+// Task 7 fix round 2 (ruling D′): a comprehension names only its own targets and fixed-cost operands.
+  expect(answer(fn('a: list[int], b: list[int]', 'out = [b.count(x) for x in a]', 'return len(out)'))).toBe(undefined)
   expect(answer(fn('a: list[int]', 'd = {x: x * 2 for x in a if x > 0}', 'return len(d)'))).toBe('O(n)')
   expect(costOf(fn('a: list[int]', 'out = [x * y for x in a for y in a]', 'return len(out)'))?.category).toBe('nested loops')
   // A loop or a linear builtin behind a filter that varies.
@@ -481,7 +482,8 @@ test('family 10: an exit counts only as a positive == on an int, float or str el
 })
 
 test('family 11: a Literal parameter is never a size or a loop source', async () => {
-  expect(answer(fn('mode: Literal[1, 2], a: list[int]', 't = 0', 'for x in a:', '    if mode == 1:', '        t += 1', 'return t'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): a Literal parameter is no number type, so no comparison operand.
+  expect(answer(fn('mode: Literal[1, 2], a: list[int]', 't = 0', 'for x in a:', '    if mode == 1:', '        t += 1', 'return t'))).toBe(undefined)
   expect(answer(fn('mode: Literal[1, 2]', 't = 0', 'for i in range(mode):', '    t += 1', 'return t'))).toBe(undefined)
   expect(answer(fn('mode: Literal[1, 2], a: list[int]', 't = 0', 'for x in a:', '    t += len(mode)', 'return t'))).toBe(undefined)
 })
@@ -650,4 +652,26 @@ test('rulings B and D: no join, and a str parameter is no comparison operand, ne
 test('ruling C: no shift in a loop step (Python has no counting step but range; shifts refuse everywhere)', async () => {
   expect(answer(fn('n: int', 't = 0', 'i = 1', 'while i < n:', '    i <<= 1', '    t += 1', 'return t'))).toBe(undefined)
   expect(answer(fn('n: int', 't = 0', 'i = 1', 'while i < n:', '    i = i << 1', '    t += 1', 'return t'))).toBe(undefined)
+})
+
+// --- Task 7 fix round 2: ruling D′, fixed-cost operands ------------------------------
+
+test('D′ in Python: only number literals and parameters, counters, elements over a parameter and characters are operands, needles or keys', async () => {
+  for (const type of ['str', 'Optional[str]', 'Any', 'object', 'Name', '']) {
+    const p = type === '' ? 's' : `s: ${type}`
+    expect(answer(fn(`items: list[int], ids: list[int], ${p}`, 't = 0', 'for x in items:', '    if s in ids:', '        t += 1', 'return t'))).toBe(undefined)
+    expect(answer(fn(`items: list[int], ${p}`, 't = 0', 'for x in items:', '    if x == s:', '        t += 1', 'return t'))).toBe(undefined)
+  }
+  expect(answer(fn('items: list[int], ids: list[int], k: int', 't = 0', 'for x in items:', '    if k in ids:', '        t += 1', 'return t'))).toBe('O(n·m)')
+  expect(answer(fn('items: list[int], ids: list[int]', 't = 0', 'for x in items:', '    if x + 1 in ids:', '        t += 1', 'return t'))).toBe('O(n·m)')
+  // An element of a derived collection.
+  expect(answer(fn('items: list[int], ids: list[int]', 'd = list(items)', 't = 0', 'for x in d:', '    if x in ids:', '        t += 1', 'return t'))).toBe(undefined)
+})
+
+test('D-a in Python: a comprehension names only its own targets, literals and fixed-cost operands', async () => {
+  for (const comp of ['[s for y in items]', '[y for y in items if y in ids]', '[ids for y in items]', '[y in ids for y in items]']) {
+    expect(answer(fn('items: list[int], ids: list[int], s: str', `d = ${comp}`, 'return len(d)'))).toBe(undefined)
+  }
+  expect(answer(fn('items: list[int], k: int', 'd = [y + k for y in items]', 'return len(d)'))).toBe('O(n)')
+  expect(answer(fn('items: list[int], k: int', 'd = [y for y in items if y > k]', 'return len(d)'))).toBe('O(n)')
 })

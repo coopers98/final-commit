@@ -196,10 +196,11 @@ test('sorts: in place on a parameter, once, as a statement outside loops', async
 })
 
 test('callbacks: array_map, array_filter and array_reduce bodies run once per element', async () => {
-  expect(answer(fn(AB, '$m = array_map(fn($x) => in_array($x, $ids), $items);', 'return count($m);'))).toBe('O(n·m)')
-  expect(costOf(fn(AB, '$m = array_map(fn($x) => in_array($x, $ids), $items);', 'return count($m);'))?.category).toBe('hidden linear call')
-  expect(answer(fn(AB, '$m = array_filter($items, fn($x) => in_array($x, $ids));', 'return count($m);'))).toBe('O(n·m)')
-  expect(answer(fn(AB, '$m = array_filter($items, fn($x) => !isset($ids[$x]));', '$t = 0;', 'foreach ($m as $x) {', '    foreach ($m as $y) {', '        $t++;', '    }', '}', 'return $t;'))).toBe('O(n²)')
+// Task 7 fix round 2 (ruling D′): a map or filter body that names another parameter refuses (fix round 2, D-a).
+  expect(answer(fn(AB, '$m = array_map(fn($x) => in_array($x, $ids), $items);', 'return count($m);'))).toBe(undefined)
+  expect(answer(fn(AB, '$m = array_filter($items, fn($x) => in_array($x, $ids));', 'return count($m);'))).toBe(undefined)
+  expect(answer(fn(AB, '$m = array_filter($items, fn($x) => !isset($ids[$x]));', '$t = 0;', 'foreach ($m as $x) {', '    foreach ($m as $y) {', '        $t++;', '    }', '}', 'return $t;'))).toBe(undefined)
+  expect(answer(fn(AB, '$m = array_map(fn($x) => count($ids), $items);', 'return count($m);'))).toBe('O(n)')
   expect(answer(fn('array $items', '$m = array_filter($items);', '$t = 0;', 'foreach ($m as $x) {', '    foreach ($items as $y) {', '        $t++;', '    }', '}', 'return $t;'))).toBe('O(n²)')
   expect(answer(fn('array $items', '$s = array_reduce($items, fn($c, $x) => $c + 1, 0);', 'return $s;'))).toBe('O(n)')
   expect(answer(fn('array $items', '$m = array_map(fn($x) => $x, $items);', '$t = 0;', 'foreach ($m as $y) {', '    $t++;', '}', 'return $t;'))).toBe('O(n)')
@@ -221,7 +222,9 @@ test('callbacks: array_map, array_filter and array_reduce bodies run once per el
 test('predicates take the condition grammar and are never constant (lessons family 10)', async () => {
   const nested = (pred: string): Unit => fn(`${AB}, int $k, bool $b`, `$m = array_filter($items, ${pred});`, '$t = 0;', 'foreach ($m as $x) {', '    foreach ($m as $y) {', '        $t++;', '    }', '}', 'return $t;')
   expect(answer(nested('fn($x) => $k > 0'))).toBe('O(n²)')
-  expect(answer(nested('fn($x) => $b && isset($ids[$x])'))).toBe('O(n²)')
+// Task 7 fix round 2 (ruling D′): a filter body names no other parameter but a fixed-cost operand.
+  expect(answer(nested('fn($x) => $b && isset($ids[$x])'))).toBe(undefined)
+  expect(answer(nested('fn($x) => $b && $k > 0'))).toBe('O(n²)')
   for (const pred of ['fn($x) => false', 'fn($x) => 0 > 1', 'fn($x) => !true', 'fn($x) => $k > 0 && 0 > 1', 'fn($x) => $k > 0 && $k < 0', 'fn($x) => $b && !$b', 'fn($x) => $k > 0 && -0', 'fn($x) => $k > 0 && 1 - 1', 'fn($x) => !($k > 0 || 1 > 0)', 'fn($x) => $x === $k', 'fn($x) => $x', 'fn($x) => in_array($x, $items)', 'fn($x) => in_array($x, $ids) && in_array($x, $ids)', 'fn($x) => $k > 0 ? true : false', 'fn($x) => $k == 1']) {
     expect(answer(nested(pred))).toBe(undefined)
   }
@@ -409,7 +412,8 @@ test('keys are no positions for an inner bound; keywords and functions ignore ca
 test('a membership atom reads an element bound over a parameter, in another parameter; an accumulator is no source', async () => {
   expect(answer(fn(AB, '$seen = [];', '$t = 0;', 'foreach ($items as $x) {', '    if (!isset($seen[$x])) {', '        $seen[$x] = true;', '    }', '}', 'return count($seen);'))).toBe(undefined)
   expect(answer(fn(AB, '$m = array_map(fn($x) => 1, $items);', '$t = 0;', 'foreach ($m as $y) {', '    if (in_array($y, $ids)) {', '        $t++;', '    }', '}', 'return $t;'))).toBe(undefined)
-  expect(answer(fn(AB, '$m = array_filter($ids, fn($y) => !in_array($y, $items));', 'return count($m);'))).toBe('O(n·m)')
+// Task 7 fix round 2 (ruling D′): a filter body naming another parameter refuses.
+  expect(answer(fn(AB, '$m = array_filter($ids, fn($y) => !in_array($y, $items));', 'return count($m);'))).toBe(undefined)
 })
 
 test('if chains: elseif, and an else on its own line; else if refuses', async () => {
@@ -486,4 +490,50 @@ test('ruling G: only none, public, private, protected, static and final before f
   const body = ['{', '    $t = 0;', '    foreach ($items as $x) {', '        $t++;', '    }', '    return $t;', '}']
   for (const mod of ['', 'public ', 'private ', 'protected ', 'static ', 'final ', 'final public static ']) expect(answer(php(`${mod}function f(array $items): int`, ...body))).toBe('O(n)')
   for (const mod of ['abstract ', 'abstract public ', 'readonly ', 'var ', 'async ', 'public abstract ']) expect(answer(php(`${mod}function f(array $items): int`, ...body))).toBe(undefined)
+})
+
+// --- Fix round 2 (task-7-rereview-1.md): ruling D′, fixed-cost operands -------------
+
+test('D-a: a callback building a derived collection names only its own parameters, literals and fixed-cost operands', async () => {
+  const P = 'array $items, array $ids, int $k, bool $b, string $s, string $c'
+  const two = ['$v = array_map(fn($y) => $s, $items);', '$w = array_map(fn($y) => $c, $ids);']
+  for (const rest of [
+    ['$t = 0;', 'foreach ($v as $p) {', '    $t += in_array($p, $w, true);', '}', 'return $t;'],
+    ['$t = 0;', 'foreach ($v as $p) {', '    $t += in_array($p, $w);', '}', 'return $t;'],
+    ['$f = array_flip($w);', '$t = 0;', 'foreach ($v as $p) {', '    $t += isset($f[$p]);', '}', 'return $t;'],
+  ]) expect(answer(fn(P, ...two, ...rest))).toBe(undefined)
+  expect(answer(fn(P, '$v = array_map(fn($y) => $s, $items);', 'return array_sum($v);'))).toBe(undefined)
+  expect(answer(fn(P, '$v = array_map(fn($y) => $s, $items);', '$t = 0;', 'foreach ($ids as $y) {', '    $t += array_sum($v);', '}', 'return $t;'))).toBe(undefined)
+  // Near variants: another parameter or local in a map or filter body.
+  for (const cb of ['array_map(fn($y) => $ids, $items)', 'array_map(fn($y) => in_array($y, $ids), $items)', 'array_filter($items, fn($y) => isset($ids[$y]))', 'array_filter($items, fn($y) => $b && isset($ids[$y]))', 'array_map(fn($y) => Repo::f(1), $items)']) {
+    expect(answer(fn(P, '$t = 0;', `$v = ${cb};`, 'return count($v);'))).toBe(undefined)
+  }
+  // Its own element, literals and fixed-cost operands stay.
+  expect(answer(fn(P, '$v = array_map(fn($y) => $y, $items);', 'return count($v);'))).toBe('O(n)')
+  expect(answer(fn(P, '$v = array_map(fn($y) => $k + 1, $items);', 'return count($v);'))).toBe('O(n)')
+  expect(answer(fn(P, '$v = array_filter($items, fn($y) => $k > 0);', 'return count($v);'))).toBe('O(n)')
+  expect(answer(fn(P, '$v = array_map(fn($y) => count($ids), $items);', 'return count($v);'))).toBe('O(n)')
+  // An element of a derived collection is no fixed-cost operand.
+  expect(answer(fn(P, '$v = array_values($items);', '$t = 0;', 'foreach ($v as $p) {', '    $t += in_array($p, $ids);', '}', 'return $t;'))).toBe(undefined)
+  expect(answer(fn(P, '$t = 0;', 'foreach ($items as $p) {', '    $t += in_array($p, $ids);', '}', 'return $t;'))).toBe('O(n·m)')
+})
+
+test('D-b: only an int, float or bool parameter (or a literal, counter, element, character) is a needle, key or operand', async () => {
+  for (const type of ['', 'mixed ', 'int|string ', 'string|int ', 'iterable ', 'string ', '?string ', 'Name ', 'array ']) {
+    expect(answer(php(`function f(array $items, ${type}$s): int`, '{', '    return in_array($s, $items);', '}'))).toBe(undefined)
+    expect(answer(fn(`array $items, array $ids, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += in_array($s, $ids);', '}', 'return $t;'))).toBe(undefined)
+    expect(answer(fn(`array $items, array $ids, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += isset($ids[$s]);', '}', 'return $t;'))).toBe(undefined)
+    expect(answer(fn(`array $items, array $ids, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += array_key_exists($s, $ids);', '}', 'return $t;'))).toBe(undefined)
+    expect(answer(fn(`array $items, ${type}$s`, '$seen = [];', 'foreach ($items as $x) {', '    $seen[$s] = 1;', '}', 'return count($seen);'))).toBe(undefined)
+    expect(answer(fn(`array $items, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += $x === $s;', '}', 'return $t;'))).toBe(undefined)
+  }
+  for (const type of ['int ', '?int ', 'float ', 'bool ', 'INT ']) {
+    expect(answer(fn(`array $items, array $ids, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += in_array($s, $ids);', '}', 'return $t;'))).toBe('O(n·m)')
+    expect(answer(fn(`array $items, ${type}$s`, '$t = 0;', 'foreach ($items as $x) {', '    $t += $x === $s;', '}', 'return $t;'))).toBe('O(n)')
+  }
+  // A local that is not a proven number, and a foreach key over a derived value.
+  expect(answer(fn('array $items, array $ids', '$t = 0;', 'foreach ($items as $x) {', '    $v = array_search($x, $ids);', '    $t += in_array($v, $ids);', '}', 'return $t;'))).toBe(undefined)
+  expect(answer(fn('array $items, array $ids', '$d = array_values($items);', '$t = 0;', 'foreach ($d as $k => $x) {', '    $t += isset($ids[$k]);', '}', 'return $t;'))).toBe(undefined)
+  expect(answer(fn('array $items, array $ids', '$t = 0;', 'foreach ($items as $k => $x) {', '    $t += isset($ids[$k]);', '}', 'return $t;'))).toBe('O(n)')
+  expect(answer(fn('array $items, array $ids', '$t = 0;', 'for ($i = 0; $i < count($items); $i++) {', '    $t += in_array($items[$i], $ids);', '}', 'return $t;'))).toBe('O(n·m)')
 })

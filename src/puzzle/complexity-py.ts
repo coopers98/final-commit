@@ -1874,7 +1874,7 @@ class Reader {
       need(l?.k === 'acc' && l.kind === 'dict')
       const k = this.val(t.index, env)
       const v = this.val(line.value, env)
-      need((k.vt === 'num' || k.vt === 'str') && v.vt !== 'coll')
+      need((k.vt === 'num' || k.vt === 'str') && v.vt !== 'coll' && this.isFixedOperand(t.index, env))
       return add(k.c, v.c)
     }
     const name = (t as { name: string }).name
@@ -2028,7 +2028,7 @@ class Reader {
     need(l.vt !== 'coll' && r.vt !== 'coll')
     // `is` only against None; == and the orderings never on an opaque value (it may be a container, compared deep).
     if (n.op === 'is' || n.op === 'is not') need(n.left.k === 'const' || n.right.k === 'const')
-    else need(l.vt !== 'opaque' && r.vt !== 'opaque')
+    else need(l.vt !== 'opaque' && r.vt !== 'opaque' && this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env))
     // An ordering of an int with a str raises: one kind on both sides.
     if (ORDER.has(n.op)) need((l.vt === 'num' && r.vt === 'num') || (l.vt === 'str' && r.vt === 'str'))
     return add(l.c, r.c)
@@ -2036,6 +2036,7 @@ class Reader {
 
   /** Spec "Builtins", `x in S` by annotation: a list, Sequence or tuple costs its size; a set, frozenset or dict 1; a str, an untyped value or a list accumulator fails. */
   private membership(left: Node, right: Node, env: Env): Cost {
+    need(this.isFixedOperand(left, env))
     const l = this.val(left, env)
     need(l.vt === 'num' || l.vt === 'str')
     need(isName(right))
@@ -2050,6 +2051,47 @@ class Reader {
     if (s!.kind === 'set' || s!.kind === 'map') return l.c
     need(isPrimitive(s!.elem))
     return add(l.c, this.site(env, name, 'builtin', `membership in ${name}`))
+  }
+
+  /**
+   * Task 7 fix round 2, ruling D′ (an allowlist): a comparison operand, a
+   * needle or a key costs 1 only when it is a number literal; an int, float or
+   * bool parameter; a proven number local or a loop index; an element (or a
+   * dict key) bound by a loop or comprehension directly over a parameter; a
+   * read `p[i]` of a parameter at a position its loop proves; or arithmetic
+   * over these, or `len` of a parameter. Anything else refuses.
+   */
+  private isFixedOperand(n: Node, env: Env): boolean {
+    switch (n.k) {
+      case 'num':
+        return true
+      case 'name': {
+        const b = this.bindingOf(n.name, env)
+        if (b) return b.role === 'index' || b.role === 'key' || (b.role === 'elem' && b.atom)
+        const p = this.params.get(n.name)
+        if (p) return p.kind === 'int' || p.kind === 'float' || p.kind === 'bool'
+        return this.locals.get(n.name)?.k === 'num'
+      }
+      case 'index':
+        return isName(n.obj) && isName(n.index) && this.sourceOfName(n.obj.name)?.isParam === true && this.isPosition(n.index.name, n.obj.name, env)
+      case 'unary':
+        return (n.op === '-' || n.op === '+') && this.isFixedOperand(n.arg, env)
+      case 'bin':
+        return ARITHMETIC.has(n.op) && this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env)
+      case 'call':
+        return isCallOf(n, 'len') && n.args.length === 1 && n.kw.length === 0 && isName(n.args[0]) && this.sourceOfName(n.args[0].name)?.isParam === true
+      default:
+        return false
+    }
+  }
+
+  /** Ruling D′ for derived collections: every name in a comprehension's element, value and filters is one of its own targets or a fixed-cost operand. */
+  private isFixedBody(n: Node, own: ReadonlySet<string>, env: Env): boolean {
+    if (this.isFixedOperand(n, env) || (n.k === 'name' && own.has(n.name))) return true
+    if (n.k === 'name' || n.k === 'comp') return false
+    if (n.k === 'call') return n.callee.k === 'name' && GLOBALS.has(n.callee.name) && n.args.every((a) => this.isFixedBody(a, own, env)) && n.kw.length === 0
+    if (n.k === 'attr') return false
+    return childrenOf(n).every((c) => this.isFixedBody(c, own, env))
   }
 
   /** Arguments to a helper or a module's function: numbers, strings and None only (a collection could be grown, an opaque value is never handed on). */
@@ -2096,7 +2138,7 @@ class Reader {
     }
     need(n.kw.length === 0)
     if (m === 'count') {
-      need((s.kind === 'list' || s.kind === 'seq') && args.length === 1)
+      need((s.kind === 'list' || s.kind === 'seq') && args.length === 1 && this.isFixedOperand(args[0]!, env))
       const a = this.val(args[0]!, env)
       need(a.vt === 'num' || a.vt === 'str' || a.vt === 'none')
       return { c: add(a.c, this.site(env, s.name, 'builtin', `count on ${s.name}`)), vt: 'num' }
@@ -2105,7 +2147,7 @@ class Reader {
       need(s.isParam && (s.kind === 'list' || s.kind === 'set' || s.kind === 'map') && args.length === 0)
       return { c: this.site(env, s.name, 'builtin', `copy of ${s.name}`), vt: 'coll' }
     }
-    need(m === 'get' && s.kind === 'map' && s.isParam && (args.length === 1 || args.length === 2))
+    need(m === 'get' && s.kind === 'map' && s.isParam && (args.length === 1 || args.length === 2) && this.isFixedOperand(args[0]!, env))
     let c = NOTHING
     const k = this.val(args[0]!, env)
     need(k.vt === 'num' || k.vt === 'str')
@@ -2131,12 +2173,12 @@ class Reader {
       return { c: v.c, vt: 'none' }
     }
     if (kind === 'set') {
-      need((m === 'add' || m === 'discard') && args.length === 1)
+      need((m === 'add' || m === 'discard') && args.length === 1 && this.isFixedOperand(args[0]!, env))
       const v = this.val(args[0]!, env)
       need(v.vt === 'num' || v.vt === 'str')
       return { c: v.c, vt: 'none' }
     }
-    need(m === 'get' && (args.length === 1 || args.length === 2))
+    need(m === 'get' && (args.length === 1 || args.length === 2) && this.isFixedOperand(args[0]!, env))
     const k = this.val(args[0]!, env)
     need(k.vt === 'num' || k.vt === 'str')
     const d = args[1] ? this.val(args[1], env) : undefined
@@ -2230,8 +2272,12 @@ class Reader {
    * the element must be a number (sum, min, max).
    */
   private costOfComp(n: Extract<Node, { k: 'comp' }>, env: Env, numeric: boolean): Cost {
+    // Task 7 fix round 2, ruling D′: the element, value and filters name only the comprehension's own targets and fixed-cost operands.
+    const own = new Set(n.clauses.flatMap((c) => c.targets))
+    const fixedIn = (inner: Env): void => need([n.elt, ...(n.value ? [n.value] : []), ...n.clauses.flatMap((c) => c.conds)].every((m) => this.isFixedBody(m, own, inner)))
     const go = (k: number, inner: Env): Cost => {
       if (k === n.clauses.length) {
+        fixedIn(inner)
         this.sizesIn(n.elt, inner, false)
         const e = this.val(n.elt, inner)
         if (n.kind === 'set' || n.kind === 'dict') need(e.vt === 'num' || e.vt === 'str')

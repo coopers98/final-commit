@@ -274,10 +274,43 @@ array, whatever holes it was built with), and for a string, its length.
 Comparing, hashing or copying one element costs 1, whatever the element
 holds; so a key over arrays of arrays or of long strings understates by the
 element size. That is a stated convention of the question, not a reading.
-A whole string parameter is no element: its length is a size, so comparing,
-searching for or hashing it costs that size, and every reader refuses it as
-an operand of a comparison, a membership needle or a key (`.length`,
-`strlen`, `len` and single characters stay). Every reader also refuses a
+A number parameter's value is a finite size.
+
+**Fixed-cost operands (ruling D′, task 7 fix round 2; it replaces fix
+round 1's denylist of string parameters).** In every reader, an operand of
+an equality or ordering comparison (`===`, `==`, `!==`, `!=`, `<`, `>`,
+`<=`, `>=`, `<=>`), a membership needle (`in_array`, `array_search`,
+`includes`, `indexOf`, `in`, `has`) or a key (`isset($m[k])`,
+`$m[k] = …`, `m.get(k)`, `m.set(k, …)`, `d[k]`, `s.add(k)`) costs 1 only
+when it is one of:
+
+1. a number literal (within the cap below) or a plain string literal;
+2. a parameter whose declared type is exactly a number type: TypeScript
+   `number` (and `bigint`, which the reader reads as no number), Python
+   `int`, `float` or `bool`, PHP `int`, `float` or `bool`, each optionally
+   nullable;
+3. a proven number local or a loop counter (a binary search's lo, hi and
+   mid included);
+4. an element (or a dict or array key) bound by a loop, or a listed
+   callback's element parameter, directly over a parameter (never over a
+   derived collection);
+5. a read at a position that walks a parameter (`$s[$i]`, `s.charAt(i)`,
+   `s[i]`, `p[i]`, a search's `S[mid]`);
+6. arithmetic over 1 to 5, or `count`, `strlen`, `.length`, `.size` or
+   `len` of a parameter.
+
+Anything else refuses the unit: untyped, `mixed`, `any`, `unknown`, union,
+alias, intersection, branded and literal types, `string` in any spelling,
+an element's property, an opaque local, and elements of a derived
+collection. A derived collection's callback (PHP `array_map` and
+`array_filter`, TypeScript `map` and `filter`, every Python comprehension's
+element, value and filters) names only its own parameters or targets,
+literals and fixed-cost operands: `array_map(fn($y) => $s, $items)`,
+`items.filter(x => ids.includes(x))` and `[y for y in a if y in b]` refuse
+(a map's body is an expression, never a block; a comprehension's later
+`for` clauses may still iterate other sources).
+
+Every reader also refuses a
 number literal beyond `COMPLEXITY.maxLiteral` (2^31 - 1) in magnitude, in
 any form (float, exponent, hex, octal, binary): beyond a type's range a
 literal is constant against it (PHP's 64-bit ints, TypeScript's `1e400`,
@@ -603,6 +636,22 @@ Task 6 fix round 5:
   guard on its target (`t &&= ids.indexOf(k)` never calls when `t` is 0).
   Hidden lines already admit no assignment, in TypeScript and PHP alike.
 
+Task 7 fix rounds 1 and 2:
+
+- **No shift step** (`<<=`, `>>=`, `>>>=`): a 32-bit shift wraps.
+- **Fixed-cost operands** (ruling D′ above, replacing fix round 1's
+  string-parameter rule): every comparison operand, `in` needle,
+  `includes`/`indexOf`/`lastIndexOf`/`has`/`get`/`set`/`add`/`delete`
+  argument and index or bracket key is a finite number or plain string
+  literal, a `number` parameter, a number local, loop number or search
+  variable, an element bound directly over a parameter (not a derived
+  value's, not a property), `p[i]`, `s.charAt(i)` (and `charCodeAt`,
+  `codePointAt`, `at`) at an index that walks the parameter or a search's
+  mid, or arithmetic over these or `.length`/`.size` of a parameter. A
+  `boolean` or literal-union parameter is no operand. `map` and `filter`
+  take an expression body naming only their own parameters (and methods of
+  them) and fixed-cost operands.
+
 ### Stricter readings (Python reader, Task 6)
 
 The Python reader applies the TypeScript families above as allowlists
@@ -688,6 +737,12 @@ read before its first assignment raises. Each is a test.
   a binary search's equality test only outside loops. At the root, a
   branch holding a hidden line may leave, so the code after it stands
   behind its test.
+
+- **Fixed-cost operands** (task 7 fix round 2): ruling D′ above holds:
+  comparison operands, `in` needles, `count` arguments, `get`, `add` and
+  `discard` keys and dict key writes are fixed-cost operands, and a
+  comprehension's element, value and filters name only its own targets and
+  fixed-cost operands.
 
 ### Stricter readings (PHP reader, Task 7)
 
@@ -784,8 +839,8 @@ Each is a test.
   named values of one type or a named number and an integer literal, or one
   membership (`in_array($x, $S)`, `isset($S[$x])`,
   `array_key_exists($x, $S)`) of an element bound over a parameter in
-  another parameter. Named values: int, float and bool parameters (fix round
-  1: never a whole string parameter, which is no operand, needle or key), a
+  another parameter. Named values: int, float and bool parameters (never a
+  string parameter: ruling D′ above), a
   `for` index, a search's lo, hi and mid, `count`/`strlen` of a source, a
   character `$s[$i]` at a valid position, and a local written once outside
   loops as one of these plus or minus a literal. `&&` and `||` stand only in
@@ -808,6 +863,16 @@ Each is a test.
   case-folded (`RETURN 'done';` at the end is a tail exit). A hidden opener
   is only `} else {`, after a shown if with no else, whose body costs 1 and
   never leaves.
+
+- **Fixed-cost operands** (fix round 2, ruling D′ above, replacing fix
+  round 1's string-parameter rule): every comparison operand, needle
+  (`in_array`, `array_search`) and key (`isset`, `array_key_exists`,
+  `$acc[k] =`) is a number literal, an int, float or bool parameter, a
+  proven number local or counter, an element or key bound over a parameter,
+  `$p[$i]` at a walking position, or arithmetic or `count`/`strlen` of a
+  parameter over these. `array_map` and `array_filter` bodies name only
+  their own parameters and fixed-cost operands. The binary search compares
+  only a parameter's elements.
 
 ### Combining
 

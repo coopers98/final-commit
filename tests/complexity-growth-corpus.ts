@@ -149,7 +149,8 @@ export const CORPUS: readonly Entry[] = [
   },
   {
     name: 'kept', answer: 'O(n·m)', category: 'hidden linear call',
-    lines: ['function kept(items: number[], ids: number[]): number {', '  const out = items.filter(x => ids.includes(x))', '  return out.length', '}'],
+    // Task 7 fix round 2 (ruling D′): a filter body naming another parameter refuses, so the membership stands in a loop.
+    lines: ['function kept(items: number[], ids: number[]): number {', '  let t = 0', '  for (const x of items) {', '    if (ids.includes(x)) {', '      t += 1', '    }', '  }', '  return t', '}'],
     inputs: (n, m, from) => [from(range(n)), from(range(m, n))],
   },
   {

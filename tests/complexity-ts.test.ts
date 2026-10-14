@@ -64,7 +64,8 @@ test('fails closed on the adversarial review counterexamples', async () => {
 })
 
 test('a callback is a loop body, and its cost multiplies', async () => {
-  expect(answer(ts('function f(items: number[], ids: number[]): number[] {', '  const out = items.filter(x => ids.includes(x))', '  return out', '}'))).toBe('O(n·m)')
+// Task 7 fix round 2 (ruling D′): a filter body that names another parameter refuses (it builds a derived collection).
+  expect(answer(ts('function f(items: number[], ids: number[]): number[] {', '  const out = items.filter(x => ids.includes(x))', '  return out', '}'))).toBe(undefined)
   expect(costOf(ts('function f(items: number[]): number {', '  let t = 0', '  items.forEach(x => {', '    t += items.indexOf(x)', '  })', '  return t', '}'))?.category).toBe('hidden linear call')
 })
 
@@ -224,7 +225,8 @@ test('each iteration callback is a loop body over its receiver', async () => {
   }
   expect(answer(fn('items: number[], ids: number[]', 'const ok = items.every(x => ids.includes(x))', 'return ok ? 1 : 0'))).toBe('O(n·m)')
   // A block callback with its body on the following lines.
-  expect(answer(fn('items: number[], ids: number[]', 'const out = items.map((x, i) => {', '  const k = ids.indexOf(x)', '  return k + i', '})', 'return out.length'))).toBe('O(n·m)')
+// Task 7 fix round 2 (ruling D′): a map builds from its own parameters and fixed-cost operands only, and never with a block body.
+  expect(answer(fn('items: number[], ids: number[]', 'const out = items.map((x, i) => {', '  const k = ids.indexOf(x)', '  return k + i', '})', 'return out.length'))).toBe(undefined)
 })
 
 test('a short-circuit callback must be able to run to the end', async () => {
@@ -592,7 +594,8 @@ test('.length of a copy, a string or anything but a source is a size in a test (
   }
   expect(answer(fn('items: number[]', 'const out: number[] = []', 'if (out.length > 3) {', '  return -1', '}', ...nest))).toBe(undefined)
   // An element's length is no size.
-  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', '  if (w.length > 3) {', '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): `.length` is a fixed-cost operand of a parameter only.
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', '  if (w.length > 3) {', '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
 })
 
 test('sizes compared for equality, or both ways, fail (fix 4)', async () => {
@@ -639,7 +642,8 @@ test('an array of object or tuple types is an array of opaque elements (fix 9)',
     expect([type, answer(fn(`items: ${type}`, 'let t = 0', 'for (const x of items) {', '  t += 1', '}', 'return t'))]).toEqual([type, 'O(n)'])
   }
   // A property is read and compared, but not added (fix round 2, family 7).
-  expect(answer(fn('items: { id: number }[], k: number', 'let t = 0', 'for (const x of items) {', '  if (x.id === k) {', '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): an element's property is no fixed-cost operand.
+  expect(answer(fn('items: { id: number }[], k: number', 'let t = 0', 'for (const x of items) {', '  if (x.id === k) {', '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: { id: number }[]', 'let t = 0', 'for (const x of items) {', '  t += x.id', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: { id: number }[]', 'let t = 0', 'for (const x of items) {', '  t += x.check()', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: { id: number }[]', 'let t = 0', 'items.forEach(x => x.check())', 'return t'))).toBe(undefined)
@@ -661,7 +665,8 @@ test('family 1: an exit or choose test reads only an element of a parameter or o
   }
   expect(answer(fn('items: number[], ids: number[]', 'const c = items.map(x => x * 2)', 'const r = c.find(y => ids.includes(y))', 'return r ?? 0'))).toBe(undefined)
   // A filter of a parameter keeps its elements.
-  expect(answer(fn('items: number[], k: number, t: number', 'const d = items.filter(x => x !== k)', 'for (const y of d) {', '  if (y === t) {', '    return 1', '  }', '}', 'return 0'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): an element of a derived collection is no fixed-cost operand.
+  expect(answer(fn('items: number[], k: number, t: number', 'const d = items.filter(x => x !== k)', 'for (const y of d) {', '  if (y === t) {', '    return 1', '  }', '}', 'return 0'))).toBe(undefined)
 })
 
 test('family 2: a condition outside loops holds only literals, number parameters, a parameter size and size-free scalars', async () => {
@@ -755,7 +760,7 @@ test('family 7: values reached from an opaque element take no method call, + or 
   expect(answer(fn('items', 'let t = 0', 'for (const x of items) {', '  t += x.toString().length', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('m: Map<string, number[]>', 'let t = 0', 'for (const v of m.values()) {', '  t += v.toString().length', '}', 'return t'))).toBe(undefined)
   // Allowed: a comparison, a key, a push, a property's length.
-  expect(answer(fn(`${tags}, k: number`, 'const seen = new Set<number>()', 'const out: number[][] = []', 'let t = 0', 'for (const x of items) {', '  if (x.tags.length === k) {', '    t += 1', '  }', '  seen.add(x)', '  out.push(x.tags)', '  t += x.tags.length', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn(`${tags}, k: number`, 'const seen = new Set<number>()', 'const out: number[][] = []', 'let t = 0', 'for (const x of items) {', '  if (x.tags.length === k) {', '    t += 1', '  }', '  seen.add(x)', '  out.push(x.tags)', '  t += x.tags.length', '}', 'return t'))).toBe(undefined) // ruling D′: a property is no operand
 })
 
 // --- Fix round 3: default-refuse rules (task re-review of 93b7239) -------------
@@ -801,7 +806,8 @@ test('ruling C: methods on a string or number take only a closed O(1) list', asy
   expect(answer(fn('items: number[], k: number', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(k).length', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: number[], n: number', 'let t = 0', 'for (const x of items) {', '  t += n.toString().length', '}', 'return t'))).toBe(undefined)
   // The list itself.
-  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', "  if (w.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): a character read is fixed only on a parameter at an index that walks it.
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', "  if (w.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += x.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
 })
 
@@ -860,7 +866,8 @@ test('ruling C (fix round 4): a method on a parameter that is not a known collec
   expect(answer(fn('items: number[], o: { a: string }', 'let t = 0', 'for (const x of items) {', '  t += o.toString().length', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: number[], cb: (x: number) => number', 'let t = 0', 'for (const x of items) {', '  t += cb.call(null, x)', '}', 'return t'))).toBe(undefined)
   // The list itself on a string or number literal union.
-  expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'for (const x of items) {', "  if (s.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+// Task 7 fix round 2 (ruling D′): a literal union parameter is no number type.
+  expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'for (const x of items) {', "  if (s.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: number[], k: 1 | 2', 'let t = 0', 'for (const x of items) {', '  t += k.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
 })
 
@@ -1014,10 +1021,10 @@ test('task 6 fix round 4: a guard that never holds fails', async () => {
 })
 
 test('task 6 fix round 4: an atom compares named values with finite literals of their own type', async () => {
-  for (const c of ['k > 1e400', `k > 1${'0'.repeat(400)}`, 'k > Infinity', 'k > -Infinity', "k === 'a' || b", 'k !== null', 'k !== undefined', 'b === true', 'b !== false', 'b < c', 'k === b']) {
+  for (const c of ['k > 1e400', `k > 1${'0'.repeat(400)}`, 'k > Infinity', 'k > -Infinity', "k === 'a' || b", 'k !== null', 'k !== undefined', 'b === true', 'b !== false', 'b < c', 'k === b', 'b === c']) {
     expect([c, answer(r4Exit(c))]).toEqual([c, undefined])
   }
-  for (const c of ['k > 0', 'b', '!b', 'b && c', 'b || k > 0', '!(k > 0 && b)', 'k > -1', 'k !== 3', 'k > 0 || c', '(b || c) && k < 2', 'b === c', 'k >= -2']) {
+  for (const c of ['k > 0', 'b', '!b', 'b && c', 'b || k > 0', '!(k > 0 && b)', 'k > -1', 'k !== 3', 'k > 0 || c', '(b || c) && k < 2', 'k >= -2']) {
     expect([c, answer(r4Exit(c))]).toEqual([c, 'O(n)'])
   }
   expect(answer(r4Work('b && k < 3'))).toBe('O(n)')
@@ -1107,4 +1114,30 @@ test('ruling D: a string parameter (or an alias of one) is no comparison operand
   // .length and single characters stay.
   expect(answer(fn(P, 'let c = 0', 'for (const x of items) {', '  c += s.length', '}', 'return c'))).toBe('O(n)')
   expect(answer(fn(P, 'let c = 0', 'for (let i = 0; i < s.length; i++) {', "  if (s.charAt(i) === 'a') {", '    c++', '  }', '}', 'return c'))).toBe('O(n)')
+})
+
+// --- Task 7 fix round 2: ruling D′, fixed-cost operands ------------------------------
+
+test('D-c: only a number literal, a plain string literal, a number parameter, a counter, an element or a character is an operand, needle or key', async () => {
+  for (const type of ['(string)', 'Lowercase<string>', 'Uppercase<string>', 'NonNullable<string>', 'Readonly<string>', 'string & {}', 'string | number', 'number | string', 'any', 'unknown', 'Name', "'a' | 'b'", 'string', 'boolean']) {
+    expect(answer(fn(`items: number[], s: ${type}, c: ${type}`, 'let t = 0', 'for (const x of items) {', '  if (s === c) {', '    t++', '  }', '}', 'return t'))).toBe(undefined)
+    expect(answer(fn(`items: number[], s?: ${type}, c?: ${type}`, 'let t = 0', 'for (const x of items) {', '  t += s < c ? 1 : 0', '}', 'return t'))).toBe(undefined)
+    expect(answer(fn(`items: number[], ids: string[], s: ${type}`, 'let t = 0', 'for (const x of items) {', '  t += ids.indexOf(s)', '}', 'return t'))).toBe(undefined)
+  }
+  expect(answer(ts('function f(items: number[], s = "x", c = "y"): number {', '  let t = 0', '  for (const x of items) {', '    if (s === c) {', '      t++', '    }', '  }', '  return t', '}'))).toBe(undefined)
+  // Number parameters, counters, elements and literals stay.
+  expect(answer(fn('items: number[], k: number, j: number', 'let t = 0', 'for (const x of items) {', '  if (k === j) {', '    t++', '  }', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: number[], ids: number[], k: number', 'let t = 0', 'for (const x of items) {', '  t += ids.indexOf(x + k)', '}', 'return t'))).toBe('O(n·m)')
+  expect(answer(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  t += ids.indexOf(x)', '}', 'return t'))).toBe('O(n·m)')
+  expect(answer(fn('items: string[]', 'let t = 0', 'for (const x of items) {', "  if (x === 'a') {", '    t++', '  }', '}', 'return t'))).toBe('O(n)')
+})
+
+test('D-a in TypeScript: a map or filter callback names only its own parameters, literals and fixed-cost operands', async () => {
+  for (const cb of ['items.map(y => s)', 'items.map(y => ids)', 'items.filter(y => ids.includes(y))', 'items.filter(y => set.has(y))', 'items.map(y => y.toString())']) {
+    expect(answer(fn('items: number[], ids: number[], s: string, set: Set<number>', 'const t2 = 1', `const d = ${cb}`, 'return d.length'))).toBe(undefined)
+  }
+  expect(answer(fn('items: number[], k: number', 'const d = items.map(y => y + k)', 'return d.length'))).toBe('O(n)')
+  expect(answer(fn('items: number[], k: number', 'const d = items.filter(y => y > k)', 'let t = 0', 'for (const u of d) {', '  t += u', '}', 'return t'))).toBe('O(n)')
+  // A derived collection's element is no fixed-cost operand.
+  expect(answer(fn('items: number[], ids: number[]', 'const d = items.slice()', 'let t = 0', 'for (const u of d) {', '  t += ids.indexOf(u)', '}', 'return t'))).toBe(undefined)
 })

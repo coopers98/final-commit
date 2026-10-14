@@ -981,7 +981,8 @@ class Reader {
     const src = this.sourceOfName((s.source as { name: string }).name)
     need(src?.kind === 'array')
     const names = new Map<string, Binding>([[s.value, { role: 'elem', origin: src!.origin, atom: src!.isParam }]])
-    if (s.key !== undefined) names.set(s.key, { role: 'key', origin: src!.origin, atom: false })
+    // A key over a parameter is part of what the loop binds (fix round 2, ruling D′: a fixed-cost operand); over a derived value it is not.
+    if (s.key !== undefined) names.set(s.key, { role: 'key', origin: src!.origin, atom: src!.isParam })
     return { at, kind: 'each', names, ...(s.key !== undefined ? { index: s.key, validFor: src!.name } : {}), factor: factor({ size: src!.origin, log: false, kind: 'loop', at, what: `loop over ${src!.name}` }) }
   }
 
@@ -1123,7 +1124,8 @@ class Reader {
     }
     need(this.assigns.filter((x) => x.name === mid).length === 1)
     const test = isSearchBody(s.body.slice(1), lo, hi, mid)
-    need(test !== undefined && isSearchCompare(test, src!.name, mid, (n) => this.isScalarParam(n)))
+    // Fix round 2, ruling D′: the compared element is a parameter's (a derived value's elements are no fixed-cost operands).
+    need(test !== undefined && src!.isParam && isSearchCompare(test, src!.name, mid, (n) => this.isScalarParam(n)))
     this.searchTests.add(test!)
     for (const v of [lo, hi, mid]) this.searchVars.add(v)
     return { at: s.at, kind: 'search', names: new Map(), index: mid, validFor: src!.name, factor: factor({ size: src!.origin, log: true, kind: 'search', at: s.at, what: `binary search over ${src!.name}` }) }
@@ -1913,7 +1915,7 @@ class Reader {
         return { c: add(l.c, r.c), vt: 'num' }
       }
       case 'cmp': {
-        need(n.op !== '<=>' && !this.isStrParam(n.left) && !this.isStrParam(n.right))
+        need(n.op !== '<=>' && !this.isStrParam(n.left) && !this.isStrParam(n.right) && this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env))
         const l = this.val(n.left, env)
         const r = this.val(n.right, env)
         need(l.vt !== 'coll' && r.vt !== 'coll')
@@ -1979,9 +1981,50 @@ class Reader {
     return isVar(n) && this.params.get(n.name)?.kind === 'str'
   }
 
-  /** A value that is no array and no whole string parameter (a needle, a key). */
+  /**
+   * Fix round 2, ruling D′ (an allowlist that replaces D): a comparison
+   * operand, needle or key costs 1 only when it is a number literal; an int,
+   * float or bool parameter; a proven number local or a loop counter; an
+   * element (or key) bound by a loop or callback directly over a parameter; a
+   * read `$p[$i]` at a valid position of a parameter (an element or a
+   * character); or arithmetic over these, or `count`/`strlen` of a parameter.
+   * Anything else (an untyped, `mixed`, union, class or string parameter, an
+   * opaque local, an element of a derived value) refuses.
+   */
+  private isFixedOperand(n: Node, env: Env): boolean {
+    switch (n.k) {
+      case 'num':
+        return true
+      case 'var': {
+        const b = this.bindingOf(n.name, env)
+        if (b) return b.role === 'index' || b.role === 'carry' || ((b.role === 'elem' || b.role === 'key') && b.atom)
+        const p = this.params.get(n.name)
+        if (p) return p.kind === 'int' || p.kind === 'float' || p.kind === 'bool'
+        return this.locals.get(n.name)?.k === 'num'
+      }
+      case 'index':
+        return isVar(n.obj) && isVar(n.index) && this.params.has(n.obj.name) && this.sourceOfName(n.obj.name) !== undefined && this.isPosition(n.index.name, n.obj.name, env)
+      case 'unary':
+        return (n.op === '-' || n.op === '+') && this.isFixedOperand(n.arg, env)
+      case 'bin':
+        return this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env)
+      case 'call':
+        return (n.fn === 'count' || n.fn === 'strlen') && n.args.length === 1 && isVar(n.args[0]) && this.sourceOfName(n.args[0].name)?.isParam === true
+      default:
+        return false
+    }
+  }
+
+  /** Fix round 2, ruling D′ for derived collections: every name in a map or filter callback's body is its own parameter or a fixed-cost operand. */
+  private isFixedBody(n: Node, own: readonly string[], env: Env): boolean {
+    if (this.isFixedOperand(n, env) || (n.k === 'var' && own.includes(n.name))) return true
+    if (n.k === 'var' || n.k === 'static' || n.k === 'fn') return false
+    return childrenOf(n).every((c) => this.isFixedBody(c, own, env))
+  }
+
+  /** A value that is no array and no whole string parameter, and a fixed-cost operand (ruling D′): a needle, a key. */
   private scalar(n: Node, env: Env): Val {
-    need(!this.isStrParam(n))
+    need(!this.isStrParam(n) && this.isFixedOperand(n, env))
     const v = this.val(n, env)
     need(v.vt !== 'coll')
     return v
@@ -2122,6 +2165,8 @@ class Reader {
     if (kind === 'reduce') names.set(fnode.params[0]!, { role: 'carry', atom: false })
     const loop: Loop = { at, kind: 'callback', names, factor: factor({ size: s.origin, log: false, kind: 'callback', at, what: `${kind} callback over ${s.name}` }) }
     const inner: Env = { ...env, loops: [...env.loops, loop], chain: undefined }
+    // Fix round 2, ruling D′: a derived collection's elements are built only from the callback's own parameters and fixed-cost operands.
+    if (kind !== 'reduce') need(this.isFixedBody(fnode.body, fnode.params, inner))
     this.sizesIn(fnode.body, inner, kind === 'filter')
     let body: Val
     if (kind === 'filter') {

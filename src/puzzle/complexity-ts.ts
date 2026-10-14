@@ -54,6 +54,8 @@ const SCALAR_METHODS = new Set(['charAt', 'charCodeAt', 'codePointAt', 'at', 'to
 const WORDS: ReadonlySet<string> = setOf(...Object.values(LISTS), ['arguments', 'eval', 'Function', 'globalThis', 'Reflect', 'this'])
 
 const COMPARE = new Set(['===', '!==', '==', '!=', '<', '<=', '>', '>='])
+/** Methods whose first argument is a needle or a key (task 7 fix round 2, ruling D′). */
+const NEEDLE_METHODS = new Set(['includes', 'indexOf', 'lastIndexOf', 'has', 'get', 'set', 'add', 'delete'])
 const ORDER = new Set(['<', '<=', '>', '>='])
 const EQUALITY = new Set(['===', '!==', '==', '!='])
 const FLIP: Record<string, string> = { '===': '!==', '!==': '===', '==': '!=', '!=': '==', '<': '>=', '>=': '<', '>': '<=', '<=': '>' }
@@ -927,7 +929,8 @@ function endsInTransfer(body: Stmt[]): boolean {
  * element bound directly over a parameter or a filter of one, the only kind an
  * exit or choose test may read (spec "Stricter readings", fix round 2).
  */
-type Elem = { origin: string; distinct: boolean; yields?: 'keys' | 'entries' | 'pairs'; numericKeys?: boolean; type: ElemType; key?: ElemType; atom: boolean; shape?: Shape; props?: Props }
+/** `derived`: an element of a derived value, never a fixed-cost operand (task 7 fix round 2, ruling D′). */
+type Elem = { origin: string; distinct: boolean; yields?: 'keys' | 'entries' | 'pairs'; numericKeys?: boolean; type: ElemType; key?: ElemType; atom: boolean; shape?: Shape; props?: Props; derived?: boolean }
 type LoopKind = 'of' | 'count' | 'halving' | 'literal' | 'search' | 'callback' | 'comparator'
 /** `positions`: names holding an index (keys, entry indices) besides `index`; never elements. */
 /** `walks`: the source whose positions `index` and `positions` are, from 0 to its length (fix round 3, ruling A). */
@@ -1576,7 +1579,7 @@ class Reader {
     const l = this.locals.get(name)
     if (l?.k !== 'derived') return undefined
     const { k: _, ...elem } = l
-    return elem
+    return { ...elem, derived: true }
   }
 
   /** Spec "size source" for a for-of or for-in header; `yields` says when its values are indices, entries or pairs. */
@@ -2223,7 +2226,7 @@ class Reader {
       case 'member':
         return this.costOfMember(n, env)
       case 'index':
-        need(!(n.obj.k === 'id' && GLOBALS.has(n.obj.name)) && !this.mayBeStringParam(n.index))
+        need(!(n.obj.k === 'id' && GLOBALS.has(n.obj.name)) && !this.mayBeStringParam(n.index) && this.isFixedOperand(n.index, env))
         // A read at a fixed position probes the size (`items[16] !== undefined`).
         // So does any read by position on a call's or literal's result.
         if ((n.obj.k === 'id' && this.isSequence(n.obj.name)) || !['id', 'member', 'index'].includes(n.obj.k)) need(this.isPosition(n.index, env))
@@ -2259,6 +2262,9 @@ class Reader {
         if (n.op === 'in' && n.right.k !== 'id') need(this.isPosition(n.left, env))
         // Task 7 fix round 1, ruling D: comparing (or hashing, for `in`) a whole string parameter costs its length.
         if (COMPARE.has(n.op) || n.op === 'in') need(!this.mayBeStringParam(n.left) && !this.mayBeStringParam(n.right))
+        // Task 7 fix round 2, ruling D′: both sides of a comparison, and the needle of `in`, are fixed-cost operands.
+        if (COMPARE.has(n.op)) need(this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env))
+        if (n.op === 'in') need(this.isFixedOperand(n.left, env))
         if (COMPARE.has(n.op) || n.op === 'in') return add(this.cost(n.left, env, 'compare'), this.cost(n.right, env, 'compare'))
         // + joins strings unless both sides are proven numbers (family 5).
         if (n.op === '+') need(this.isNumeric(n.left, env) && this.isNumeric(n.right, env))
@@ -2358,6 +2364,56 @@ class Reader {
     if (n.k === 'id') return elementsOf(env.loops).get(n.name)?.type === 'string'
     if (n.k === 'index' && n.obj.k === 'id') return this.sourceOfName(n.obj.name)?.type === 'string'
     return false
+  }
+
+  /**
+   * Task 7 fix round 2, ruling D′ (an allowlist): a comparison operand, a
+   * needle or a key costs 1 only when it is a finite number literal or a plain
+   * string literal; a parameter typed exactly `number`; a proven number local,
+   * a loop number or a binary search's lo, hi or mid; an element bound
+   * directly over a parameter (never a derived value's); a read `p[i]`,
+   * `s.charAt(i)`, `s.charCodeAt(i)`, `s.codePointAt(i)` or `s.at(i)` of a
+   * parameter at an index that walks it; or arithmetic over these, or
+   * `.length`/`.size` of a parameter. Anything else refuses.
+   */
+  private isFixedOperand(n: Node, env: Env): boolean {
+    // A position that walks the parameter, or a binary search's mid over it.
+    const walked = (obj: Node, i: Node | undefined): boolean => obj.k === 'id' && this.params.has(obj.name) && i?.k === 'id' && env.loops.some((l) => ((l.index === i.name || l.positions?.includes(i.name)) && l.walks === obj.name) || (l.kind === 'search' && l.index === i.name && l.factor[0]?.[0]?.size === obj.name))
+    switch (n.k) {
+      case 'lit':
+        return n.kind === 'num' ? n.v !== undefined && Number.isFinite(n.v) : n.kind === 'str'
+      case 'id': {
+        const e = elementsOf(env.loops).get(n.name)
+        if (e) return e.atom && !e.derived
+        const p = this.params.get(n.name)
+        if (p) return p.kind === 'numeric'
+        return this.loopNumeric(n.name, env) || this.searchVars.has(n.name) || this.numericLocals.has(n.name)
+      }
+      case 'unary':
+        return (n.op === '-' || n.op === '+') && this.isFixedOperand(n.arg, env)
+      case 'bin':
+        return ['+', '-', '*', '/', '%'].includes(n.op) && this.isFixedOperand(n.left, env) && this.isFixedOperand(n.right, env)
+      case 'member':
+        return (n.name === 'length' || n.name === 'size') && n.obj.k === 'id' && ['array', 'string', 'set', 'map'].includes(this.params.get(n.obj.name)?.kind ?? '')
+      case 'index':
+        return walked(n.obj, n.index)
+      case 'call':
+        return n.callee.k === 'member' && ['charAt', 'charCodeAt', 'codePointAt', 'at'].includes(n.callee.name) && n.args.length === 1 && this.params.get(n.callee.obj.k === 'id' ? n.callee.obj.name : '')?.kind === 'string' && walked(n.callee.obj, n.args[0])
+      default:
+        return false
+    }
+  }
+
+  /** Ruling D′ for derived collections: every name in a map or filter callback's body is its own parameter or a fixed-cost operand. */
+  private isFixedBody(n: Node, own: readonly string[], env: Env): boolean {
+    if (this.isFixedOperand(n, env) || (n.k === 'id' && own.includes(n.name))) return true
+    if (['id', 'this', 'arrow', 'new', 'call', 'member'].includes(n.k) && !(n.k === 'member' && n.obj.k === 'id' && own.includes(n.obj.name))) return n.k === 'member' ? false : n.k === 'call' ? this.isFixedCall(n as Extract<Node, { k: 'call' }>, own, env) : false
+    return childrenOf(n).every((c) => this.isFixedBody(c, own, env))
+  }
+
+  /** A call in a derived collection's callback: only a method of the callback's own parameter, with fixed-cost arguments. */
+  private isFixedCall(n: Extract<Node, { k: 'call' }>, own: readonly string[], env: Env): boolean {
+    return n.callee.k === 'member' && n.callee.obj.k === 'id' && own.includes(n.callee.obj.name) && n.args.every((a) => this.isFixedBody(a, own, env))
   }
 
   /**
@@ -2685,6 +2741,8 @@ class Reader {
     if (obj.k !== 'id' && POSITIONAL.has(m)) need(this.isPosition(n.args[0], env) || this.isElementValue(obj))
     // Task 7 fix round 1, ruling D: a whole string parameter is no needle or key of a collection (appending it is fine).
     if (['array', 'derived', 'set', 'map', 'acc', 'closed'].includes(recv) && m !== 'push') need(!n.args.some((a) => this.mayBeStringParam(a)))
+    // Task 7 fix round 2, ruling D′: a needle or key is a fixed-cost operand.
+    if (['array', 'derived', 'set', 'map', 'acc', 'closed', 'string'].includes(recv) && NEEDLE_METHODS.has(m)) need(n.args[0] !== undefined && this.isFixedOperand(n.args[0], env))
     switch (recv) {
       case 'array':
       case 'derived':
@@ -2755,6 +2813,8 @@ class Reader {
     let body = NOTHING
     if (cb.k === 'arrow') {
       need(m !== 'reduceRight')
+      // Task 7 fix round 2, ruling D′: a map or filter builds a collection from its own parameters, literals and fixed-cost operands only.
+      if (m === 'map' || m === 'filter') need(cb.body !== 'block')
       const start = rest[0]
       let numericStart = cb.body !== 'block' && start !== undefined && this.isNumeric(start, env)
       // Ruling D: the accumulator holds a number only when every return of the callback does, assuming it does.
@@ -2769,6 +2829,7 @@ class Reader {
         need(env.block !== undefined && !PREDICATES.has(m))
         body = this.costOfBlock(env.block!, inner)
       } else {
+        if (m === 'map' || m === 'filter') need(this.isFixedBody(cb.body, cb.params, inner))
         if (SHORT.has(m)) this.checkPredicate(m, cb.body, inner)
         // Task 6 fix rounds 4 and 5: every predicate (one that stops the walk, or a filter's, which sizes what it keeps) takes the grammar.
         if (PREDICATES.has(m)) {
@@ -2863,7 +2924,7 @@ class Reader {
     // mode), and a write to `.length` resizes (or throws on a negative length).
     if (target.k === 'member' || target.k === 'index') need(this.isWritableReceiver(target.obj) && !(target.k === 'member' && (target.name === 'length' || target.name === 'size')))
     // Task 6 fix round 3: a bracket write takes a number key (never 'length') on an array accumulator or a fresh array.
-    if (target.k === 'index') need(this.isNumeric(target.index, env) && this.isArrayReceiver(target.obj))
+    if (target.k === 'index') need(this.isNumeric(target.index, env) && this.isArrayReceiver(target.obj) && this.isFixedOperand(target.index, env))
     if (this.searchVars.has(name)) return c
     need(!this.loopNames.has(name))
     const local = this.locals.get(name)
@@ -2897,7 +2958,7 @@ function elementsOf(loops: Loop[]): Map<string, Elem> {
  * hold numbers.
  */
 function rolesOf(names: string[], src: Elem): { elements: Map<string, Elem>; positions: string[]; numeric: string[] } {
-  const elem = (type: ElemType, shaped = true): Elem => ({ origin: src.origin, distinct: src.distinct, type, atom: src.atom, ...(shaped && src.shape ? { shape: src.shape } : {}), ...(shaped && src.props ? { props: src.props } : {}) })
+  const elem = (type: ElemType, shaped = true): Elem => ({ origin: src.origin, distinct: src.distinct, type, atom: src.atom, ...(shaped && src.shape ? { shape: src.shape } : {}), ...(shaped && src.props ? { props: src.props } : {}), ...(src.derived ? { derived: true } : {}) })
   const whole = (n: string): Elem => ({ origin: src.origin, distinct: src.distinct, type: 'opaque', atom: false })
   const numeric = (m: Map<string, Elem>, pos: string[]): string[] => [...[...m].filter(([, e]) => e.type === 'number').map(([n]) => n), ...(src.numericKeys ? pos : [])]
   let elements: Map<string, Elem>
