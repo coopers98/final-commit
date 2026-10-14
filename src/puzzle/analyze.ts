@@ -5,7 +5,7 @@ import type { Puzzle } from './puzzle'
 
 // SPEC 8: what the Analyze Specimen step shows. Pure; the pane lays it out (src/puzzle/layout.ts).
 
-const TYPE_LABEL: Record<Puzzle['type'], string> = { 'pattern-id': 'Pattern ID', trace: 'Trace', 'bug-hunt': 'Bug Hunt' }
+const TYPE_LABEL: Record<Puzzle['type'], string> = { 'pattern-id': 'Pattern ID', 'complexity-read': 'Complexity Read', trace: 'Trace', 'bug-hunt': 'Bug Hunt' }
 
 export function analyzeView(puzzle: Puzzle, heading: string, tier: Tier): AnalyzeView {
   return {

@@ -82,7 +82,7 @@ export const CELLS: Record<Cell, { bonus: number; label: string }> = {
 export const CONTAINMENT_CAP = 0.98
 
 // SPEC 8 (types, bonus ends), DEFAULT (the rest). Analyze Specimen.
-export type PuzzleType = 'pattern-id' | 'trace' | 'bug-hunt'
+export type PuzzleType = 'pattern-id' | 'complexity-read' | 'trace' | 'bug-hunt'
 export const PUZZLE = {
   /** The type each tier asks for; a type not built yet falls back down this order (SPEC 8). */
   typeByTier: {
@@ -248,8 +248,28 @@ export const DOSSIER = {
   recentWindow: 10,
   minAnswers: 5,
   trendMargin: 0.1,
-  typeOrder: ['pattern-id', 'bug-hunt', 'trace'] as readonly string[],
-  typeLabels: { 'pattern-id': 'Pattern ID', 'bug-hunt': 'Bug Hunt', trace: 'Trace' } as Record<string, string>,
+  typeOrder: ['pattern-id', 'complexity-read', 'bug-hunt', 'trace'] as readonly string[],
+  typeLabels: { 'pattern-id': 'Pattern ID', 'complexity-read': 'Complexity Read', 'bug-hunt': 'Bug Hunt', trace: 'Trace' } as Record<string, string>,
+} as const
+
+// SPEC 8.4, DEFAULT: Complexity Read (spec docs/superpowers/specs/2026-10-13-complexity-read-design.md).
+// The question's rule line, the distractors for each answer, and per language the
+// builtins the readers know: everything not listed fails closed.
+export const COMPLEXITY = {
+  maxQuestionChars: 160,
+  ruleText: 'Worst case. Built-in operations over a whole collection (search, copy, sum, join, map, filter) cost its size; sorts size × log size; hash lookups and appends 1; other calls 1.',
+  distractors: {
+    'O(log n)': ['O(1)', 'O(n)', 'O(n log n)'],
+    'O(n)': ['O(log n)', 'O(n log n)', 'O(n²)'],
+    'O(n log n)': ['O(n)', 'O(n²)', 'O(log n)'],
+    'O(n²)': ['O(n)', 'O(n log n)', 'O(n³)'],
+    'O(n³)': ['O(n²)', 'O(n log n)', 'O(n)'],
+    'O(n·m)': ['O(n + m)', 'O(n²)', 'O(n)'],
+    'O(n + m)': ['O(n·m)', 'O(n)', 'O(n²)'],
+  } as Record<string, readonly string[]>,
+  // Filled by Tasks 4, 6 and 7: { sort, linear, constant, fails, derive, mutate, globals, iterators }
+  // per language, each a readonly string[] copied from the spec's "Builtins" section.
+  builtins: {} as Record<string, Record<string, readonly string[]>>,
 } as const
 
 // DEFAULT: drawing colors (SPEC 6.2, 9). Tier colors are in TIER_SPECS; the
