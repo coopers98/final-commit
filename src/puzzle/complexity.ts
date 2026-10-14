@@ -5,6 +5,7 @@
 // language readers build on it.
 
 import { COMPLEXITY } from '../config'
+import { readPython } from './complexity-py'
 import { readTypeScript } from './complexity-ts'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
@@ -152,9 +153,9 @@ export function readCost(cost: Cost, numeric: readonly string[], offset: number)
   }
 }
 
-/** A unit's answer and its parameter names for the question, by its language's reader; undefined when the reader cannot place it. Python and PHP have no reader yet. */
+/** A unit's answer and its parameter names for the question, by its language's reader; undefined when the reader cannot place it. PHP has no reader yet. */
 export function costOf(unit: Unit): (Reading & { params: string[] }) | undefined {
-  const read = unit.lang === 'TypeScript' ? readTypeScript(unit) : undefined
+  const read = unit.lang === 'TypeScript' ? readTypeScript(unit) : unit.lang === 'Python' ? readPython(unit) : undefined
   if (!read) return undefined
   const reading = readCost(read.cost, read.numeric, unit.full?.offset ?? 0)
   return reading && { ...reading, params: read.params }

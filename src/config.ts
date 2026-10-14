@@ -268,7 +268,7 @@ export const COMPLEXITY = {
     'O(n + m)': ['O(n·m)', 'O(n)', 'O(n²)'],
   } as Record<string, readonly string[]>,
   // Spec "Builtins", per language: { sort, linear, constant, fails, derive, mutate, globals, iterators },
-  // each a readonly string[] copied from the spec. Python and PHP are filled by Tasks 6 and 7.
+  // each a readonly string[] copied from the spec. PHP is filled by Task 7.
   builtins: {
     TypeScript: {
       sort: ['sort', 'toSorted'],
@@ -281,6 +281,19 @@ export const COMPLEXITY = {
       globals: ['AggregateError', 'Array', 'ArrayBuffer', 'Atomics', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean', 'DataView', 'Date', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'Error', 'escape', 'eval', 'EvalError', 'FinalizationRegistry', 'Float32Array', 'Float64Array', 'Function', 'globalThis', 'Int8Array', 'Int16Array', 'Int32Array', 'Intl', 'isFinite', 'isNaN', 'Iterator', 'JSON', 'Map', 'Math', 'Number', 'Object', 'parseFloat', 'parseInt', 'Promise', 'Proxy', 'RangeError', 'ReferenceError', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol', 'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'unescape', 'URIError', 'WeakMap', 'WeakRef', 'WeakSet', 'arguments', 'this'],
       iterators: ['forEach', 'map', 'filter', 'find', 'findIndex', 'some', 'every', 'reduce'],
     },
+    // The reader counts fewer than these lists name (spec "Stricter readings (Python reader, Task 6)"):
+    // `index`, `any` and `all` refuse; every name here stays a word no hidden line may hold.
+    Python: {
+      sort: ['sorted', 'sort'],
+      linear: ['count', 'copy', 'list', 'set', 'dict', 'tuple', 'sum', 'min', 'max', 'index', 'any', 'all'],
+      constant: ['len', 'append', 'add', 'discard', 'get', 'pop', 'abs', 'int', 'float', 'bool'],
+      fails: ['insert', 'remove', 'extend', 'update', 'join', 'split', 'replace', 'map', 'filter', 'zip', 'iter', 'next', 'print', 'pow', 'str', 'repr', 'format', 'exec', 'eval', 'compile', 'getattr', 'setattr', 'delattr', 'hasattr', 'locals', 'vars', 'globals', 'dir', '__import__', '__dict__', '__class__', '__builtins__'],
+      derive: ['sorted', 'list', 'set', 'tuple', 'copy'],
+      mutate: ['append', 'extend', 'insert', 'remove', 'pop', 'clear', 'update', 'add', 'discard', 'sort', 'reverse', 'setdefault', 'popitem'],
+      // Python's builtin functions and names (exception classes aside: calling one is a helper call).
+      globals: ['__build_class__', '__debug__', '__doc__', '__import__', '__loader__', '__name__', '__package__', '__spec__', 'abs', 'aiter', 'all', 'anext', 'any', 'ascii', 'bin', 'bool', 'breakpoint', 'bytearray', 'bytes', 'callable', 'chr', 'classmethod', 'compile', 'complex', 'copyright', 'credits', 'delattr', 'dict', 'dir', 'divmod', 'enumerate', 'eval', 'exec', 'exit', 'filter', 'float', 'format', 'frozenset', 'getattr', 'globals', 'hasattr', 'hash', 'help', 'hex', 'id', 'input', 'int', 'isinstance', 'issubclass', 'iter', 'len', 'license', 'list', 'locals', 'map', 'max', 'memoryview', 'min', 'next', 'object', 'oct', 'open', 'ord', 'pow', 'print', 'property', 'quit', 'range', 'repr', 'reversed', 'round', 'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super', 'tuple', 'type', 'vars', 'zip'],
+      iterators: ['range', 'enumerate', 'reversed', 'items', 'keys', 'values'],
+    },
   } as Record<string, Record<'sort' | 'linear' | 'constant' | 'fails' | 'derive' | 'mutate' | 'globals' | 'iterators', readonly string[]>>,
   // Spec "What the reader reads", rules 3 and 4: a hidden line holds none of
   // the loop or closure words or symbols, and an exit word only in place.
@@ -289,6 +302,8 @@ export const COMPLEXITY = {
   /** `...` is spread; Python's `*` and `**` unpacking is read by its place. */
   inertSymbols: ['=>', '...'] as readonly string[],
   exitWords: ['return', 'break', 'continue', 'throw', 'raise', 'exit', 'die'] as readonly string[],
+  /** Python words a hidden line may not hold besides the lists: statements that raise, unbind or reach other scopes. */
+  pythonHiddenWords: ['assert', 'del', 'global', 'nonlocal', 'await', 'async', 'import'] as readonly string[],
 } as const
 
 // DEFAULT: drawing colors (SPEC 6.2, 9). Tier colors are in TIER_SPECS; the

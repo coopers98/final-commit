@@ -267,7 +267,8 @@ such as `Repo`, `Ids`, `T`, `Iterable`, `String`, a property such as
 O(1) list on a string or number value or a string or number literal
 union (TypeScript ruling C below). Cost 1 by the rule applies only to
 calls through unbound module names (`repo.fetch(x)`) and helpers.
-Iterating an untyped parameter with a for-each is allowed (size of p);
+Iterating an untyped parameter with a for-each is allowed (size of p;
+TypeScript only: the Python reader refuses it, see its stricter readings);
 a literal-typed parameter (`'ab' | 'cd'`, `1 | 2`) is never a size,
 a loop source or a `.length` size.
 Global builtins are closed lists in every language: any call to a TS
@@ -469,6 +470,77 @@ Fix round 3 (default-refuse rules):
   parameter; a lone return or break), then one if/else on a comparison
   reading `mid` whose branches set exactly `lo` and `hi`, one each. Any
   other body fails.
+
+### Stricter readings (Python reader, Task 6)
+
+The Python reader applies the TypeScript families above as allowlists
+from the start, and adds three hazards of its own: an exception the
+input cannot avoid is an exit, integers grow without bound, and a local
+read before its first assignment raises. Each is a test.
+
+- **Closed statement set.** Each shown line is `name = value`,
+  `name += value` or `-=`, `acc[key] = value`, a call, `return`, `break`,
+  `continue`, `pass`, or the header of `if`/`elif`/`else`, `for` (one
+  name, or two for `enumerate`/`items()`) or a binary search `while`.
+  Tuple, chained and annotated assignment, `*=` and the other augmented
+  operators, conditional expressions, `lambda`, walrus, slices, starred
+  values, tuples, chained comparisons, strings, comments, `;`, `@`,
+  dunder names, `raise`, `del`, `assert`, `global`, `nonlocal`, `with`,
+  `try`, `match`, `import`, `yield`, `await`, `async` and nested
+  definitions fail. `self` and `cls` are never read.
+- **Sources.** Only a parameter annotated as a listed collection, or a
+  derived value, is a size source or a loop source; an untyped,
+  other-typed, `Literal`, fixed-tuple or number parameter is not (its
+  iteration may run code or be single-use). `x in S` reads S's
+  annotation: a list, `Sequence` or variable tuple of primitive elements
+  costs its size, a set, frozenset or dict 1; a str, any other value and
+  a list accumulator fail.
+- **Builtins.** `index` (it raises when absent), `any` and `all` (they
+  stop early), `pop`, `insert`, `remove`, slices, `key=`, `default=`, a
+  start for `sum`, and every builtin not listed fail. `sorted`, `.sort()`,
+  `min` and `max` need primitive elements (other elements may not order);
+  `sum` numbers; `set(S)` int, float or str elements of a non-str S (a
+  set of booleans or of a string's characters is bounded). A sort reads a
+  parameter that is sorted in place at most once: never a derived value or
+  a sorted run again (Timsort reads one in linear time). A dict's views
+  are loop sources only. Methods: `count` (list, `Sequence`, tuple),
+  `copy` (list, set, dict parameter), `get` (dict parameter), an in-place
+  `.sort()` of a list parameter as a statement outside loops; on an
+  accumulator `append` (list), `add` and `discard` (set), `get` and key
+  writes (dict). Nothing else takes a method; str and number values take
+  none. A helper or a module's function takes numbers, strings and None
+  only, and its result is opaque.
+- **Locals.** A local's first assignment is `name = value`, and every
+  read and later write comes after it, inside its block. An accumulator
+  starts empty and is written only empty again or by key; a derived value
+  is written once, outside loops; any other local is a number, a str,
+  opaque (a mix of scalars, None, or an element alias) or a closed
+  collection (only returned or sized), by a fixpoint over all its writes.
+- **Raises the input cannot avoid.** A read by position takes a loop's
+  index that its range or `enumerate` proves in range for that sequence
+  (or a binary search's mid); no dict is read by subscript; a divisor is
+  a nonzero literal, a number parameter or a number element over a
+  parameter; orderings compare numbers with numbers or strs with strs;
+  bitwise operators and `~` fail (a float raises). Calls are assumed to
+  return (the rule), as are hidden lines.
+- **Growth.** `**` and `<<` fail. In a loop a number local is either an
+  accumulator (`+=`, `-=`, or `t = max(t, v)`/`min`) whose added values
+  read no accumulator, or a temporary whose writes read only other
+  temporaries, with no cycle.
+- **Tests.** A test outside loops, and a test guarding costly work inside
+  one, is stable: `and`, `or` and `not` over a bool parameter, or a
+  comparison of an int or float parameter or size-free local with another
+  or an integer literal (at the root also `len(p)` and `not p`, which gate
+  10 reads). A size-free local is written outside loops as a parameter
+  plus or minus a literal. Every name on a path, through size-free locals,
+  appears in one stable test at most, so the tests can hold together.
+  Costly work behind any test that varies by iteration fails (stricter than
+  the TypeScript choose/avoid reading), and no `==` takes an opaque value
+  (it may compare whole containers).
+- **Loops.** A literal range runs at least once. An exit by `return` from
+  a binary search's equality test only outside loops. At the root, a
+  branch holding a hidden line may leave, so the code after it stands
+  behind its test.
 
 ### Combining
 
