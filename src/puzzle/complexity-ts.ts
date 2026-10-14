@@ -6,7 +6,7 @@
 // not, so every doubt refuses.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, hiddenScan, isExitName, isInert, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
+import { add, factor, hiddenScan, isExitName, isInert, isLiteralInRange, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -105,6 +105,8 @@ function tokenize(line: string): Tok[] {
     if (num) {
       // A bigint literal (`10n`) mixed with a number throws.
       if (IDENT.test(rest.slice(num[0].length)) || num[0].endsWith('n')) refuse()
+      // Task 7 fix round 1, ruling A: no literal beyond the shared cap (`1e400` is Infinity, constant against any number).
+      need(isLiteralInRange(num[0]))
       out.push({ t: 'num', v: num[0] })
       i += num[0].length
       continue
@@ -2221,7 +2223,7 @@ class Reader {
       case 'member':
         return this.costOfMember(n, env)
       case 'index':
-        need(!(n.obj.k === 'id' && GLOBALS.has(n.obj.name)))
+        need(!(n.obj.k === 'id' && GLOBALS.has(n.obj.name)) && !this.mayBeStringParam(n.index))
         // A read at a fixed position probes the size (`items[16] !== undefined`).
         // So does any read by position on a call's or literal's result.
         if ((n.obj.k === 'id' && this.isSequence(n.obj.name)) || !['id', 'member', 'index'].includes(n.obj.k)) need(this.isPosition(n.index, env))
@@ -2255,6 +2257,8 @@ class Reader {
         }
         if (n.op === 'in' && n.right.k === 'id' && this.isSequence(n.right.name)) need(this.isPosition(n.left, env))
         if (n.op === 'in' && n.right.k !== 'id') need(this.isPosition(n.left, env))
+        // Task 7 fix round 1, ruling D: comparing (or hashing, for `in`) a whole string parameter costs its length.
+        if (COMPARE.has(n.op) || n.op === 'in') need(!this.mayBeStringParam(n.left) && !this.mayBeStringParam(n.right))
         if (COMPARE.has(n.op) || n.op === 'in') return add(this.cost(n.left, env, 'compare'), this.cost(n.right, env, 'compare'))
         // + joins strings unless both sides are proven numbers (family 5).
         if (n.op === '+') need(this.isNumeric(n.left, env) && this.isNumeric(n.right, env))
@@ -2354,6 +2358,35 @@ class Reader {
     if (n.k === 'id') return elementsOf(env.loops).get(n.name)?.type === 'string'
     if (n.k === 'index' && n.obj.k === 'id') return this.sourceOfName(n.obj.name)?.type === 'string'
     return false
+  }
+
+  /**
+   * Task 7 fix round 1, ruling D: a value that may be a whole string
+   * parameter (the parameter, a local any write of which may be one, or an
+   * arm of `?:`, `&&`, `||` or `??` that may be). Its length is a size, so
+   * comparing, searching or hashing it costs that size: it is never an
+   * operand of a comparison or `in`, an index, or a collection method's
+   * argument (but `push`). `.length` and single characters stay.
+   */
+  private mayBeStringParam(n: Node, seen = new Set<string>()): boolean {
+    switch (n.k) {
+      case 'id': {
+        if (this.params.get(n.name)?.kind === 'string') return true
+        const d = this.decls.get(n.name)
+        if (!d || seen.has(n.name)) return false
+        seen.add(n.name)
+        const values = [d.line.init, ...this.assignments.filter((a) => a.name === n.name).map((a) => a.value)]
+        return values.some((v) => v !== undefined && this.mayBeStringParam(v, seen))
+      }
+      case 'cond':
+        return this.mayBeStringParam(n.yes, seen) || this.mayBeStringParam(n.no, seen)
+      case 'bin':
+        return (n.op === '&&' || n.op === '||' || n.op === '??') && (this.mayBeStringParam(n.left, seen) || this.mayBeStringParam(n.right, seen))
+      case 'assign':
+        return this.mayBeStringParam(n.value, seen)
+      default:
+        return false
+    }
   }
 
   /** Task 6 fix round 3: proven a string — a string literal, a string element or element read, a string method's result, or a local every write of which is one. */
@@ -2650,6 +2683,8 @@ class Reader {
     // A closed local's elements may be a parameter's (a copy): they are not mutated.
     if (obj.k !== 'id' && rootLocal?.k === 'local' && !this.scalarLocals.has(root!.name)) need(!MUTATE.has(m))
     if (obj.k !== 'id' && POSITIONAL.has(m)) need(this.isPosition(n.args[0], env) || this.isElementValue(obj))
+    // Task 7 fix round 1, ruling D: a whole string parameter is no needle or key of a collection (appending it is fine).
+    if (['array', 'derived', 'set', 'map', 'acc', 'closed'].includes(recv) && m !== 'push') need(!n.args.some((a) => this.mayBeStringParam(a)))
     switch (recv) {
       case 'array':
       case 'derived':
@@ -2891,15 +2926,15 @@ function refsOf(n: Node): Set<string> {
   return out
 }
 
-/** `i++`, `++i`, `i += 1` (up); the same down; `i *= 2`, `i <<= 1` (double); `i >>= 1`, `i = Math.floor(i / 2)` (halve). */
+/** `i++`, `++i`, `i += 1` (up); the same down; `i *= 2` (double); `i = Math.floor(i / 2)` (halve). */
 function stepOf(n: Node, name: string): 'up' | 'down' | 'double' | 'halve' | undefined {
   if (n.k === 'update' && isId(n.arg, name)) return n.op === '++' ? 'up' : 'down'
   if (n.k !== 'assign' || !isId(n.target, name)) return undefined
   const k = numLit(n.value)
   if (n.op === '+=' && k === 1) return 'up'
   if (n.op === '-=' && k === 1) return 'down'
-  if ((n.op === '*=' && k === 2) || (n.op === '<<=' && k === 1)) return 'double'
-  if (n.op === '>>=' && k === 1) return 'halve'
+  // Task 7 fix round 1, ruling C: no shift step (a 32-bit shift wraps: `1 << 31` is negative).
+  if (n.op === '*=' && k === 2) return 'double'
   const v = n.value
   if (n.op === '=' && v.k === 'call' && v.callee.k === 'member' && isId(v.callee.obj, 'Math') && v.callee.name === 'floor' && v.args.length === 1) {
     const a = v.args[0]!

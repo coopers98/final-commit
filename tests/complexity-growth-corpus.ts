@@ -70,7 +70,7 @@ export const CORPUS: readonly Entry[] = [
   },
   {
     name: 'halvings', answer: 'O(log n)', category: 'halving',
-    lines: ['function halvings(items: number[]): number {', '  let t = 0', '  for (let i = items.length; i > 0; i >>= 1) {', '    t += 1', '  }', '  return t', '}'],
+    lines: ['function halvings(items: number[]): number {', '  let t = 0', '  for (let i = items.length; i > 0; i = Math.floor(i / 2)) {', '    t += 1', '  }', '  return t', '}'],
     inputs: (n, _m, from) => [from(range(n))],
   },
   {

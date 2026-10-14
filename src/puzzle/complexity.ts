@@ -354,6 +354,27 @@ export type HiddenScan = { lines: readonly string[]; last: number; open: string 
 /** A fresh scan over a unit's `lines`, for one run of `hidden`; after it, `open` must be undefined. */
 export const hiddenScan = (lines: readonly string[]): HiddenScan => ({ lines, last: -1, open: undefined })
 
+/**
+ * Task 7 fix round 1, ruling A: whether a number literal's text (decimal,
+ * float, exponent, or `0x`/`0o`/`0b`, with `_` separators) is at most
+ * `COMPLEXITY.maxLiteral` in magnitude. Every reader refuses a unit holding
+ * any other: beyond a type's range a literal is constant against it.
+ */
+export function isLiteralInRange(text: string): boolean {
+  const t = text.replace(/_/g, '').replace(/n$/, '')
+  if (/^0[xXoObB]/.test(t)) {
+    try {
+      const b = BigInt(t)
+      return b <= BigInt(COMPLEXITY.maxLiteral)
+    } catch {
+      return false
+    }
+  }
+  if (/^\d+$/.test(t)) return t.replace(/^0+(?=\d)/, '').length <= 10 && Number(t) <= COMPLEXITY.maxLiteral
+  const v = Number(t)
+  return Number.isFinite(v) && Math.abs(v) <= COMPLEXITY.maxLiteral
+}
+
 /** A function or method name that may end the process or raise a signal (task 6 fix rounds 1 and 2): it holds an exit part, any case, or is an exit word. */
 export function isExitName(name: string): boolean {
   const n = name.replace(/^\$/, '').normalize('NFKC')

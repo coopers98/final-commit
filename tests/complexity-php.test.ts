@@ -108,11 +108,11 @@ test('inner bounds: an enclosing index, or a start from it; never under a halvin
 })
 
 test('halving loops: up by doubling, down by halving', async () => {
-  for (const head of ['$i = 1; $i < $n; $i *= 2', '$i = 1; $i <= $n; $i <<= 1', '$i = $n; $i > 0; $i = intdiv($i, 2)', '$i = $n; $i > 0; $i >>= 1', '$i = 1; $i < count($a); $i *= 2']) {
+  for (const head of ['$i = 1; $i < $n; $i *= 2', '$i = 1; $i <= $n; $i *= 2', '$i = $n; $i > 0; $i = intdiv($i, 2)', '$i = 1; $i < count($a); $i *= 2']) {
     expect(answer(fn('int $n, array $a', '$t = 0;', `for (${head}) {`, '    $t++;', '}', 'return $t;'))).toBe('O(log n)')
   }
   expect(costOf(fn('int $n', '$t = 0;', 'for ($i = 1; $i < $n; $i *= 2) {', '    $t++;', '}', 'return $t;'))?.category).toBe('halving')
-  for (const head of ['$i = 0; $i < $n; $i *= 2', '$i = 1; $i < $n; $i *= 1', '$i = 1; $i < $n; $i *= $n', '$i = $n; $i > 0; $i = intdiv($i, 1)', '$i = $n; $i >= 0; $i >>= 1', '$i = $n; $i > 0; $i = $i / 2', '$i = 1; $i > $n; $i *= 2']) {
+  for (const head of ['$i = 0; $i < $n; $i *= 2', '$i = 1; $i < $n; $i *= 1', '$i = 1; $i < $n; $i *= $n', '$i = $n; $i > 0; $i = intdiv($i, 1)', '$i = $n; $i >= 0; $i = intdiv($i, 2)', '$i = $n; $i > 0; $i = $i / 2', '$i = 1; $i > $n; $i *= 2']) {
     expect(answer(fn('int $n', '$t = 0;', `for (${head}) {`, '    $t++;', '}', 'return $t;'))).toBe(undefined)
   }
 })
@@ -231,7 +231,8 @@ test('unlisted global functions refuse, as do the copying and string builtins', 
   for (const call of ['array_merge($ids, $ids)', 'array_unique($ids)', 'array_column($ids, 0)', 'str_repeat($s, 2)', 'implode($s, explode($s, $s))', 'str_split($s)', 'substr($s, 1)', 'strpos($s, $s)', 'str_contains($s, $s)', 'str_replace($s, $s, $s)', 'range(1, 10)', 'helper($x)', 'call_user_func($s)', 'compact($s)', 'func_get_args()', 'array_push($ids, 1)', 'array_pop($ids)', 'array_shift($ids)', 'iterator_to_array($ids)', 'array_fill(0, 3, 0)']) {
     expect(answer(inLoop(`$v = ${call};`, `${AB}, string $s`))).toBe(undefined)
   }
-  expect(answer(inLoop('$v = implode($s, $ids);', `${AB}, string $s`))).toBe('O(n·m)')
+  // Fix round 1 (ruling B): a separator must be a literal of constant length, and no string literal is ever shown.
+  expect(answer(inLoop('$v = implode($s, $ids);', `${AB}, string $s`))).toBe(undefined)
 })
 
 // --- Parameters, copies and accumulators (gate 9, lessons families 14, 15) ------
@@ -326,11 +327,12 @@ test('costly work behind a test that varies by iteration fails', async () => {
 
 // --- Exits (lessons family 12) -----------------------------------------------------
 
-test('exits: a positive === on a string character keeps the worst case; anything else fails', async () => {
-  const search = (test: string, exit = 'return $i;'): Unit => fn('string $s, string $c, array $items, int $k', `for ($i = 0; $i < strlen($s); $i++) {`, `    if (${test}) {`, `        ${exit}`, '    }', '}', 'return -1;')
-  expect(answer(search('$s[$i] === $c'))).toBe('O(n)')
-  expect(answer(search('$c === $s[$i]', 'break;'))).toBe('O(n)')
-  for (const test of ['$s[$i] == $c', '$s[$i] !== $c', '$s[$i] < $c', '$s[$i] === $s[$i]', '$i === $k', '$s[$i] === $s', '$s[$i] === 1']) {
+test('exits: a positive === between characters of two strings keeps the worst case; anything else fails', async () => {
+  const search = (test: string, exit = 'return $i;'): Unit => fn('string $s, string $c, array $items, int $k', `for ($i = 0; $i < strlen($s); $i++) {`, '    for ($j = 0; $j < strlen($c); $j++) {', `        if (${test}) {`, `            ${exit}`, '        }', '    }', '}', 'return -1;')
+  expect(answer(search('$s[$i] === $c[$j]'))).toBe('O(n·m)')
+  expect(answer(search('$c[$j] === $s[$i]', 'break;'))).toBe('O(n·m)')
+  // Fix round 1 (ruling D): a whole string parameter is no operand, so `$s[$i] === $c` refuses.
+  for (const test of ['$s[$i] == $c[$j]', '$s[$i] !== $c[$j]', '$s[$i] < $c[$j]', '$s[$i] === $s[$i]', '$i === $k', '$s[$i] === $s', '$s[$i] === $c', '$c === $s[$i]', '$s[$i] === 1', '$s[$i] === $s[$j]']) {
     expect(answer(search(test))).toBe(undefined)
   }
   // An element of an array is untyped, so it never exits (and neither does a membership).
@@ -338,7 +340,7 @@ test('exits: a positive === on a string character keeps the worst case; anything
   expect(answer(fn(AB, 'foreach ($items as $x) {', '    if (in_array($x, $ids)) {', '        return true;', '    }', '}', 'return false;'))).toBe(undefined)
   // Unconditional, every branch, after the exit, a flag.
   expect(answer(fn('array $items', 'foreach ($items as $x) {', '    return 1;', '}', 'return 0;'))).toBe(undefined)
-  expect(answer(search('$s[$i] === $c', 'return $i;'))).toBe('O(n)')
+  expect(answer(search('$s[$i] === $c[$j]', 'return $i;'))).toBe('O(n·m)')
   expect(answer(fn('string $s, string $c', 'for ($i = 0; $i < strlen($s); $i++) {', '    if ($s[$i] === $c) {', '        return $i;', '    } else {', '        return -1;', '    }', '}', 'return -1;'))).toBe(undefined)
   expect(answer(fn('string $s, string $c', 'for ($i = 0; $i < strlen($s); $i++) {', '    if ($s[$i] === $c) {', '        return $i;', '        $c = $s;', '    }', '}', 'return -1;'))).toBe(undefined)
 })
@@ -395,13 +397,13 @@ test('a hidden opener is only an else, whose body costs 1 and never exits', asyn
 
 // --- Probe findings (pinned) ------------------------------------------------------
 
-test('keys are no positions for an inner bound; keywords and functions ignore case; implode takes a parameter separator', async () => {
+test('keys are no positions for an inner bound; keywords and functions ignore case; implode takes no parameter separator', async () => {
   expect(answer(fn('array $items', '$t = 0;', 'foreach ($items as $i => $x) {', '    for ($j = 0; $j < $i; $j++) {', '        $t++;', '    }', '}', 'return $t;'))).toBe(undefined)
   expect(answer(fn('array $items', '$t = 0;', 'foreach ($items as $i => $x) {', '    $v = $items[$i];', '}', 'return $t;'))).toBe('O(n)')
   expect(answer(fn('array $items', '$t = 0;', 'FOREACH ($items AS $x) {', '    $t++;', '}', 'RETURN $t;'))).toBe('O(n)')
   expect(answer(inLoop('$t = COUNT($ids);'))).toBe('O(n)')
   expect(answer(fn(`${AB}, string $s`, '$v = $s;', 'foreach ($items as $x) {', '    $v = implode($v, $ids);', '}', 'return 0;'))).toBe(undefined)
-  expect(answer(inLoop('$t = strlen(implode($s, $ids));', `${AB}, string $s`))).toBe('O(n·m)')
+  expect(answer(inLoop('$t = strlen(implode($s, $ids));', `${AB}, string $s`))).toBe(undefined)
 })
 
 test('a membership atom reads an element bound over a parameter, in another parameter; an accumulator is no source', async () => {
@@ -422,4 +424,66 @@ test('the explanation names PHP parameters with their $', async () => {
   expect(r?.n).toBe('$items')
   expect(r?.m).toBe('$ids')
   expect(r?.explanation).toBe('Line 4: loop over $items; line 5: in_array on $ids. n × m = O(n·m).')
+})
+
+// --- Fix round 1 (task-7-review.md) ---------------------------------------------
+
+/** `$t = 0; foreach ($items as $x) { if (TEST) { $t += array_sum($ids); } } return $t;` (true O(n) when TEST never holds). */
+const G = (test: string, pre: string[] = []): Unit => fn('array $items, array $ids, int $k, bool $b, float $f', ...pre, '$t = 0;', 'foreach ($items as $x) {', `    if (${test}) {`, '        $t += array_sum($ids);', '    }', '}', 'return $t;')
+/** `$t = 0; if (TEST) { foreach ($items as $x) { $t += array_sum($ids); } } return $t;` */
+const R = (test: string): Unit => fn('array $items, array $ids, int $k, bool $b, float $f', '$t = 0;', `if (${test}) {`, '    foreach ($items as $x) {', '        $t += array_sum($ids);', '    }', '}', 'return $t;')
+/** An exit guard before the work: true O(1) when TEST always holds. */
+const X = (test: string): Unit => fn('array $items, array $ids, int $k', `if (${test}) {`, '    return 0;', '}', '$t = 0;', 'foreach ($items as $x) {', '    $t += array_sum($ids);', '}', 'return $t;')
+
+test('ruling A: a number literal beyond 2^31 - 1 refuses, so no guard is always or never true (C1)', async () => {
+  const big = '9'.repeat(400)
+  for (const test of ['$k > 9223372036854775807', '9223372036854775807 < $k', '$k < -9223372036854775808', '-9223372036854775809 > $k', '$k > 99999999999999999999', '$k > 9223372036854775808', `$k > ${big}`, `$f > ${big}`, `$f < -${big}`, '$k > 2147483648', '$k < -2147483648', '$f > 99999999999.5']) {
+    expect(answer(G(test))).toBe(undefined)
+    expect(answer(R(test))).toBe(undefined)
+  }
+  expect(answer(G('$j > 9223372036854775806', ['$j = $k - 1;']))).toBe(undefined)
+  for (const test of ['$k <= 9223372036854775807', '$k < 99999999999999999999', '$k >= -9223372036854775808']) expect(answer(X(test))).toBe(undefined)
+  expect(answer(fn('array $items, array $ids, int $k', '$d = array_filter($items, fn($y) => $k > 9223372036854775807);', '$t = 0;', 'foreach ($d as $x) {', '    $t += array_sum($ids);', '}', 'return $t;'))).toBe(undefined)
+  // Anywhere in a shown expression, not only in a test.
+  expect(answer(inLoop('$t = $t + 4294967296;'))).toBe(undefined)
+  // At the bound it reads.
+  expect(answer(G('$k > 2147483647'))).toBe('O(n·m)')
+  expect(answer(R('$k > -2147483647'))).toBe('O(n·m)')
+  expect(answer(X('$k > 2147483647'))).toBe('O(n·m)')
+})
+
+test('ruling C: a shift step never counts a loop (C3: `1 << 63` wraps to 0 and the loop never ends)', async () => {
+  for (const head of ['$i = 1; $i < $k; $i <<= 1', '$i = 1; $i <= $k; $i <<= 1', '$i = $k; $i > 0; $i >>= 1', '$i = 1; $i < count($items); $i <<= 1', '$i = count($items); $i > 0; $i >>= 1']) {
+    expect(answer(fn('array $items, int $k', '$t = 0;', `for (${head}) {`, '    $t++;', '}', 'return $t;'))).toBe(undefined)
+  }
+  expect(answer(fn('array $items, int $k', '$t = 0;', 'for ($i = 1; $i < $k; $i *= 2) {', '    $t++;', '}', 'return $t;'))).toBe('O(log n)')
+})
+
+test('ruling D: a string parameter is no comparison operand, needle or key (its length is a size)', async () => {
+  const P = 'array $items, array $ids, int $k, bool $b, string $s, string $c'
+  for (const body of [
+    ['$t = 0;', 'foreach ($items as $x) {', '    if ($s === $c) {', '        $t++;', '    }', '}', 'return $t;'],
+    ['$t = 0;', 'foreach ($items as $x) {', '    $t += $s < $c;', '}', 'return $t;'],
+    ['$t = 0;', 'foreach ($items as $x) {', '    $t += $x === $s;', '}', 'return $t;'],
+    ['$t = 0;', 'foreach ($items as $x) {', '    $t += $s !== null;', '}', 'return $t;'],
+    ['return in_array($s, $ids);'],
+    ['$v = array_search($s, $ids);', 'return 0;'],
+    ['$t = 0;', 'foreach ($items as $x) {', '    $t += isset($ids[$s]);', '}', 'return $t;'],
+    ['$t = 0;', 'foreach ($items as $x) {', '    $t += array_key_exists($s, $ids);', '}', 'return $t;'],
+    ['$seen = [];', 'foreach ($items as $x) {', '    $seen[$s] = 1;', '}', 'return count($seen);'],
+    ['$v = $s;', '$t = 0;', 'foreach ($items as $x) {', '    $t += strlen($v);', '}', 'return $t;'],
+    ['$lo = 0;', '$hi = count($items) - 1;', 'while ($lo <= $hi) {', '    $mid = intdiv($lo + $hi, 2);', '    if ($items[$mid] < $s) {', '        $lo = $mid + 1;', '    } else {', '        $hi = $mid - 1;', '    }', '}', 'return $lo;'],
+  ]) {
+    expect(answer(fn(P, ...body))).toBe(undefined)
+  }
+  // strlen, empty, a character and a static call's argument stay.
+  expect(answer(fn(P, '$t = 0;', 'foreach ($items as $x) {', '    $t += strlen($s);', '}', 'return $t;'))).toBe('O(n)')
+  expect(answer(fn(P, '$t = 0;', 'for ($i = 0; $i < strlen($s); $i++) {', '    if ($s[$i] === $c[0 + 0]) {', '        $t++;', '    }', '}', 'return $t;'))).toBe(undefined)
+  expect(answer(fn(P, '$t = 0;', 'for ($i = 0; $i < strlen($s); $i++) {', '    $v = $s[$i];', '    $t += strlen($v);', '}', 'return $t;'))).toBe('O(n)')
+})
+
+test('ruling G: only none, public, private, protected, static and final before function', async () => {
+  const body = ['{', '    $t = 0;', '    foreach ($items as $x) {', '        $t++;', '    }', '    return $t;', '}']
+  for (const mod of ['', 'public ', 'private ', 'protected ', 'static ', 'final ', 'final public static ']) expect(answer(php(`${mod}function f(array $items): int`, ...body))).toBe('O(n)')
+  for (const mod of ['abstract ', 'abstract public ', 'readonly ', 'var ', 'async ', 'public abstract ']) expect(answer(php(`${mod}function f(array $items): int`, ...body))).toBe(undefined)
 })

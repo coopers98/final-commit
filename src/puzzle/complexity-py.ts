@@ -13,7 +13,7 @@
 // assignment raises. Each has its own allowlist below.
 
 import { COMPLEXITY } from '../config'
-import { add, factor, hiddenScan, isExitName, isInert, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
+import { add, factor, hiddenScan, isExitName, isInert, isLiteralInRange, mul, ONE, treeByIndent, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -76,6 +76,8 @@ function tokenize(text: string): Tok[] {
     const num = /^\d+(?:\.\d+)?/.exec(rest)
     if (num) {
       need(!/^[A-Za-z0-9_.]/.test(rest.slice(num[0].length)))
+      // Task 7 fix round 1, ruling A: no literal beyond the shared cap (any int is below `1e400`).
+      need(isLiteralInRange(num[0]))
       out.push({ t: 'num', v: num[0] })
       i += num[0].length
       continue

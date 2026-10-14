@@ -114,12 +114,13 @@ test('an inner index bound reads the enclosing factor; under a halving loop, or 
   expect(answer(fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  for (let j = 0; j < x; j++) {', '    t += 1', '  }', '}', 'return t'))).toBe(undefined)
 })
 
-test('halving loops: *= 2, <<= 1, >>= 1 and Math.floor(i / 2) read O(log n); other starts and steps fail', async () => {
-  for (const head of ['let i = 1; i < n; i <<= 1', 'let i = 1; i <= n; i *= 2', 'let i = n; i > 0; i >>= 1', 'let i = n; i > 0; i = Math.floor(i / 2)']) {
+test('halving loops: *= 2 and Math.floor(i / 2) read O(log n); shift steps, other starts and steps fail', async () => {
+  for (const head of ['let i = 1; i < n; i *= 2', 'let i = 1; i <= n; i *= 2', 'let i = n; i > 0; i = Math.floor(i / 2)']) {
     expect(answer(fn('n: number', 'let t = 0', `for (${head}) {`, '  t += i', '}', 'return t'))).toBe('O(log n)')
   }
-  expect(costOf(fn('items: number[]', 'let t = 0', 'for (let i = items.length; i > 0; i >>= 1) {', '  t += 1', '}', 'return t'))?.category).toBe('halving')
-  for (const head of ['let i = 0; i < n; i *= 2', 'let i = 1; i < n; i *= 3', 'let i = n; i >= 0; i >>= 1', 'let i = n - 1; i > 0; i >>= 1', 'let i = 1; i > 0; i >>= 1']) {
+  expect(costOf(fn('items: number[]', 'let t = 0', 'for (let i = items.length; i > 0; i = Math.floor(i / 2)) {', '  t += 1', '}', 'return t'))?.category).toBe('halving')
+  // Task 7 fix round 1 (ruling C): a 32-bit shift wraps (`1 << 31` is negative), so no shift step counts.
+  for (const head of ['let i = 1; i < n; i <<= 1', 'let i = n; i > 0; i >>= 1', 'let i = n; i > 0; i >>>= 1', 'let i = 0; i < n; i *= 2', 'let i = 1; i < n; i *= 3', 'let i = n; i >= 0; i >>= 1', 'let i = n - 1; i > 0; i >>= 1', 'let i = 1; i > 0; i >>= 1']) {
     expect(answer(fn('n: number', 'let t = 0', `for (${head}) {`, '  t += i', '}', 'return t'))).toBe(undefined)
   }
 })
@@ -1063,4 +1064,47 @@ test('task 6 fix round 5: &&=, ||= and ??= fail', async () => {
     expect([line, 'loop', answer(fn(R4, init!, 'for (const x of items) {', `  ${line!.replace('(k)', '(x)')}`, '}', 'return t'))]).toEqual([line, 'loop', undefined])
   }
   expect(answer(fn(R4, 'let t = 0', 't += k', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe('O(n)')
+})
+
+// --- Task 7 fix round 1 (shared rulings) ------------------------------------------
+
+test('ruling A: a number literal beyond 2^31 - 1, in any form, refuses', async () => {
+  for (const lit of ['2147483648', '1e400', '1e10', '0xFFFFFFFFF', '0b111111111111111111111111111111111', '2147483648.5', '9007199254740993']) {
+    expect(answer(r4Work(`k > ${lit}`))).toBe(undefined)
+    expect(answer(r4Exit(`k <= ${lit}`))).toBe(undefined)
+    expect(answer(inLoop(`t += ${lit}`))).toBe(undefined)
+  }
+  expect(answer(r4Work('k > 2147483647'))).toBe('O(n)')
+  expect(answer(r4Work('k > -2147483647'))).toBe('O(n)')
+})
+
+test('ruling B: a join separator is a literal; a string parameter refuses', async () => {
+  expect(answer(inLoop('t += ids.join(sep).length', 'items: number[], ids: number[], sep: string'))).toBe(undefined)
+  expect(answer(inLoop('t += ids.join(sep.charAt(0)).length', 'items: number[], ids: number[], sep: string'))).toBe(undefined)
+  expect(answer(inLoop("t += ids.join(',').length"))).toBe('O(n·m)')
+  expect(answer(inLoop('t += ids.join().length'))).toBe('O(n·m)')
+})
+
+test('ruling D: a string parameter (or an alias of one) is no comparison operand, needle or key', async () => {
+  const P = 'items: number[], words: string[], s: string, t2: string, set: Set<string>, m: Map<string, number>'
+  for (const body of [
+    ['let c = 0', 'for (const x of items) {', '  if (s === t2) {', '    c++', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const x of items) {', '  if (s < t2) {', '    c++', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const w of words) {', '  if (w === s) {', '    c++', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const w of words) {', '  if (w === s) {', '    return c', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const x of items) {', '  if (words.includes(s)) {', '    c++', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const x of items) {', '  c += words.indexOf(s)', '}', 'return c'],
+    ['let c = 0', 'for (const x of items) {', '  if (set.has(s)) {', '    c++', '  }', '}', 'return c'],
+    ['let c = 0', 'for (const x of items) {', '  c += m.get(s) ?? 0', '}', 'return c'],
+    ['const u = s', 'let c = 0', 'for (const x of items) {', '  if (u === t2) {', '    c++', '  }', '}', 'return c'],
+    ['const seen = new Set<string>()', 'for (const x of items) {', '  seen.add(s)', '}', 'return seen.size'],
+    ['const seen = new Map<string, number>()', 'for (const x of items) {', '  seen.set(s, 1)', '}', 'return seen.size'],
+    ['let c = 0', 'for (const w of words) {', '  c += w === s ? 1 : 0', '}', 'return c'],
+    ['const d = words.filter(w => w === s)', 'return d.length'],
+  ]) {
+    expect(answer(fn(P, ...body))).toBe(undefined)
+  }
+  // .length and single characters stay.
+  expect(answer(fn(P, 'let c = 0', 'for (const x of items) {', '  c += s.length', '}', 'return c'))).toBe('O(n)')
+  expect(answer(fn(P, 'let c = 0', 'for (let i = 0; i < s.length; i++) {', "  if (s.charAt(i) === 'a') {", '    c++', '  }', '}', 'return c'))).toBe('O(n)')
 })

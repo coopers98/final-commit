@@ -12,7 +12,7 @@
 // be reached by name at run time. Each has its own allowlist below.
 
 import { COMPLEXITY, PUZZLE } from '../config'
-import { add, factor, hiddenScan, isExitName, isInert, keyOf, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
+import { add, factor, hiddenScan, isExitName, isInert, isLiteralInRange, keyOf, mul, ONE, treeByBraces, type Block, type Cost, type HiddenPlace, type HiddenScan } from './complexity'
 import { isBlankedLine } from './readable'
 import type { Unit } from './units'
 
@@ -42,8 +42,13 @@ const WORDS: ReadonlySet<string> = setOf(...Object.values(LISTS), PHP_WORDS)
 const SORTS = setOf(LISTS.sort)
 /** Sorts that take a comparator second. */
 const USER_SORTS = new Set(['usort', 'uasort', 'uksort'])
-/** Modifiers before `function`; before a parameter they promote it (refused). */
+/** Modifiers before a parameter promote it (refused). */
 const MODIFIERS = new Set(['public', 'private', 'protected', 'static', 'final', 'readonly', 'abstract', 'var'])
+/**
+ * Fix round 1, ruling G: the modifiers a function with a body may have. `abstract` has none. `static` stays: a
+ * static method only loses `$this` (refused anyway), and `static::` calls are read by name like any class's.
+ */
+const FUNCTION_MODIFIERS = new Set(['public', 'private', 'protected', 'static', 'final'])
 const LITERAL_WORDS = new Set(['true', 'false', 'null'])
 
 const ORDER = new Set(['<', '<=', '>', '>='])
@@ -81,6 +86,8 @@ function tokenize(text: string): Tok[] {
     if (num) {
       // No octal (`010`), hex, binary, exponent or separator forms.
       need(!/^[A-Za-z0-9_.]/.test(rest.slice(num[0].length)) && !/^0\d/.test(num[0]))
+      // Fix round 1, ruling A: no literal beyond the shared cap (past PHP_INT_MAX a test is constant, past the floats INF).
+      need(isLiteralInRange(num[0]))
       out.push({ t: 'num', v: num[0] })
       i += num[0].length
       continue
@@ -368,6 +375,7 @@ function numLit(n: Node | undefined): number | undefined {
 }
 const isCallOf = (n: Node | undefined, f: string): n is Extract<Node, { k: 'call' }> => n?.k === 'call' && n.fn === f
 
+// Each reader keeps its own copy of `negate`, `isTrivial` and `checkGrammar`: each works on its own syntax tree.
 /** `!c`, with comparisons flipped so an atom stays an atom. */
 function negate(n: Node): Node {
   if (n.k === 'cmp' && Object.hasOwn(FLIP, n.op)) return { ...n, op: FLIP[n.op]! }
@@ -395,7 +403,7 @@ function header(p: Parser): Node {
   return c
 }
 
-/** The step clause of a `for`, over index `i`. */
+/** The step clause of a `for`, over index `i`. Fix round 1, ruling C: no shift step (`1 << 63` wraps to PHP_INT_MIN, then 0, and the loop never ends). */
 function readStep(p: Parser, i: string): ForHead['step'] {
   if (p.is('++') || p.is('--')) {
     const op = p.peek()!.v
@@ -421,12 +429,6 @@ function readStep(p: Parser, i: string): ForHead['step'] {
     case '*=':
       need(numLit(p.expr()) === 2)
       return 'double'
-    case '<<=':
-      need(numLit(p.expr()) === 1)
-      return 'double'
-    case '>>=':
-      need(numLit(p.expr()) === 1)
-      return 'halve'
     case '=': {
       const n = p.expr()
       need(isCallOf(n, 'intdiv') && n.args.length === 2 && isVar(n.args[0], i) && numLit(n.args[1]) === 2)
@@ -607,7 +609,7 @@ function readSignature(lines: readonly string[], opener: number, name: string): 
   const toks = tokenize(lines.slice(0, opener + 1).join(' ').trim())
   need(isP(toks.at(-1), '{'))
   let k = 0
-  while (toks[k]?.t === 'id' && MODIFIERS.has(keyOf(toks[k]!.v, 'PHP')) && keyOf(toks[k]!.v, 'PHP') !== 'readonly' && keyOf(toks[k]!.v, 'PHP') !== 'var') k++
+  while (toks[k]?.t === 'id' && FUNCTION_MODIFIERS.has(keyOf(toks[k]!.v, 'PHP'))) k++
   need(isWord(toks[k], 'function') && toks[k + 1]?.t === 'id' && keyOf(toks[k + 1]!.v, 'PHP') === keyOf(name, 'PHP') && isP(toks[k + 2], '('))
   const open = k + 2
   let depth = 0
@@ -987,7 +989,7 @@ class Reader {
    * The loop table for `for`: counting up from 0 or 1 (or an enclosing
    * index ± a literal over the same size) while `< B` or `<= B - 1` by one;
    * down from B or B - 1 to a literal by one; halving up from a positive
-   * literal by `*= 2` or `<<= 1`, or down from B by `>>= 1` or `intdiv($i, 2)`;
+   * literal by `*= 2`, or down from B by `intdiv($i, 2)` (no shift step);
    * both ends literal is constant. B is `count($S)`, `strlen($s)` or an int
    * parameter, or an enclosing index (never under a halving loop or search).
    */
@@ -1127,9 +1129,10 @@ class Reader {
     return { at: s.at, kind: 'search', names: new Map(), index: mid, validFor: src!.name, factor: factor({ size: src!.origin, log: true, kind: 'search', at: s.at, what: `binary search over ${src!.name}` }) }
   }
 
+  /** A number parameter (fix round 1, ruling D: never a whole string, whose comparison costs its length). */
   private isScalarParam(name: string): boolean {
     const k = this.params.get(name)?.kind
-    return k === 'int' || k === 'float' || k === 'str'
+    return k === 'int' || k === 'float'
   }
 
   // --- Locals: types (lessons family 5) -----------------------------------------
@@ -1194,8 +1197,6 @@ class Reader {
       case 'array_filter':
       case 'array_map':
         return 'coll'
-      case 'implode':
-        return 'str'
       default:
         return 'bad'
     }
@@ -1409,6 +1410,7 @@ class Reader {
 
   // --- Conditions: the read-once grammar (lessons family 4) ------------------------
 
+  // Each reader keeps its own copy of the grammar (see `negate`): it works on this reader's syntax tree.
   /**
    * Every condition is `&&`, `||` and `!` over atoms, and no named value (read
    * through locals) is in two atoms. An atom is a bare bool parameter,
@@ -1477,8 +1479,8 @@ class Reader {
   }
 
   /**
-   * A single named value, its type and the values it reads: a number, bool or
-   * string parameter; a for loop's index or a binary search's lo, hi or mid; a
+   * A single named value, its type and the values it reads: a number or bool
+   * parameter (never a whole string, ruling D); a for loop's index or a binary search's lo, hi or mid; a
    * character `$s[$i]` at a position valid for that string; `count` or
    * `strlen` of a source; or a local written once outside loops that holds one
    * of these (a number plus or minus an integer literal), read through to it.
@@ -1489,7 +1491,8 @@ class Reader {
         const name = n.name
         const p = this.params.get(name)
         if (p) {
-          const type = p.kind === 'int' || p.kind === 'float' ? 'num' : p.kind === 'bool' ? 'bool' : p.kind === 'str' ? 'str' : undefined
+          // Fix round 1, ruling D: a whole string parameter is no named value (comparing it costs its length).
+          const type = p.kind === 'int' || p.kind === 'float' ? 'num' : p.kind === 'bool' ? 'bool' : undefined
           return type && { type, roots: new Set([name]) }
         }
         const b = this.bindingOf(name, env)
@@ -1601,7 +1604,8 @@ class Reader {
 
   /**
    * An exit from a loop must stand behind a positive `===` between a
-   * character of a string parameter the loop walks and another string, which
+   * character of a string parameter the loop walks and a character of another
+   * one walked by its own loop, which
    * the input can always make false. An array's elements are untyped, so no
    * test on one is an exit. It may not stand in an if chain whose every
    * branch leaves.
@@ -1659,7 +1663,7 @@ class Reader {
     return env.loops.some((l) => l.walks === recv && l.index === pos) ? recv : undefined
   }
 
-  /** `$s[$i] === $c` with `$c` another string parameter, or a character of another one. */
+  /** `$s[$i] === $c[$j]`, characters of two string parameters (fix round 1, ruling D: never a whole string). */
   private isFalsifiable(a: Node, env: Env): boolean {
     if (a.k !== 'cmp' || a.op !== '===') return false
     for (const [x, y] of [
@@ -1668,7 +1672,6 @@ class Reader {
     ] as const) {
       const e = this.charRef(x, env)
       if (e === undefined) continue
-      if (isVar(y) && this.params.get(y.name)?.kind === 'str' && y.name !== e) return true
       const o = this.charRef(y, env)
       if (o !== undefined && o !== e) return true
     }
@@ -1809,7 +1812,7 @@ class Reader {
       const v = this.val(line.value, env)
       need(v.vt !== 'coll')
       if (t.k === 'append') return v.c
-      const k = this.val(t.key, env)
+      const k = this.scalar(t.key, env)
       need(k.vt === 'num' || k.vt === 'str' || k.vt === 'opaque')
       return add(k.c, v.c)
     }
@@ -1817,6 +1820,7 @@ class Reader {
       need(isEmptyArray(line.value))
       return NOTHING
     }
+    need(!this.isStrParam(line.value))
     const v = this.val(line.value, env, l.k === 'derived' || l.k === 'closed' ? 'ret' : 'value')
     switch (l.k) {
       case 'derived':
@@ -1909,7 +1913,7 @@ class Reader {
         return { c: add(l.c, r.c), vt: 'num' }
       }
       case 'cmp': {
-        need(n.op !== '<=>')
+        need(n.op !== '<=>' && !this.isStrParam(n.left) && !this.isStrParam(n.right))
         const l = this.val(n.left, env)
         const r = this.val(n.right, env)
         need(l.vt !== 'coll' && r.vt !== 'coll')
@@ -1965,8 +1969,19 @@ class Reader {
     return this.sourceOfName(n.name)?.kind === 'array' || l?.k === 'acc' || l?.k === 'closed'
   }
 
-  /** A value that is no array (a needle, a key, a default). */
+  /**
+   * Fix round 1, ruling D: a whole string parameter. Its length is a size, so
+   * comparing, searching or hashing it costs that size: it is no comparison
+   * operand, needle or key, and no local takes it (an alias would carry it).
+   * `strlen`, `empty` and its characters `$s[$i]` stay.
+   */
+  private isStrParam(n: Node): boolean {
+    return isVar(n) && this.params.get(n.name)?.kind === 'str'
+  }
+
+  /** A value that is no array and no whole string parameter (a needle, a key). */
   private scalar(n: Node, env: Env): Val {
+    need(!this.isStrParam(n))
     const v = this.val(n, env)
     need(v.vt !== 'coll')
     return v
@@ -2059,12 +2074,6 @@ class Reader {
         const s = this.namedSource(args[0])
         if (n.fn !== 'array_sum') need(ctx === 'ret')
         return { c: this.site(env, s.name, `${n.fn} of ${s.name}`), vt: n.fn === 'array_sum' ? 'num' : 'coll' }
-      }
-      case 'implode': {
-        // The separator is a string parameter: a local could carry the result back in and grow with each round.
-        need(args.length === 2 && isVar(args[0]) && this.params.get(args[0].name)?.kind === 'str')
-        const s = this.namedSource(args[1])
-        return { c: this.site(env, s.name, `implode of ${s.name}`), vt: 'str' }
       }
       case 'array_slice': {
         need(args.length === 2 && ctx === 'ret')
@@ -2170,6 +2179,7 @@ function isComparator(n: Node, isBound: (name: string) => boolean): boolean {
   return b.k === 'cmp' && b.op === '<=>' && ((isVar(b.left, p) && isVar(b.right, q)) || (isVar(b.left, q) && isVar(b.right, p)))
 }
 
+// Each reader keeps its own copy (see `negate`): it works on this reader's syntax tree.
 /** A condition no input can change: no names at all, a literal operand of `&&`, `||` or `!`, a comparison of a value with itself, or `a || !a` / `a && !a`. */
 function isTrivial(n: Node): boolean {
   if (!someNode(n, (m) => m.k === 'var')) return true

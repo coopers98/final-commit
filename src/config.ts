@@ -257,6 +257,8 @@ export const DOSSIER = {
 // builtins the readers know: everything not listed fails closed.
 export const COMPLEXITY = {
   maxQuestionChars: 160,
+  /** Task 7 fix round 1, ruling A: the largest magnitude a shown number literal may have (2^31 - 1). A literal beyond a type's range is constant against it (PHP's 64-bit ints, TS's `1e400` = Infinity, any Python int below `1e400`), which would make a guard always or never true. */
+  maxLiteral: 2_147_483_647,
   ruleText: 'Worst case. Built-in operations over a whole collection (search, copy, sum, join, map, filter) cost its size; sorts size × log size; hash lookups and appends 1; other calls 1.',
   distractors: {
     'O(log n)': ['O(1)', 'O(n)', 'O(n log n)'],
@@ -298,9 +300,10 @@ export const COMPLEXITY = {
     // not in `sort`, `linear` or `constant` refuses the unit; every name here stays a word no hidden line may hold.
     PHP: {
       sort: ['sort', 'rsort', 'asort', 'arsort', 'ksort', 'krsort', 'usort', 'uasort', 'uksort'],
-      linear: ['in_array', 'array_search', 'array_keys', 'array_values', 'array_sum', 'array_reverse', 'array_flip', 'max', 'min', 'implode', 'array_slice', 'array_map', 'array_filter', 'array_reduce'],
+      linear: ['in_array', 'array_search', 'array_keys', 'array_values', 'array_sum', 'array_reverse', 'array_flip', 'max', 'min', 'array_slice', 'array_map', 'array_filter', 'array_reduce'],
       constant: ['count', 'strlen', 'isset', 'empty', 'array_key_exists', 'array_key_first', 'array_key_last', 'abs', 'intdiv', 'max', 'min'],
-      fails: ['array_merge', 'array_unique', 'array_column', 'array_push', 'array_pop', 'array_shift', 'array_unshift', 'array_splice', 'array_walk', 'array_fill', 'array_combine', 'array_diff', 'array_intersect', 'range', 'str_repeat', 'explode', 'str_split', 'substr', 'strpos', 'str_contains', 'str_replace', 'str_pad', 'sprintf', 'unset', 'list', 'call_user_func', 'call_user_func_array', 'compact', 'extract', 'eval', 'create_function', 'func_get_args', 'func_get_arg', 'get_defined_vars', 'iterator_to_array', 'json_encode', 'json_decode', 'serialize', 'unserialize', 'preg_match', 'preg_replace', 'echo', 'print', 'global', 'static', 'new', 'clone', 'match', 'switch', 'case', 'try', 'catch', 'finally', 'include', 'include_once', 'require', 'require_once', 'declare', 'instanceof'],
+      // implode: its cost grows with its separator's length, and no literal separator is ever shown (fix round 1, ruling B).
+      fails: ['implode', 'array_merge', 'array_unique', 'array_column', 'array_push', 'array_pop', 'array_shift', 'array_unshift', 'array_splice', 'array_walk', 'array_fill', 'array_combine', 'array_diff', 'array_intersect', 'range', 'str_repeat', 'explode', 'str_split', 'substr', 'strpos', 'str_contains', 'str_replace', 'str_pad', 'sprintf', 'unset', 'list', 'call_user_func', 'call_user_func_array', 'compact', 'extract', 'eval', 'create_function', 'func_get_args', 'func_get_arg', 'get_defined_vars', 'iterator_to_array', 'json_encode', 'json_decode', 'serialize', 'unserialize', 'preg_match', 'preg_replace', 'echo', 'print', 'global', 'static', 'new', 'clone', 'match', 'switch', 'case', 'try', 'catch', 'finally', 'include', 'include_once', 'require', 'require_once', 'declare', 'instanceof'],
       derive: ['array_keys', 'array_values', 'array_reverse', 'array_filter', 'array_map'],
       mutate: ['sort', 'rsort', 'asort', 'arsort', 'ksort', 'krsort', 'usort', 'uasort', 'uksort', 'array_push', 'array_pop', 'array_shift', 'array_unshift', 'array_splice', 'unset', 'shuffle', 'array_walk'],
       // Common PHP global functions and language constructs besides the lists above: never shown unlisted, never in a hidden line.

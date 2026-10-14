@@ -227,7 +227,7 @@ Skip the unit when:
 | counting up: one index named in all three clauses, starts at literal `0` or `1`, or at an enclosing loop's index ± a literal; condition `i < B` or `i <= B` (with `B - 1` allowed); step `i++`, `++i`, `i += 1`, `$i++`; Python `range(B)`, `range(A, B)` with A as above, `range(A, B, k)` with literal k ≥ 1 | size(B) |
 | counting down: starts at `B` or `B - 1`, condition `i > L` / `i >= L` with literal L, step `i--`, `--i`, `i -= 1`; Python `range(B - 1, -1, -1)` and `reversed(range(…))` as above | size(B) |
 | inner bound that is an enclosing counting or for-each loop's index (`j < i`, `range(i)`, `range(i + 1, n)` with n as above); never under a halving loop | the enclosing loop's factor |
-| halving: `for (let i = 1; i < B; i *= 2)` (start a positive literal; or `<<= 1`), `for (let i = B; i > 0; i = Math.floor(i / 2))` / `i >>= 1` / `intdiv($i, 2)` (Python has no halving `for`) | log size(B) |
+| halving: `for (let i = 1; i < B; i *= 2)` (start a positive literal), `for (let i = B; i > 0; i = Math.floor(i / 2))` / `intdiv($i, 2)` (Python has no halving `for`); never a shift step (`<<=`, `>>=`, `>>>=`: a shift wraps, task 7 fix round 1) | log size(B) |
 | binary search (below) | log size(S) |
 | both ends literal | 1 |
 | anything else (another `while`, an index assigned in the body, a step or a direction that does not match its condition, any other bound) | fails the unit |
@@ -267,6 +267,22 @@ is a local that starts empty (`[]`, `{}`, `new Set()`, `new Map()`, `set()`,
 `dict()`, `[]` in PHP) and only grows by constant-cost appends; it is
 never a size source, and anything but the listed constant operations on
 it fails the unit.
+
+**The size convention** (task 7 fix round 1). A size is a parameter's
+element count: for an array, its length as passed (in PHP `count()` of the
+array, whatever holes it was built with), and for a string, its length.
+Comparing, hashing or copying one element costs 1, whatever the element
+holds; so a key over arrays of arrays or of long strings understates by the
+element size. That is a stated convention of the question, not a reading.
+A whole string parameter is no element: its length is a size, so comparing,
+searching for or hashing it costs that size, and every reader refuses it as
+an operand of a comparison, a membership needle or a key (`.length`,
+`strlen`, `len` and single characters stay). Every reader also refuses a
+number literal beyond `COMPLEXITY.maxLiteral` (2^31 - 1) in magnitude, in
+any form (float, exponent, hex, octal, binary): beyond a type's range a
+literal is constant against it (PHP's 64-bit ints, TypeScript's `1e400`,
+which is Infinity, any Python int below `1e400`), so a guard on it would be
+always or never true.
 
 **Typed receivers.** A method builtin counts only on a receiver whose
 type the reader knows: a TS parameter typed as an array (`T[]`,
@@ -321,8 +337,8 @@ Costs (S a typed parameter or derived value; n = size(S)):
     argument), `any(S)`, `all(S)`.
   - PHP: `in_array($x, $S)`, `array_search($x, $S)`, `array_keys($S)`
     (one argument), `array_values`, `array_sum`, `array_reverse`,
-    `array_flip`, `array_column`, `max($S)`, `min($S)` (one argument),
-    `implode($sep, $S)`, `array_slice` with no length, `array_map($cb,
+    `array_flip`, `max($S)`, `min($S)` (one argument),
+    `array_slice` with no length, `array_map($cb,
     $S)` (one array), `array_filter($S, $cb)`, `array_reduce($S, $cb)`.
   - The callback of `forEach`, `map`, `filter`, `find`, `findIndex`,
     `some`, `every`, `reduce` (TS), `array_map`, `array_filter`,
@@ -392,7 +408,9 @@ key, the TypeScript reader takes the stricter reading. Each is a test.
   enclosing index needs that loop to run over the same size.
 - **Builtins.** `entries`, `keys` and `values` of an array are lazy:
   counted only as a for-of source. `includes`, `indexOf`, `lastIndexOf`
-  and `join` take at most one argument (no start index); `findLast` and
+  and `join` take at most one argument (no start index; a `join`
+  separator is a literal of constant length, never a string parameter, task
+  7 fix round 1); `findLast` and
   `findLastIndex` fail. A `filter` gives a derived value only when its
   test can hold for every element. No mutating call reaches a parameter
   through an element, a loop variable or a call's result. Names may not
@@ -698,6 +716,7 @@ Each is a test.
   `<<`, bitwise operator, `xor`/`and`/`or`, or loose comparison (`==`,
   `!=`, `<>`); `<=>` stands only in a comparator.
 - **Signature.** `[public|private|protected|static|final] function name(…)`
+  (fix round 1: any other modifier, `abstract` included, fails)
   over at most `PUZZLE.maxSignatureLines` lines to the body's `{`; each
   parameter `[?type | union] $name [= literal or []]`. `array` (`?array`,
   `array|null`) is a sized array, `string` sized by `strlen`, `int` sized by
@@ -740,10 +759,11 @@ Each is a test.
   `array_search` (strict flag only as the literal `true`), `array_keys`,
   `array_values`, `array_reverse`, `array_flip`, `array_sum`, `max($S)`,
   `min($S)` (one argument), `array_slice($S, $off)` (no length),
-  `implode($sep, $S)` with `$sep` a string parameter (a local could feed the
-  result back), `array_filter`, `array_map` (one array), `array_reduce`
+  `array_filter`, `array_map` (one array), `array_reduce`
   (a number literal start, a number body). Every other global function
-  refuses, `array_merge`, `array_unique`, `array_column`, `range`,
+  refuses, `implode` (fix round 1: its cost grows with the separator's
+  length, and a separator must be a literal, which a shown line never
+  holds), `array_merge`, `array_unique`, `array_column`, `range`,
   `str_repeat`, `explode`, `str_split`, `substr`, `strpos`, `str_contains`,
   `str_replace`, `call_user_func*`, `compact`, `extract`, `eval` and
   `func_get_args` included. Arithmetic is `+`, `-`, `*` on proven numbers,
@@ -764,7 +784,8 @@ Each is a test.
   named values of one type or a named number and an integer literal, or one
   membership (`in_array($x, $S)`, `isset($S[$x])`,
   `array_key_exists($x, $S)`) of an element bound over a parameter in
-  another parameter. Named values: int, float, bool and string parameters, a
+  another parameter. Named values: int, float and bool parameters (fix round
+  1: never a whole string parameter, which is no operand, needle or key), a
   `for` index, a search's lo, hi and mid, `count`/`strlen` of a source, a
   character `$s[$i]` at a valid position, and a local written once outside
   loops as one of these plus or minus a literal. `&&` and `||` stand only in
@@ -773,11 +794,12 @@ Each is a test.
   So a membership in an accumulator (`isset($seen[$x])`) is no atom.
 - **Exits.** An exit from a loop stands behind a positive `===` between a
   character `$s[$i]` of a string parameter its loop walks (from 0 by 1 to
-  `strlen($s)`) and another string parameter or another string's character.
+  `strlen($s)`) and a character of another string parameter walked by its
+  own loop (fix round 1: never the whole other string).
   `exit`, `die`, `goto`, `break N`, `continue N` and any call whose function,
   class or method name holds an exit part (case-folded) fail. The binary
   search takes `intdiv($lo + $hi, 2)` or `($lo + $hi) >> 1` and one if/else
-  on `$S[$mid]` against a scalar parameter or literal; it has no equality
+  on `$S[$mid]` against a number parameter or literal; it has no equality
   exit (the elements are untyped).
 - **Hidden lines** are the shared closed forms. PHP adds: a `#[` attribute,
   a heredoc or nowdoc, a double-quoted string holding `$`, and any PHP, ASP

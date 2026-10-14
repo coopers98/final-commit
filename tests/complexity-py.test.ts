@@ -625,3 +625,29 @@ test('fix round 4: the Python reader already reads tests as and, or and not over
   for (const c of ['k > 0', 'b', 'not b', 'b and c', 'b or k > 0']) expect([c, answer(exit(c))]).toEqual([c, 'O(n)'])
   expect(answer(fn(P, 'm = k + 1', 'if m > k:', '    return 0', 't = 0', 'for x in items:', '    t += x', 'return t'))).toBe(undefined)
 })
+
+// --- Task 7 fix round 1 (shared rulings) ------------------------------------------
+
+test('ruling A: a number literal beyond 2^31 - 1 refuses (a Python int is always below 1e400)', async () => {
+  for (const lit of ['2147483648', '99999999999999999999', '2147483648.5', '9' + '9'.repeat(399)]) {
+    expect(answer(guarded(`k > ${lit}`))).toBe(undefined)
+    expect(answer(guarded(`k <= ${lit}`))).toBe(undefined)
+    expect(answer(inLoop(`t += ${lit}`))).toBe(undefined)
+  }
+  expect(answer(guarded('k > 2147483647'))).toBe('O(n·m)')
+})
+
+test('rulings B and D: no join, and a str parameter is no comparison operand, needle or key', async () => {
+  const P = 'items: list[int], words: list[str], s: str, t2: str, d: dict[str, int], seen: set[str]'
+  for (const line of ['if s == t2:', 'if s < t2:', 'if s in words:', 'if s in seen:', 'if s in d:', 'if d.get(s):']) {
+    expect(answer(fn(P, 'c = 0', 'for x in items:', `    ${line}`, '        c += 1', 'return c'))).toBe(undefined)
+  }
+  expect(answer(fn(P, 'c = 0', 'for w in words:', '    if w == s:', '        c += 1', 'return c'))).toBe(undefined)
+  expect(answer(fn(P, 'c = 0', 'for x in items:', '    c += len(s.join(words))', 'return c'))).toBe(undefined)
+  expect(answer(fn(P, 'c = 0', 'for x in items:', '    c += len(s)', 'return c'))).toBe('O(n)')
+})
+
+test('ruling C: no shift in a loop step (Python has no counting step but range; shifts refuse everywhere)', async () => {
+  expect(answer(fn('n: int', 't = 0', 'i = 1', 'while i < n:', '    i <<= 1', '    t += 1', 'return t'))).toBe(undefined)
+  expect(answer(fn('n: int', 't = 0', 'i = 1', 'while i < n:', '    i = i << 1', '    t += 1', 'return t'))).toBe(undefined)
+})
