@@ -374,31 +374,54 @@ key, the TypeScript reader takes the stricter reading. Each is a test.
   Residual: a tautology the reader cannot see still counts its branch; an
   unknown name or helper in a test is read as able to take any value.
 
-Fix round 1 (task review):
+Allowlists (fix rounds 1 and 2). Each family names what is accepted;
+everything else fails.
 
-- **Indices are not elements.** `for…in`, an array's `keys()`,
-  `Object.keys`, and the first name of an `entries()` pair (or a whole
-  pair) hold indices: a test on one never counts as an exit or a choice,
-  for a loop, a callback or a derived value of keys or entries.
-- **Reads by position** (`p[e]`, `p.at(e)`, `charAt`, `charCodeAt`,
-  `codePointAt`, `e in p`) on a size source, a collection local or an
-  array accumulator take a loop's index (or `mid`, a key, a callback
-  index), plus or minus a literal, anywhere; a fixed position probes the
-  size (`items[16] !== undefined`). A literal loop's index is fixed.
-- **`.length` / `.size`** of anything but a parameter, a derived value or
-  an element is a size the reader cannot name: any test on it fails.
-- **Two sizes** compared for equality (`===`, `!==`, `==`, `!=`), or with
-  `<` one way and `>` the other, fail: they make n·m read as n².
-- **Collection locals** (a copy, a string or a non-empty literal from a
-  builtin, a filled Set or Map) take only lookups and appends; their bare
-  value is not handed on. A plain local holding something reached through
-  a parameter or loop name is never mutated (no mutating call, no element
-  or property write).
-- **NaN** is no value a test can choose.
-- **reduce** starts from a number or an empty collection; a string start,
-  or none, may concatenate and fails.
-- **Arrays of object or tuple types** are arrays; their elements take
-  property reads but no method calls.
+- **Exit and choose tests** read only an element bound directly by a loop
+  or callback over a parameter, or over a filter of one, or its
+  properties (`x`, `p[i]`, `x.id`). Elements of a map, copy, spread,
+  `Array.from`, `Object.values` or any other derived collection, indices
+  (`for…in`, `keys()`, `Object.keys`, an entry's first name, a callback's
+  index) and whole entries are never atoms.
+- **Conditions outside loops** (an if's test, and a `?:`, `&&` or `||`
+  test guarding costly work) hold only literals, number and boolean
+  parameters, `.length`/`.size` of a bare parameter, size-free locals and
+  operators. A size-free local is declared outside loops from such a
+  value and never written inside a loop or callback, nor with anything
+  else. Any call, index, `in` or other member read there fails.
+- **Reads by position** (`p[e]`, `.at`, `charAt`, `charCodeAt`,
+  `codePointAt`, `e in p`) on a size source, a closed local, an array
+  accumulator or any call's result take a loop's index (or `mid`, a key,
+  a callback index) plus or minus a literal; a literal loop's index is a
+  fixed position. `.length`/`.size` of anything but a parameter, a derived
+  value or an element is a size the reader cannot name, and fails any test.
+- **Sizes**: no test names two size sources, in any form, and no
+  comparison has a size on both sides.
+- **Contradictions**: two tests that do not vary and name the same value
+  on one path, at any depth (or in one `&&`), fail.
+- **Locals** are proven scalar (a number, boolean or string) or numeric
+  where declared, by their initializer or a `number`/`string` annotation:
+  literals, number and boolean parameters, sizes, primitive elements and
+  indices, `Math.*`, `Number`, `parseInt`, the index searches, comparisons
+  and arithmetic. Every later write must keep the proof. Any other local
+  is closed-list: lookups and appends only (`has`, `get`, `at`, `push`,
+  `add`, `set`, `delete`, `pop`), on itself and on anything reached
+  through it (no mutating call there); its bare value is only tested,
+  compared or returned. A local holding something reached through a
+  parameter or loop name (not a fresh Set, Map or copy) is never mutated.
+- **`+` and `+=`** take only proven numbers: number literals and
+  parameters, numeric locals, indices, elements whose type is `number`,
+  `.length`/`.size`, numeric calls, a reduce's accumulator from a number
+  start, and arithmetic of these. A reduce starts from a number or an
+  empty collection. NaN is no value a test can choose.
+- **Opaque values**: an element whose type is not a primitive (`{…}[]`,
+  `Foo[]`, a tuple, an untyped or other-typed parameter's, a Map's
+  non-primitive values, a whole entry), its properties (not
+  `.length`/`.size`) and its elements are opaque. One may be compared,
+  used as a key (`has`, `get`, `add`, `set`, an accumulator's index) or
+  pushed; it never takes a method call or `+`, is never aliased (a
+  declaration or assignment), handed to another call, spread or iterated.
+  A map's results are opaque.
 
 ### Combining
 

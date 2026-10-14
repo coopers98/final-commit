@@ -141,7 +141,8 @@ test('size sources: for-in, Object.keys/values/entries, entries() and Map or Set
   for (const src of ['Object.keys(o)', 'Object.values(o)']) {
     expect(answer(fn('o: Record<string, number>', 'let t = 0', `for (const v of ${src}) {`, '  t += 1', '}', 'return t'))).toBe('O(n)')
   }
-  expect(answer(fn('o: Record<string, number>', 'let t = 0', 'for (const [k, v] of Object.entries(o)) {', '  t += v', '}', 'return t'))).toBe('O(n)')
+  // An object's values are opaque: counted, not added.
+  expect(answer(fn('o: Record<string, number>', 'let t = 0', 'for (const [k, v] of Object.entries(o)) {', '  t += 1', '}', 'return t'))).toBe('O(n)')
   expect(answer(fn('items: number[]', 'let t = 0', 'for (const [i, x] of items.entries()) {', '  t += i * x', '}', 'return t'))).toBe('O(n)')
   expect(answer(fn('m: Map<string, number>', 'let t = 0', 'for (const [k, v] of m) {', '  t += v', '}', 'return t'))).toBe('O(n)')
   expect(answer(fn('s: Set<number> | undefined', 'let t = 0', 'for (const v of s.values()) {', '  t += v', '}', 'return t'))).toBe('O(n)')
@@ -373,8 +374,9 @@ test('gate 10: a size compared with anything but another size or a loop index fa
   const nested = ['let t = 0', 'for (const x of items) {', '  for (const y of items) {', '    t += x * y', '  }', '}', 'return t']
   expect(answer(fn('items: number[]', 'if (items.length === 0) {', '  return 0', '}', ...nested))).toBe('O(n²)')
   expect(answer(fn('items: number[]', 'if (!items.length) {', '  return 0', '}', ...nested))).toBe('O(n²)')
-  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < 2 || ids.length === 0) {', '  return 0', '}', ...nested))).toBe('O(n²)')
-  expect(answer(fn('items: number[], ids: number[]', 'if (items.length > ids.length) {', '  return 0', '}', ...nested))).toBe('O(n²)')
+  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < 2 || items.length === 0) {', '  return 0', '}', ...nested))).toBe('O(n²)')
+  // Two size sources in one test fail (fix round 2, family 3).
+  expect(answer(fn('items: number[], ids: number[]', 'if (items.length > ids.length) {', '  return 0', '}', ...nested))).toBe(undefined)
   expect(answer(fn('items: number[]', 'let t = 0', 'for (let i = 0; i < items.length; i++) {', '  if (i < items.length - 1) {', '    t += items[i]', '  }', '}', 'return t'))).toBe('O(n)')
   // Small sizes that do not exit, or exit for large sizes.
   expect(answer(fn('items: number[]', 'let t = 0', 'if (items.length < 2) {', '  for (const x of items) {', '    for (const y of items) {', '      t += x * y', '    }', '  }', '}', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe(undefined)
@@ -591,7 +593,8 @@ test('sizes compared for equality, or both ways, fail (fix 4)', async () => {
   expect(answer(fn('items: number[], ids: number[]', 'if (items.length < ids.length) {', '  return 0', '}', 'if (ids.length < items.length) {', '  return 0', '}', ...two))).toBe(undefined)
   // A < and a > together say the sizes are equal.
   expect(answer(fn('items: number[], ids: number[]', 'if (items.length < ids.length || ids.length < items.length) {', '  return 0', '}', ...two))).toBe(undefined)
-  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < ids.length) {', '  return 0', '}', ...two))).toBe('O(n·m)')
+  // Since fix round 2 (family 3), one comparison of two sizes fails too.
+  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < ids.length) {', '  return 0', '}', ...two))).toBe(undefined)
 })
 
 test('a local holding a collection keeps the closed lists, and one reaching a parameter is not mutated (fix 5)', async () => {
@@ -625,7 +628,119 @@ test('an array of object or tuple types is an array of opaque elements (fix 9)',
   for (const type of ['{ id: number }[]', '[number, number][]', 'Array<{ id: number }>']) {
     expect([type, answer(fn(`items: ${type}`, 'let t = 0', 'for (const x of items) {', '  t += 1', '}', 'return t'))]).toEqual([type, 'O(n)'])
   }
-  expect(answer(fn('items: { id: number }[]', 'let t = 0', 'for (const x of items) {', '  t += x.id', '}', 'return t'))).toBe('O(n)')
+  // A property is read and compared, but not added (fix round 2, family 7).
+  expect(answer(fn('items: { id: number }[], k: number', 'let t = 0', 'for (const x of items) {', '  if (x.id === k) {', '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
+  expect(answer(fn('items: { id: number }[]', 'let t = 0', 'for (const x of items) {', '  t += x.id', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: { id: number }[]', 'let t = 0', 'for (const x of items) {', '  t += x.check()', '}', 'return t'))).toBe(undefined)
   expect(answer(fn('items: { id: number }[]', 'let t = 0', 'items.forEach(x => x.check())', 'return t'))).toBe(undefined)
+})
+
+// --- Fix round 2: allowlists (task re-review of c654688) ----------------------
+
+const nest2 = ['let t = 0', 'for (const x of items) {', '  for (const y of items) {', '    t += x * y', '  }', '}', 'return t']
+const two2 = ['let t = 0', 'for (const x of items) {', '  for (const y of ids) {', '    t += x * y', '  }', '}', 'return t']
+const guard2 = (pre: string[], cond: string, params = 'items: number[], ids: number[]') => fn(params, ...pre, `if (${cond}) {`, '  return -1', '}', ...nest2)
+
+test('family 1: an exit or choose test reads only an element of a parameter or of a filter of one', async () => {
+  // Reviewer: map results hold indices.
+  expect(answer(fn('items: number[], ids: number[]', 'const idx = items.map((x, i) => i)', 'let t = 0', 'for (const k of idx) {', '  if (k === 0) {', '    t += ids.indexOf(1)', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], ids: number[]', 'const idx = items.map((x, i) => i)', 'let t = 0', 'for (const k of idx) {', '  if (k === 3) {', '    return t', '  }', '  t += ids.indexOf(k)', '}', 'return t'))).toBe(undefined)
+  // Own: copies are no parameter source either.
+  for (const init of ['items.slice()', 'items.toSorted()', '[...items]', 'Array.from(items)']) {
+    expect([init, answer(fn('items: number[], k: number', `const c = ${init}`, 'for (const y of c) {', '  if (y === k) {', '    return 1', '  }', '}', 'return 0'))]).toEqual([init, undefined])
+  }
+  expect(answer(fn('items: number[], ids: number[]', 'const c = items.map(x => x * 2)', 'const r = c.find(y => ids.includes(y))', 'return r ?? 0'))).toBe(undefined)
+  // A filter of a parameter keeps its elements.
+  expect(answer(fn('items: number[], k: number, t: number', 'const d = items.filter(x => x !== k)', 'for (const y of d) {', '  if (y === t) {', '    return 1', '  }', '}', 'return 0'))).toBe('O(n)')
+})
+
+test('family 2: a condition outside loops holds only literals, number parameters, a parameter size and size-free scalars', async () => {
+  // Reviewer.
+  for (const cond of ['items.slice()[16] !== undefined', '[...items][16] !== undefined', 'Object.keys(items)[16] !== undefined', '16 in Object.keys(items)', 'Object.keys(items).at(16) !== undefined', 'items.concat().at(16) !== undefined', "items.join(',')[64] !== undefined", "items.join().charAt(64) !== ''"]) {
+    expect([cond, answer(guard2([], cond))]).toEqual([cond, undefined])
+  }
+  expect(answer(guard2(['const ks = Object.keys(items)'], "ks.includes('16')"))).toBe(undefined)
+  expect(answer(guard2(['const ks = Object.keys(items)'], "ks.indexOf('16') >= 0"))).toBe(undefined)
+  // Own.
+  expect(answer(guard2([], 'items.toSorted()[16] !== undefined'))).toBe(undefined)
+  expect(answer(guard2([], '!items'))).toBe(undefined)
+  expect(answer(guard2([], 'helper(k)', 'items: number[], ids: number[], k: number'))).toBe(undefined)
+  // Inside a loop, a read by position on a call's result still needs a loop's index.
+  expect(answer(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  if (ids.slice().at(16) === undefined) {', '    t += ids.indexOf(x)', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  if (ids.slice()[16] === undefined) {', '    t += ids.indexOf(x)', '  }', '}', 'return t'))).toBe(undefined)
+  // Allowed: literals, number and boolean parameters, a parameter's size.
+  expect(answer(guard2([], 'k > 3 && on', 'items: number[], ids: number[], k: number, on: boolean'))).toBe('O(n²)')
+  expect(answer(guard2([], 'items.length === 0'))).toBe('O(n²)')
+})
+
+test('family 3: a condition naming two size sources fails, in any form', async () => {
+  for (const cond of ['items.length < ids.length || !(items.length <= ids.length)', '!(items.length >= ids.length) || items.length > ids.length', 'items.length < ids.length || !(ids.length >= items.length)', 'items.length > ids.length', 'items.length * 2 > ids.length', 'items.length < 2 || ids.length === 0']) {
+    expect([cond, answer(fn('items: number[], ids: number[]', `if (${cond}) {`, '  return 0', '}', ...two2))]).toEqual([cond, undefined])
+  }
+  expect(answer(fn('items: number[], ids: number[]', 'const n = items.length', 'const m = ids.length', 'if (n > m) {', '  return 0', '}', ...two2))).toBe(undefined)
+  expect(answer(fn('items: number[], ids: number[]', 'let t = 0', 'for (const x of items) {', '  t += items.length > ids.length ? 1 : 0', '}', 'return t'))).toBe(undefined)
+})
+
+test('family 4: a local not proven scalar is closed-list', async () => {
+  const use = (pre: string[], expr: string, params = 'items: number[], k: number') => fn(params, ...pre, 'let t = 0', 'for (const x of items) {', `  t += ${expr}`, '}', 'return t')
+  // Reviewer.
+  expect(answer(use(['const a = k > 0 ? items.concat() : items.slice()'], 'a.toString().length'))).toBe(undefined)
+  expect(answer(use(['const a = items.concat() ?? []'], 'a.toString().length'))).toBe(undefined)
+  expect(answer(use(['let a', 'a = items.concat()'], 'a.toString().length'))).toBe(undefined)
+  expect(answer(use(['const o = { a: items.concat() }'], 'o.a.toString().length'))).toBe(undefined)
+  // Own.
+  expect(answer(use(['let a: number[]', 'a = items.slice()'], 'a.toString().length'))).toBe(undefined)
+  expect(answer(use(['const a = load()'], 'a.toString().length'))).toBe(undefined)
+  expect(answer(use(['const r = items.find(y => y === k)'], 'r.toString().length'))).toBe(undefined)
+  // A copy's elements are the parameter's: no mutation through it.
+  expect(answer(fn('grid: number[][]', 'let t = 0', 'for (const x of grid) {', '  const a = grid.slice()', '  a[0].push(1)', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('grid: number[][]', 'let t = 0', 'for (const x of grid) {', '  const a = [x]', '  a[0].push(1)', '  t += 1', '}', 'return t'))).toBe(undefined)
+  // A proven scalar takes any method.
+  expect(answer(use(["const s = 'ab'"], 's.toUpperCase().length'))).toBe('O(n)')
+})
+
+test('family 5: + and += take only proven numbers', async () => {
+  // Reviewer.
+  for (const call of ['items.reduce((a, x) => a + x, [])', 'items.reduce((a, x) => a + x, {})', "items.reduce((a, x) => a + 'x', 0)"]) {
+    expect([call, answer(fn('items: number[]', `const s = ${call}`, 'return 0'))]).toEqual([call, undefined])
+  }
+  expect(answer(fn('words: string[]', 'const s = words.reduce((a, x) => a + x, 0)', 'return 0'))).toBe(undefined)
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const x of words) {', '  t += x', '}', 'return t'))).toBe(undefined)
+  // Own.
+  expect(answer(fn('items: number[]', "const s = items.reduce((a, x) => a + x + '', 0)", 'return 0'))).toBe(undefined)
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', '  t = t + w', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: { name: string }[]', 'let t = 0', 'for (const x of items) {', '  t += x.name', '}', 'return t'))).toBe(undefined)
+  // Numbers pass.
+  expect(answer(fn('words: string[]', 'let t = 0', 'for (const w of words) {', '  t += w.length + 1', '}', 'return t'))).toBe('O(n)')
+})
+
+test('family 6: a counted local is no size-free value in a condition outside its loop', async () => {
+  // Reviewer.
+  expect(answer(guard2([], 'items.reduce((a, x) => a + 1, 0) > 16'))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'let c = 0', 'for (const x of items) {', '  c += 1', '}', 'if (c > 16) {', '  return -1', '}', ...nest2))).toBe(undefined)
+  expect(answer(fn('items: number[]', 'let c = 0', 'items.forEach(x => {', '  c += 1', '})', 'if (c > 16) {', '  return -1', '}', ...nest2))).toBe(undefined)
+  // Own.
+  expect(answer(fn('items: number[]', 'let c = 0', 'for (const x of items) {', '  c++', '}', 'if (c > 16) {', '  return -1', '}', ...nest2))).toBe(undefined)
+  expect(answer(guard2(['const c = items.indexOf(1)'], 'c > 16'))).toBe(undefined)
+  // A local set once from literals is size-free.
+  expect(answer(guard2(['const c = 3 * 2'], 'c > 16'))).toBe('O(n²)')
+})
+
+test('family 7: values reached from an opaque element take no method call, + or alias', async () => {
+  const tags = 'items: { tags: number[] }[]'
+  // Reviewer.
+  expect(answer(fn(tags, 'let t = 0', 'for (const x of items) {', '  const s = x.tags', '  t += s.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(tags, 'let t = 0', 'for (const x of items) {', '  const y = x', '  t += y.tags.toString().length', '}', 'return t'))).toBe(undefined)
+  for (const init of ['items.map(x => x)', 'Object.values(items)', 'Array.from(items)', '[...items]']) {
+    expect([init, answer(fn(tags, `const c = ${init}`, 'let t = 0', 'for (const y of c) {', '  t += y.tags.toString().length', '}', 'return t'))]).toEqual([init, undefined])
+  }
+  expect(answer(fn(tags, 'const c = items.map(x => x.tags)', 'let t = 0', 'for (const y of c) {', '  t += y.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items: Foo[]', 'let t = 0', 'for (const x of items) {', '  t += x.tags.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(`${tags}, k: number`, 'const r = items.find(x => x.tags.length === k)', 'let t = 0', 'for (const y of items) {', '  t += r.tags.toString().length', '}', 'return t'))).toBe(undefined)
+  // Own.
+  expect(answer(fn(tags, 'let t = 0', 'for (const x of items) {', '  t += size(x.tags)', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('items', 'let t = 0', 'for (const x of items) {', '  t += x.toString().length', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('m: Map<string, number[]>', 'let t = 0', 'for (const v of m.values()) {', '  t += v.toString().length', '}', 'return t'))).toBe(undefined)
+  // Allowed: a comparison, a key, a push, a property's length.
+  expect(answer(fn(`${tags}, k: number`, 'const seen = new Set<number>()', 'const out: number[][] = []', 'let t = 0', 'for (const x of items) {', '  if (x.tags.length === k) {', '    t += 1', '  }', '  seen.add(x)', '  out.push(x.tags)', '  t += x.tags.length', '}', 'return t'))).toBe('O(n)')
 })
