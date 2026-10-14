@@ -570,6 +570,18 @@ Task 6 fix round 4 (a condition grammar, so no guard is constant):
   values make a test that no input leaves always true or always false.
   The rules above still hold: root tests, size-free locals, no two sizes.
 
+Task 6 fix round 5:
+
+- **Predicates.** A `filter` test takes the grammar and the triviality
+  check like a short-circuit test, wherever the filter stands: a filter
+  that keeps nothing (`x => k > 0 && 0 > 1`) would otherwise be read as a
+  full-size derived value. A predicate callback (`filter`, `find`,
+  `findIndex`, `some`, `every`) with a block body or a named function
+  fails, since its test cannot be read.
+- **Logical assignments.** `&&=`, `||=` and `??=` fail: each is a hidden
+  guard on its target (`t &&= ids.indexOf(k)` never calls when `t` is 0).
+  Hidden lines already admit no assignment, in TypeScript and PHP alike.
+
 ### Stricter readings (Python reader, Task 6)
 
 The Python reader applies the TypeScript families above as allowlists

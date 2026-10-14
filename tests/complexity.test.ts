@@ -323,3 +323,14 @@ test('hidden hands each blanked line inside a nested body its raw text, dedented
   expect(calls).toBe(1)
   expectNoRaw(result, RAW)
 })
+
+test('task 6 fix round 5: a hidden logical assignment (&&=, ||=, ??=) is never inert, in TypeScript or PHP', async () => {
+  const last = { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false }
+  for (const raw of ['t &&= 1', 't ||= 1', 't ??= 1', 'u.v ??= 1']) {
+    expect([raw, isInert(raw, '…', 'TypeScript', none, none, last)]).toEqual([raw, false])
+  }
+  for (const raw of ['$t ??= 1;', '$t->v ??= 1;', '$t[0] ??= 1;']) {
+    expect([raw, isInert(raw, '…', 'PHP', none, none, last)]).toEqual([raw, false])
+  }
+  expect(isInert('// t ??= 1', '…', 'TypeScript', none, none, last)).toBe(true)
+})

@@ -1037,3 +1037,30 @@ test('task 6 fix round 4: a test that guards costly work inside a loop, or the r
   expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  if (x === k) {', '    t += ids.indexOf(x)', '  }', '}', 'return t'))).toBe('O(n·m)')
   expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  t += x === k ? ids.indexOf(x) : 0', '}', 'return t'))).toBe('O(n·m)')
 })
+
+// --- Task 6 fix round 5: filter predicates and logical assignments ----------------
+
+test('task 6 fix round 5: a filter predicate takes the grammar, so a filter that keeps nothing is no full-size source', async () => {
+  const nestOver = (d: string): string[] => ['let t = 0', `for (const u of ${d}) {`, `  for (const v of ${d}) {`, '    t += u * v', '  }', '}', 'return t']
+  const preds = ['x => false', 'x => 0 > 1', 'x => !true', 'x => k > 0 && 0 > 1', 'x => k > 0 && k < 0', 'x => b && !b', 'x => k > 0 && -0', 'x => k > 0 && 1 - 1', 'x => (k > 0 ? 0 : 0) > 0', 'x => !(k > 0 || 1 > 0)']
+  for (const p of preds) {
+    expect([p, answer(fn(R4, `const d = items.filter(${p})`, ...nestOver('d')))]).toEqual([p, undefined])
+    expect([p, 'toSorted', answer(fn(R4, `const d = items.filter(${p})`, 'return d.toSorted().length'))]).toEqual([p, 'toSorted', undefined])
+    expect([p, 'indexOf', answer(fn(R4, `const d = ids.filter(${p})`, 'let t = 0', 'for (const x of items) {', '  t += d.indexOf(x)', '}', 'return t'))]).toEqual([p, 'indexOf', undefined])
+    expect([p, 'includes', answer(fn(R4, `const d = ids.filter(${p})`, 'let t = 0', 'for (const x of items) {', '  if (d.includes(x)) {', '    t += 1', '  }', '}', 'return t'))]).toEqual([p, 'includes', undefined])
+    expect([p, 'every', answer(fn(R4, `const d = ids.filter(${p})`, 'return items.every(x => d.includes(x)) ? 1 : 0'))]).toEqual([p, 'every', undefined])
+  }
+  // Inline, a filter's own walk costs n whatever its test; the test still takes the grammar.
+  expect(answer(fn(R4, 'let t = 0', 'for (const y of ids) {', '  t += items.filter(x => x === y && 0 > 1).length', '}', 'return t'))).toBe(undefined)
+  // Controls.
+  expect(answer(fn(R4, 'const d = items.filter(x => x !== k)', ...nestOver('d')))).toBe('O(n²)')
+  expect(answer(fn(R4, 'let t = 0', 'for (const y of ids) {', '  t += items.filter(x => x === y).length', '}', 'return t'))).toBe('O(n·m)')
+})
+
+test('task 6 fix round 5: &&=, ||= and ??= fail', async () => {
+  for (const [init, line] of [['let t = 0', 't &&= ids.indexOf(k)'], ['let t = 1', 't ||= ids.indexOf(k)'], ['let t = 0', 't ??= ids.indexOf(k)'], ['let t = k', 't &&= ids.indexOf(k)'], ['let t = 0', 't &&= 1'], ['let t = 0', 't ??= k']]) {
+    expect([line, answer(fn(R4, init!, line!, 'for (const x of items) {', '  t += x', '}', 'return t'))]).toEqual([line, undefined])
+    expect([line, 'loop', answer(fn(R4, init!, 'for (const x of items) {', `  ${line!.replace('(k)', '(x)')}`, '}', 'return t'))]).toEqual([line, 'loop', undefined])
+  }
+  expect(answer(fn(R4, 'let t = 0', 't += k', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe('O(n)')
+})

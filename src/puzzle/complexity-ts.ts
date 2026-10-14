@@ -40,6 +40,8 @@ const COUNTED = setOf(LISTS.sort, LINEAR, LISTS.fails, ['reverse', 'fill', 'copy
 const METHODS = setOf(COUNTED, LISTS.mutate, LISTS.constant.filter((w) => !GLOBALS.has(w)))
 /** Callbacks that stop early: their predicate must be able to run to the end. */
 const SHORT = new Set(['find', 'findIndex', 'some', 'every'])
+/** Callbacks whose body is a test: a test that cannot be read refuses the unit (task 6 fix round 5). */
+const PREDICATES = new Set([...SHORT, 'filter'])
 const STRING_METHODS = new Set(['at', 'charAt', 'charCodeAt', 'codePointAt'])
 const ACC_METHODS = new Set(['push', 'add', 'set', 'has', 'get', 'delete', 'pop', 'at'])
 /** A collection local the reader cannot size: lookups and appends only. */
@@ -149,6 +151,8 @@ type Node =
 /** Words no shown expression may hold as a name: definitions, other statements, and syntax the reader does not model. */
 const KEYWORDS = new Set(['yield', 'function', 'class', 'goto', 'do', 'switch', 'case', 'default', 'try', 'catch', 'finally', 'with', 'debugger', 'import', 'export', 'super', 'async', 'void', 'delete', 'var', 'let', 'const', 'if', 'else', 'for', 'while', 'return', 'break', 'continue', 'throw', 'in', 'instanceof', 'new', 'typeof', 'await', 'enum', 'interface', 'implements', 'package', 'private', 'protected', 'public', 'static'])
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=', '&&=', '||=', '??='])
+/** Task 6 fix round 5: assignments that short-circuit on their target (a hidden guard) fail. */
+const LOGICAL_ASSIGN = new Set(['&&=', '||=', '??='])
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6, '===': 6, '!==': 6, '<': 7, '>': 7, '<=': 7, '>=': 7, instanceof: 7, in: 7, '<<': 8, '>>': 8, '>>>': 8, '+': 9, '-': 9, '*': 10, '/': 10, '%': 10, '**': 11 }
 
 /** String and number methods that always return a string or number (`at` and `codePointAt` may return undefined). */
@@ -195,7 +199,7 @@ class Parser {
     const left = this.conditional()
     const t = this.peek()
     if (t?.t === 'p' && ASSIGN_OPS.has(t.v)) {
-      need(isTarget(left))
+      need(isTarget(left) && !LOGICAL_ASSIGN.has(t.v))
       this.i++
       return { k: 'assign', op: t.v, target: left, value: this.expr() }
     }
@@ -2727,17 +2731,18 @@ class Reader {
       need(loop?.kind === 'callback')
       const inner = { ...env, loops: [...env.loops, loop!] }
       if (cb.body === 'block') {
-        need(env.block !== undefined && !SHORT.has(m))
+        need(env.block !== undefined && !PREDICATES.has(m))
         body = this.costOfBlock(env.block!, inner)
       } else {
-        if (SHORT.has(m)) {
-          this.checkPredicate(m, cb.body, inner)
-          // Task 6 fix round 4: a predicate that stops the walk guards an exit.
+        if (SHORT.has(m)) this.checkPredicate(m, cb.body, inner)
+        // Task 6 fix rounds 4 and 5: every predicate (one that stops the walk, or a filter's, which sizes what it keeps) takes the grammar.
+        if (PREDICATES.has(m)) {
+          need(!isTrivial(cb.body))
           this.checkGrammar(cb.body, inner)
         }
-        body = this.cost(cb.body, inner, SHORT.has(m) || m === 'filter' ? 'test' : 'value')
+        body = this.cost(cb.body, inner, PREDICATES.has(m) ? 'test' : 'value')
       }
-    } else need(cb.k === 'id' && !SHORT.has(m) && !this.isBound(cb.name) && !GLOBALS.has(cb.name) && !FAILS.has(cb.name))
+    } else need(cb.k === 'id' && !PREDICATES.has(m) && !this.isBound(cb.name) && !GLOBALS.has(cb.name) && !FAILS.has(cb.name))
     // A reduce starts from a number or an empty collection: a string start, or the first element, may concatenate.
     if (m === 'reduce' || m === 'reduceRight') {
       const start = rest[0]
