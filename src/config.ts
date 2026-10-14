@@ -270,6 +270,13 @@ export const COMPLEXITY = {
   // Filled by Tasks 4, 6 and 7: { sort, linear, constant, fails, derive, mutate, globals, iterators }
   // per language, each a readonly string[] copied from the spec's "Builtins" section.
   builtins: {} as Record<string, Record<string, readonly string[]>>,
+  // Spec "What the reader reads", rules 3 and 4: a hidden line holds none of
+  // the loop or closure words or symbols, and an exit word only in place.
+  loopWords: ['for', 'foreach', 'while', 'do'] as readonly string[],
+  closureWords: ['function', 'fn', 'lambda', 'def', 'class', 'yield', 'goto'] as readonly string[],
+  /** `...` is spread; Python's `*` and `**` unpacking is read by its place. */
+  inertSymbols: ['=>', '...'] as readonly string[],
+  exitWords: ['return', 'break', 'continue', 'throw', 'raise', 'exit', 'die'] as readonly string[],
 } as const
 
 // DEFAULT: drawing colors (SPEC 6.2, 9). Tier colors are in TIER_SPECS; the

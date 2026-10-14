@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { add, factor, mul, ONE, readCost, simplify, type Factor } from '../src/puzzle/complexity'
+import { add, factor, isInert, mul, ONE, readCost, simplify, treeByBraces, treeByIndent, type Factor } from '../src/puzzle/complexity'
 
 // Invented code only (SPEC 15).
 
@@ -71,4 +71,103 @@ test('two-size explanations write n first: n × m and n + m', async () => {
 
 test('simplify keeps the equal-shaped term with the earliest site', async () => {
   expect(simplify(add(factor(f('a', 5)), factor(f('a', 1))))[0]?.[0]?.at).toBe(1)
+})
+
+const none = new Set<string>()
+const out = { isInLoop: false, isLastAtBodyLevel: false, isInGuard: false }
+
+test('treeByBraces nests blocks and else branches, and refuses unbalanced braces', async () => {
+  const t = treeByBraces(['function f(a: number[]) {', '  for (const x of a) {', '    g(x)', '  } else {', '  }', '}'])
+  expect(t?.children[0]?.text.trim()).toBe('for (const x of a) {')
+  expect(t?.children[0]?.children[0]?.text.trim()).toBe('g(x)')
+  expect(treeByBraces(['function f() {', '  for (const x of a) {', '    …', '  }', '}', '}'])).toBe(undefined)
+  expect(treeByBraces(['function f() {', '  if (a) { b() ', '}'])).toBe(undefined)
+})
+
+test('treeByIndent nests by indentation and refuses continued lines', async () => {
+  const t = treeByIndent(['def f(a: list):', '    for x in a:', '        g(x)', '    return 1'])
+  expect(t?.children.length).toBe(2)
+  expect(t?.children[0]?.children[0]?.text.trim()).toBe('g(x)')
+  expect(treeByIndent(['def f(a: list):', '    x = g(a,', '        b)'])).toBe(undefined)
+  expect(treeByIndent(['def f(a: list):', '    x = 1 + \\', '        2'])).toBe(undefined)
+})
+
+test('a hidden line is inert only with the kept braces, no bound name, no listed word', async () => {
+  expect(isInert("log('done')", '…', 'TypeScript', new Set(['items']), none, out)).toBe(true)
+  // The scanner blanked the line and dropped its brace: structure differs.
+  expect(isInert('if ((x + 1) / 2 > t) {', '…', 'TypeScript', none, none, out)).toBe(false)
+  expect(isInert("log('x', items)", '…', 'TypeScript', new Set(['items']), none, out)).toBe(false)
+  expect(isInert("log('sorted')", '…', 'TypeScript', none, new Set(['sort', 'sorted']), out)).toBe(false)
+  expect(isInert('for (const k of keys) { // go', '… {', 'TypeScript', none, none, out)).toBe(false)
+  expect(isInert("emit(...rest, 'x')", '…', 'TypeScript', none, none, out)).toBe(false)
+})
+
+test('a hidden exit passes only as the last body statement or inside a guard outside loops', async () => {
+  expect(isInert("throw new Error('bad')", '…', 'TypeScript', none, none, { isInLoop: false, isLastAtBodyLevel: false, isInGuard: true })).toBe(true)
+  expect(isInert("return 'done'", '…', 'TypeScript', none, none, { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(true)
+  expect(isInert("raise NotImplementedError('x')", '…', 'Python', none, none, { isInLoop: false, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
+  expect(isInert("return 'done'", '        …', 'Python', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(false)
+})
+
+test('Python: raw indent must equal the kept indent, brackets balance, no trailing backslash', async () => {
+  expect(isInert("    log('x')", '    …', 'Python', none, none, out)).toBe(true)
+  expect(isInert("      log('x')", '    …', 'Python', none, none, out)).toBe(false)
+  expect(isInert("    log('x',", '    …', 'Python', none, none, out)).toBe(false)
+})
+
+test('treeByBraces: blanked lines keep their braces, close-only lines are no blocks, the root must close last', async () => {
+  // TypeScript keeps a leading close before the `…`; PHP puts every brace after it.
+  const ts = treeByBraces(['function f(a) {', '  …{', '    g(a)', '  }…', '  h(a)', '}'])
+  expect(ts?.children.map(b => b.at)).toEqual([1, 3, 4])
+  expect(ts?.children[0]?.children[0]?.at).toBe(2)
+  const php = treeByBraces(['function f($a) {', '  … {', '    g($a);', '  … }', '}'])
+  expect(php?.children.map(b => b.at)).toEqual([1, 3])
+  expect(treeByBraces(['  items.forEach(x => {', '    g(x)', '  })', '}'])).toBe(undefined)
+  expect(treeByBraces(['function f(a) {', '  a.forEach(x => {', '    g(x)', '  })', '}'])?.children.length).toBe(1)
+  expect(treeByBraces(['function f(a) {', '  g(a)', '}', 'h()'])).toBe(undefined)
+  expect(treeByBraces(['function f(a) {', '  const o = { k: 1 }', '}'])?.children.length).toBe(1)
+  expect(treeByBraces(['function f(a) {', '  x } {', '}'])).toBe(undefined)
+  expect(treeByBraces(['function f(a) {', '  if (a) {{', '  }}', '}'])).toBe(undefined)
+  // PSR-12: the body's brace on its own line; a signature may run on, but never through a blanked line.
+  expect(treeByBraces(['function f($a)', '{', '  g($a);', '}'])?.children.map(b => b.at)).toEqual([2])
+  expect(treeByBraces(['function f(', '  $a,', ') {', '  g($a);', '}'])?.children.map(b => b.at)).toEqual([3])
+  expect(treeByBraces(['function f(', '  …', ') {', '  g($a);', '}'])).toBe(undefined)
+  expect(treeByBraces(['function f(a) }', '}'])).toBe(undefined)
+})
+
+test('treeByIndent: blanked openers, a dedent to an unopened level, and a deeper line under a plain statement', async () => {
+  const t = treeByIndent(['def f(a):', '    …', '        g(a)', '    h(a)'])
+  expect(t?.children[0]?.children[0]?.at).toBe(2)
+  expect(treeByIndent(['def f(a):', '        g(a)', '    h(a)'])).toBe(undefined)
+  expect(treeByIndent(['def f(a):', '    g(a)', '        h(a)'])).toBe(undefined)
+  expect(treeByIndent(['def f(a):', '    g(a)', 'h(a)'])).toBe(undefined)
+  expect(treeByIndent(['x = 1', '    g(a)'])).toBe(undefined)
+  expect(treeByIndent(['def f(a):', '\tg(a)', '    h(a)'])).toBe(undefined)
+})
+
+test('inert names: unicode escapes, compatibility forms, PHP variables and case, dotted words', async () => {
+  const items = new Set(['items'])
+  expect(isInert('log(\\u0069tems)', '…', 'TypeScript', items, none, out)).toBe(false)
+  expect(isInert('log(\\u{69}tems)', '…', 'TypeScript', items, none, out)).toBe(false)
+  expect(isInert('    log(ｉtems)', '    …', 'Python', items, none, out)).toBe(false)
+  expect(isInert('log($items);', '…', 'PHP', items, none, out)).toBe(false)
+  expect(isInert("log('$items');", '…', 'PHP', items, none, out)).toBe(false)
+  expect(isInert('FOREACH ($a as $b) {', '… {', 'PHP', none, none, out)).toBe(false)
+  expect(isInert('COUNT($x);', '…', 'PHP', none, new Set(['count']), out)).toBe(false)
+  expect(isInert('Object.keys(o)', '…', 'TypeScript', none, new Set(['Object.keys']), out)).toBe(false)
+  expect(isInert("log('café')", '…', 'TypeScript', new Set(['café']), none, out)).toBe(false)
+  expect(isInert('log(a) items', '…', 'TypeScript', none, none, out)).toBe(false)
+  expect(isInert('log(x)', 'log(x)', 'TypeScript', none, none, out)).toBe(false)
+})
+
+test('inert words: closures, Python unpacking, exits in strings', async () => {
+  expect(isInert('cb = (x) => x', '…', 'TypeScript', none, none, out)).toBe(false)
+  expect(isInert('    g(*args)', '    …', 'Python', none, none, out)).toBe(false)
+  expect(isInert('    g(a, **kw)', '    …', 'Python', none, none, out)).toBe(false)
+  expect(isInert('    x = [*a]', '    …', 'Python', none, none, out)).toBe(false)
+  expect(isInert('    return *a, b', '    …', 'Python', none, none, { isInLoop: false, isLastAtBodyLevel: true, isInGuard: false })).toBe(false)
+  expect(isInert('    log(a * b, 2 ** c)', '    …', 'Python', none, none, out)).toBe(true)
+  expect(isInert("log('return')", '…', 'TypeScript', none, none, out)).toBe(false)
+  expect(isInert("log('done')", '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: false })).toBe(true)
+  expect(isInert('break', '…', 'TypeScript', none, none, { isInLoop: true, isLastAtBodyLevel: false, isInGuard: true })).toBe(false)
 })
