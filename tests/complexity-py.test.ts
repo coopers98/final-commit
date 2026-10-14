@@ -609,3 +609,19 @@ test('fix round 3: a literal operand of or, and, not, or a literal condition, fa
   for (const c of ['k > 0 or True', 'True or k > 0', 'k > 0 or 1', 'not False', 'True', 'b and not 0', 'k > 0 or None']) expect([c, answer(guard(c))]).toEqual([c, undefined])
   expect(answer(fn('a: list[int], k: int', 'out = [x for x in a if k > 0 or True]', 'return len(out)'))).toBe(undefined)
 })
+
+// --- Fix round 4 (task 6): the read-once condition grammar --------------------------
+
+test('fix round 4: the Python reader already reads tests as and, or and not over typed atoms, each name once', async () => {
+  const P = 'items: list[int], k: int, b: bool, c: bool'
+  const exit = (c: string): Unit => fn(P, `if ${c}:`, '    return 0', 't = 0', 'for x in items:', '    t += x', 'return t')
+  const work = (c: string): Unit => fn(P, 't = 0', `if ${c}:`, '    for x in items:', '        t += x', 'return t')
+  for (const c of ['k > 0 or -1', 'k > 0 or +1', 'k > 0 or 1 + 1', 'k > 0 or 1 > 0', 'k > 0 or 2 >= 1', 'k > 0 or 1 != 2', 'not (k > 0 and 0 > 1)', 'k > 0 or type(k)', 'True if k > 0 else True', '(1 if k > 0 else 2) > 0', '(1 if b else 1) > 0', 'b == True or b == False', 'b or b == False', 'b or c or not b', '(b and c) or not b or not c', 'k > 0 or not (0 < k)', 'k > 1e400', "k == 'a' or b"]) {
+    expect([c, answer(exit(c))]).toEqual([c, undefined])
+  }
+  for (const c of ['k > 0 and 0 > 1', 'k > 0 and 1 - 1', 'k > 0 and -0', 'not (k > 0 or 1 > 0)', 'False if k > 0 else False', '(0 if k > 0 else 0) > 0']) {
+    expect([c, answer(work(c))]).toEqual([c, undefined])
+  }
+  for (const c of ['k > 0', 'b', 'not b', 'b and c', 'b or k > 0']) expect([c, answer(exit(c))]).toEqual([c, 'O(n)'])
+  expect(answer(fn(P, 'm = k + 1', 'if m > k:', '    return 0', 't = 0', 'for x in items:', '    t += x', 'return t'))).toBe(undefined)
+})

@@ -53,6 +53,7 @@ const WORDS: ReadonlySet<string> = setOf(...Object.values(LISTS), ['arguments', 
 
 const COMPARE = new Set(['===', '!==', '==', '!=', '<', '<=', '>', '>='])
 const ORDER = new Set(['<', '<=', '>', '>='])
+const EQUALITY = new Set(['===', '!==', '==', '!='])
 const FLIP: Record<string, string> = { '===': '!==', '!==': '===', '==': '!=', '!=': '==', '<': '>=', '>=': '<', '>': '<=', '<=': '>' }
 const ARITHMETIC = new Set(['+', '-', '*', '/', '%', '>>', '<<', '>>>'])
 /** Operators whose result is always a number (`+` is not: it may join strings). */
@@ -640,6 +641,8 @@ function simpleLine(toks: Tok[]): Simple {
 type Kind = 'array' | 'string' | 'set' | 'map' | 'numeric' | 'bool' | 'fixed' | 'literal' | 'other'
 /** What an element is: a primitive, or `opaque` (any other or unknown type: property reads and comparisons only). */
 type ElemType = 'number' | 'string' | 'boolean' | 'opaque'
+/** A named value's type in the condition grammar (task 6 fix round 4). */
+type GrammarType = 'number' | 'string' | 'boolean'
 /** `elem`: an array's or Set's element type, a Map's value type; `key`: a Map's key type. */
 /** `literal`: for kind `literal`, whether its literals are strings or numbers (ruling C). */
 /** `shape`: an element (a Map's value) that is an object or an array, never null (task 6 fix round 1: it takes property reads). */
@@ -1981,6 +1984,123 @@ class Reader {
     }
   }
 
+  // --- Conditions: the read-once grammar (task 6 fix round 4) -------------------
+
+  /**
+   * Spec "Stricter readings", the condition grammar: a test that guards an
+   * exit, costly work or a size is &&, || and ! over atoms, and no named value
+   * (read through locals) is in two atoms. An atom is a bare boolean, a bare
+   * `.length`/`.size`, `A op B` of two named values of one type or of a named
+   * value and a finite literal of its type, or an element's membership in
+   * another source (`isMembership`). Ternaries, typeof,
+   * arithmetic and any other form refuse. Read-once atoms that each vary over
+   * distinct values make a test no input leaves constant.
+   */
+  private checkGrammar(cond: Node, env: Env): void {
+    const seen = new Set<string>()
+    const walk = (n: Node): void => {
+      if (n.k === 'bin' && (n.op === '&&' || n.op === '||')) {
+        walk(n.left)
+        walk(n.right)
+        return
+      }
+      if (n.k === 'unary' && n.op === '!') return walk(n.arg)
+      for (const r of this.atomRoots(n, env)) {
+        need(!seen.has(r))
+        seen.add(r)
+      }
+    }
+    walk(cond)
+  }
+
+  /** The values one atom reads; anything but an atom refuses. */
+  private atomRoots(n: Node, env: Env): Set<string> {
+    if (n.k === 'bin' && COMPARE.has(n.op)) {
+      const l = this.named(n.left, env)
+      const r = this.named(n.right, env)
+      const lit = (m: Node): GrammarType | undefined => {
+        if (m.k === 'unary' && (m.op === '-' || m.op === '+')) m = m.arg
+        if (m.k !== 'lit') return undefined
+        if (m.kind === 'num') return m.v !== undefined && Number.isFinite(m.v) ? 'number' : undefined
+        return m.kind === 'str' ? 'string' : undefined
+      }
+      if (l && r) {
+        need(l.type === r.type && [...l.roots].every((x) => !r.roots.has(x)))
+        if (l.type === 'boolean') need(EQUALITY.has(n.op))
+        return new Set([...l.roots, ...r.roots])
+      }
+      const one = l ?? r
+      if (!one) refuse()
+      // A boolean takes no literal: `b === true` reads as `b`.
+      need(one.type !== 'boolean' && lit(l ? n.right : n.left) === one.type)
+      return one.roots
+    }
+    // Membership of an element in another source (`ids.includes(x)`), as `isMembership` reads it.
+    if (n.k === 'call' && n.callee.k === 'member' && n.callee.obj.k === 'id' && this.isMembership(n, elementsOf(env.loops), env.loops)) {
+      const e = this.named(n.args[0]!, env)
+      need(e !== undefined && !e.roots.has(n.callee.obj.name))
+      return new Set([n.callee.obj.name, ...e!.roots])
+    }
+    const v = this.named(n, env)
+    need(v !== undefined && (v.type === 'boolean' || (n.k === 'member' && (n.name === 'length' || n.name === 'size'))))
+    return v!.roots
+  }
+
+  /**
+   * A single named value, its type and the values it reads: a number, boolean
+   * or string parameter; a typed element or element read at a loop's index; a
+   * loop number; a binary search's lo, hi or mid; a `.length`/`.size` of a
+   * source; or a local never assigned after its declaration that holds one of
+   * these (a number plus or minus a finite literal), read through to it.
+   */
+  private named(n: Node, env: Env, seen = new Set<string>()): { type: GrammarType; roots: Set<string> } | undefined {
+    const typed = (t: ElemType | undefined): GrammarType | undefined => (t === 'number' || t === 'string' || t === 'boolean' ? t : undefined)
+    switch (n.k) {
+      case 'id': {
+        const name = n.name
+        const p = this.params.get(name)
+        if (p) {
+          const type = p.kind === 'numeric' ? 'number' : p.kind === 'bool' ? 'boolean' : p.kind === 'string' ? 'string' : undefined
+          return type && { type, roots: new Set([name]) }
+        }
+        const e = elementsOf(env.loops).get(name)
+        if (e) {
+          const type = typed(e.type)
+          return type && { type, roots: new Set([name]) }
+        }
+        if (this.loopNumeric(name, env) || this.searchVars.has(name)) return { type: 'number', roots: new Set([name]) }
+        const d = this.decls.get(name)
+        if (!d?.line.init || this.locals.get(name)?.k !== 'local' || seen.has(name) || this.assignments.some((a) => a.name === name)) return undefined
+        seen.add(name)
+        let init = d.line.init
+        const offset = init.k === 'bin' && (init.op === '+' || init.op === '-') && numLit(init.right) !== undefined && Number.isFinite(numLit(init.right))
+        if (offset) init = (init as Extract<Node, { k: 'bin' }>).left
+        const v = this.named(init, env, seen)
+        if (!v || (offset && v.type !== 'number')) return undefined
+        return { type: v.type, roots: new Set([name, ...v.roots]) }
+      }
+      case 'member': {
+        if ((n.name !== 'length' && n.name !== 'size') || n.obj.k !== 'id') return undefined
+        const obj = n.obj.name
+        const ok = this.sourceOfName(obj) !== undefined || elementsOf(env.loops).get(obj)?.type === 'string'
+        return ok ? { type: 'number', roots: new Set([obj]) } : undefined
+      }
+      case 'index': {
+        if (n.obj.k !== 'id' || n.index.k !== 'id' || !this.loopNumeric(n.index.name, env)) return undefined
+        const s = this.sourceOfName(n.obj.name)
+        const type = s && s.yields === undefined ? typed(s.type) : undefined
+        return type && { type, roots: new Set([`${n.obj.name}[${n.index.name}]`, n.index.name]) }
+      }
+      default:
+        return undefined
+    }
+  }
+
+  /** A body that holds a loop or callback, or names a size: a test in front of it decides a cost. */
+  private touchesSize(body: Stmt[]): boolean {
+    return someStmt(body, (s) => s.k === 'for' || s.k === 'while' || s.k === 'cb' || s.k === 'hblock' || stmtNodes(s).some((n) => this.sizes(n).size > 0))
+  }
+
   private costly(env: Env, c: Cost): Cost {
     if (env.loops.length > 0 && hasFactors(c)) this.takeable(env)
     return c
@@ -2014,15 +2134,19 @@ class Reader {
       case 'if': {
         let total = NOTHING
         const prev: Entry[] = []
+        let guards = depth === 0
         for (const b of s.branches) {
           const here = { ...env, at: b.at, path: [...env.path, ...prev] }
           if (b.cond) total = add(total, this.cost(b.cond, here, 'test'))
           const body = this.costOfBlock(b.body, { ...here, path: b.cond ? [...here.path, { cond: b.cond, neg: false, depth }] : here.path })
           // A tiny guard's branch, and a branch that leaves a loop, run at most once.
           if (this.guardBranches.has(b.at) || (depth > 0 && mayExit(b.body))) need(!hasFactors(body))
+          if (hasFactors(body) || mayTransfer(b.body) || this.touchesSize(b.body)) guards = true
           total = add(total, body)
           if (b.cond) prev.push({ cond: b.cond, neg: true, depth })
         }
+        // Task 6 fix round 4: a chain that guards an exit, costly work or a size (any chain outside loops) reads every test by the grammar.
+        if (guards) for (const b of s.branches) if (b.cond) this.checkGrammar(b.cond, env)
         return total
       }
       case 'for': {
@@ -2033,6 +2157,7 @@ class Reader {
       }
       case 'while': {
         const loop = this.loops.get(s.at)!
+        this.checkGrammar(s.cond, env)
         const body = this.costOfBlock(s.body, { ...env, loops: [...env.loops, loop] })
         return this.costly({ ...env, at: s.at }, mul(loop.factor, add(ONE, body)))
       }
@@ -2117,6 +2242,11 @@ class Reader {
           const right = this.cost(n.right, { ...env, path: [...env.path, guard] }, arm)
           // Outside loops, a test that guards costly work holds only what a root condition may (family 2).
           if (depth === 0 && hasFactors(right)) need(n.op !== '??' && this.rootAllowed(n.left))
+          // Task 6 fix round 4: a left operand that guards costly work or a size takes the grammar.
+          if (hasFactors(right) || this.sizes(n.right).size > 0) {
+            need(n.op !== '??')
+            this.checkGrammar(n.left, env)
+          }
           return add(this.cost(n.left, env, n.op === '??' ? (ctx === 'ret' ? 'ret' : 'value') : 'test'), right)
         }
         if (n.op === 'in' && n.right.k === 'id' && this.isSequence(n.right.name)) need(this.isPosition(n.left, env))
@@ -2132,6 +2262,8 @@ class Reader {
         const yes = this.cost(n.yes, { ...env, path: [...env.path, { cond: n.test, neg: false, depth }] }, arm)
         const no = this.cost(n.no, { ...env, path: [...env.path, { cond: n.test, neg: true, depth }] }, arm)
         if (depth === 0 && (hasFactors(yes) || hasFactors(no))) need(this.rootAllowed(n.test))
+        // Task 6 fix round 4: a test that picks costly work or a size takes the grammar.
+        if (hasFactors(yes) || hasFactors(no) || this.sizes(n.yes).size > 0 || this.sizes(n.no).size > 0) this.checkGrammar(n.test, env)
         return add(this.cost(n.test, env, 'test'), add(yes, no))
       }
       case 'array':
@@ -2598,7 +2730,11 @@ class Reader {
         need(env.block !== undefined && !SHORT.has(m))
         body = this.costOfBlock(env.block!, inner)
       } else {
-        if (SHORT.has(m)) this.checkPredicate(m, cb.body, inner)
+        if (SHORT.has(m)) {
+          this.checkPredicate(m, cb.body, inner)
+          // Task 6 fix round 4: a predicate that stops the walk guards an exit.
+          this.checkGrammar(cb.body, inner)
+        }
         body = this.cost(cb.body, inner, SHORT.has(m) || m === 'filter' ? 'test' : 'value')
       }
     } else need(cb.k === 'id' && !SHORT.has(m) && !this.isBound(cb.name) && !GLOBALS.has(cb.name) && !FAILS.has(cb.name))

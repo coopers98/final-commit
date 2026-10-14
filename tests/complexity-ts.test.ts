@@ -376,7 +376,9 @@ test('gate 10: a size compared with anything but another size or a loop index fa
   const nested = ['let t = 0', 'for (const x of items) {', '  for (const y of items) {', '    t += x * y', '  }', '}', 'return t']
   expect(answer(fn('items: number[]', 'if (items.length === 0) {', '  return 0', '}', ...nested))).toBe('O(n²)')
   expect(answer(fn('items: number[]', 'if (!items.length) {', '  return 0', '}', ...nested))).toBe('O(n²)')
-  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < 2 || items.length === 0) {', '  return 0', '}', ...nested))).toBe('O(n²)')
+  // Task 6 fix round 4: one value in two atoms of a test fails (the read-once grammar).
+  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < 2 || items.length === 0) {', '  return 0', '}', ...nested))).toBe(undefined)
+  expect(answer(fn('items: number[], ids: number[]', 'if (items.length < 2) {', '  return 0', '}', ...nested))).toBe('O(n²)')
   // Two size sources in one test fail (fix round 2, family 3).
   expect(answer(fn('items: number[], ids: number[]', 'if (items.length > ids.length) {', '  return 0', '}', ...nested))).toBe(undefined)
   expect(answer(fn('items: number[]', 'let t = 0', 'for (let i = 0; i < items.length; i++) {', '  if (i < items.length - 1) {', '    t += items[i]', '  }', '}', 'return t'))).toBe('O(n)')
@@ -730,8 +732,10 @@ test('family 6: a counted local is no size-free value in a condition outside its
   // Own.
   expect(answer(fn('items: number[]', 'let c = 0', 'for (const x of items) {', '  c++', '}', 'if (c > 16) {', '  return -1', '}', ...nest2))).toBe(undefined)
   expect(answer(guard2(['const c = items.indexOf(1)'], 'c > 16'))).toBe(undefined)
-  // A local set once from literals is size-free.
-  expect(answer(guard2(['const c = 3 * 2'], 'c > 16'))).toBe('O(n²)')
+  // A local set once from literals is size-free, but (task 6 fix round 4) it is constant, so its test fails;
+  // one that holds a number parameter plus a literal passes.
+  expect(answer(guard2(['const c = 3 * 2'], 'c > 16'))).toBe(undefined)
+  expect(answer(guard2(['const c = k + 2'], 'c > 16', 'items: number[], k: number'))).toBe('O(n²)')
 })
 
 test('family 7: values reached from an opaque element take no method call, + or alias', async () => {
@@ -986,4 +990,50 @@ test('task 6 fix round 3: an exit name fails as a constructor too, and in any Un
   const after = (line: string): Unit => fn('items: number[]', 'let t = 0', 'for (const x of items) {', '  t += 1', '}', line, 'return t')
   expect(answer(after('lib.log(t)'))).toBe('O(n)')
   for (const line of ['new Exit()', 'new lib.Exit()', 'lib.ｅxit(0)', 'lib.ſignal()']) expect([line, answer(after(line))]).toEqual([line, undefined])
+})
+
+// --- Task 6 fix round 4: the read-once condition grammar --------------------------
+
+const R4 = 'items: number[], ids: number[], k: number, b: boolean, c: boolean'
+/** `if (cond) return 0`, then a loop over items: O(1) when cond always holds. */
+const r4Exit = (cond: string): Unit => fn(R4, `if (${cond}) {`, '  return 0', '}', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t')
+/** A loop over items behind `cond`: O(1) when cond never holds. */
+const r4Work = (cond: string): Unit => fn(R4, 'let t = 0', `if (${cond}) {`, '  for (const x of items) {', '    t += x', '  }', '}', 'return t')
+
+test('task 6 fix round 4: a guard that always holds fails', async () => {
+  for (const c of ['k > 0 || -1', 'k > 0 || +1', 'k > 0 || 1 + 1', 'k > 0 || 1 > 0', 'k > 0 || 2 >= 1', 'k > 0 || 1 !== 2', '!(k > 0 && 0 > 1)', 'k > 0 || typeof k', 'k > 0 ? true : true', 'k > 0 ? 1 : 1', '(k > 0 ? 1 : 2) > 0', '(b ? 1 : 1) > 0', 'b === true || b === false', 'b || b === false', 'b || c || !b', '(b && c) || !b || !c', 'k > 0 || !(0 < k)']) {
+    expect([c, answer(r4Exit(c))]).toEqual([c, undefined])
+  }
+})
+
+test('task 6 fix round 4: a guard that never holds fails', async () => {
+  for (const c of ['k > 0 && 0 > 1', 'k > 0 && 1 - 1', 'k > 0 && -0', '!(k > 0 || 1 > 0)', 'k > 0 ? false : false', '(k > 0 ? 0 : 0) > 0']) {
+    expect([c, answer(r4Work(c))]).toEqual([c, undefined])
+  }
+})
+
+test('task 6 fix round 4: an atom compares named values with finite literals of their own type', async () => {
+  for (const c of ['k > 1e400', `k > 1${'0'.repeat(400)}`, 'k > Infinity', 'k > -Infinity', "k === 'a' || b", 'k !== null', 'k !== undefined', 'b === true', 'b !== false', 'b < c', 'k === b']) {
+    expect([c, answer(r4Exit(c))]).toEqual([c, undefined])
+  }
+  for (const c of ['k > 0', 'b', '!b', 'b && c', 'b || k > 0', '!(k > 0 && b)', 'k > -1', 'k !== 3', 'k > 0 || c', '(b || c) && k < 2', 'b === c', 'k >= -2']) {
+    expect([c, answer(r4Exit(c))]).toEqual([c, 'O(n)'])
+  }
+  expect(answer(r4Work('b && k < 3'))).toBe('O(n)')
+})
+
+test('task 6 fix round 4: a local in a guard is read through to what it holds, once', async () => {
+  // m always exceeds k; five is never more than three; on is never set.
+  expect(answer(fn(R4, 'const m = k + 1', 'if (m > k) {', '  return 0', '}', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'const m = 5', 'if (k > 0 || m > 3) {', '  return 0', '}', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'let on = false', 'if (k > 0 && 0 > 1) {', '  on = true', '}', 'let t = 0', 'if (on) {', '  for (const x of items) {', '    t += x', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'const m = k + 1', 'if (m > 3) {', '  return 0', '}', 'let t = 0', 'for (const x of items) {', '  t += x', '}', 'return t'))).toBe('O(n)')
+})
+
+test('task 6 fix round 4: a test that guards costly work inside a loop, or the right of && and ||, takes the grammar', async () => {
+  expect(answer(fn(R4, 'let t = 0', 'const r = k > 0 && 0 > 1 && items.indexOf(k) > 0', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  if (x === k && 0 > 1) {', '    t += ids.indexOf(x)', '  }', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  t += x === k && 0 > 1 ? ids.indexOf(x) : 0', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  if (x === k) {', '    t += ids.indexOf(x)', '  }', '}', 'return t'))).toBe('O(n·m)')
+  expect(answer(fn(R4, 'let t = 0', 'for (const x of items) {', '  t += x === k ? ids.indexOf(x) : 0', '}', 'return t'))).toBe('O(n·m)')
 })

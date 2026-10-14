@@ -538,6 +538,38 @@ Task 6 fix round 3:
 - **Exit names** fail as constructors too (`new Exit()`), and are matched
   after NFKC normalization (`lib.ｅxit`, `lib.ſignal`).
 
+Task 6 fix round 4 (a condition grammar, so no guard is constant):
+
+- **The grammar.** A test that guards an exit, costly work or a size
+  takes it: every if or else-if test outside loops; inside loops, every
+  test of a chain one of whose branches leaves, costs more than 1, holds a
+  loop or callback, or names a size; a `while` test; a `?:` test whose
+  arm costs more than 1 or names a size; the left operand of `&&` or `||`
+  whose right does (`??` there fails); and the test of `find`,
+  `findIndex`, `some` and `every`. Such a test is `&&`, `||` and `!`
+  (parenthesized freely) over atoms. An atom is a bare boolean (a boolean
+  parameter, element or local), a bare `.length`/`.size`, an element's
+  membership in another source (as the exit rule reads it), or `A op B`
+  with op `===`, `!==`, `==`, `!=`, `<`, `<=`, `>` or `>=`. Each side is
+  one named value or one literal, and at least one side is named. Named
+  values are a number, boolean or string parameter, a typed element, an
+  element read `p[i]` at a loop's index, a loop number, a binary search's
+  `lo`, `hi` or `mid`, a `.length`/`.size` of a source or string element,
+  or a local never written after its declaration that holds one of these
+  (a number plus or minus an integer literal), read through to it. A
+  literal is an integer, signed or not, that is finite (not `1e400`, no
+  float, no `Infinity` or `NaN`), or a string; its type matches the named
+  side's (number with number, string with string), and two named sides
+  share a type. A boolean takes no literal (`b === true` fails; write
+  `b`) and only the equality operators. Ternaries, `typeof`, arithmetic
+  (`1 - 1`, `k * 2`), calls other than membership, property chains
+  (`x[0]`, `x.id`), `null`, `undefined` and every other form fail.
+- **Read-once.** No named value, read through locals, is in two atoms of
+  one test (`b || c || !b`, `items.length < 2 || items.length === 0`,
+  `const m = k + 1` then `m > k`). Atoms that each vary over distinct
+  values make a test that no input leaves always true or always false.
+  The rules above still hold: root tests, size-free locals, no two sizes.
+
 ### Stricter readings (Python reader, Task 6)
 
 The Python reader applies the TypeScript families above as allowlists
@@ -613,6 +645,12 @@ read before its first assignment raises. Each is a test.
   Costly work behind any test that varies by iteration fails (stricter than
   the TypeScript choose/avoid reading), and no `==` takes an opaque value
   (it may compare whole containers).
+  This is the TypeScript condition grammar of fix round 4, already in
+  force: a stable test is read-once over typed atoms (a number side
+  compares with a number or an integer literal; a bool parameter stands
+  bare or under `not`), and conditional expressions, arithmetic, calls,
+  strings, floats and `True`/`False` operands fail (fix round 4 checked
+  every TypeScript counterexample's Python form).
 - **Loops.** A literal range runs at least once. An exit by `return` from
   a binary search's equality test only outside loops. At the root, a
   branch holding a hidden line may leave, so the code after it stands
