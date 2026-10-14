@@ -268,7 +268,7 @@ export const COMPLEXITY = {
     'O(n + m)': ['O(n·m)', 'O(n)', 'O(n²)'],
   } as Record<string, readonly string[]>,
   // Spec "Builtins", per language: { sort, linear, constant, fails, derive, mutate, globals, iterators },
-  // each a readonly string[] copied from the spec. PHP is filled by Task 7.
+  // each a readonly string[] copied from the spec.
   builtins: {
     TypeScript: {
       sort: ['sort', 'toSorted'],
@@ -293,6 +293,19 @@ export const COMPLEXITY = {
       // Python's builtin functions and names (exception classes aside: calling one is a helper call).
       globals: ['__build_class__', '__debug__', '__doc__', '__import__', '__loader__', '__name__', '__package__', '__spec__', 'abs', 'aiter', 'all', 'anext', 'any', 'ascii', 'bin', 'bool', 'breakpoint', 'bytearray', 'bytes', 'callable', 'chr', 'classmethod', 'compile', 'complex', 'copyright', 'credits', 'delattr', 'dict', 'dir', 'divmod', 'enumerate', 'eval', 'exec', 'exit', 'filter', 'float', 'format', 'frozenset', 'getattr', 'globals', 'hasattr', 'hash', 'help', 'hex', 'id', 'input', 'int', 'isinstance', 'issubclass', 'iter', 'len', 'license', 'list', 'locals', 'map', 'max', 'memoryview', 'min', 'next', 'object', 'oct', 'open', 'ord', 'pow', 'print', 'property', 'quit', 'range', 'repr', 'reversed', 'round', 'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super', 'tuple', 'type', 'vars', 'zip'],
       iterators: ['range', 'enumerate', 'reversed', 'items', 'keys', 'values'],
+    },
+    // Spec "Stricter readings (PHP reader, Task 7)". Names are matched case-folded. Every global function
+    // not in `sort`, `linear` or `constant` refuses the unit; every name here stays a word no hidden line may hold.
+    PHP: {
+      sort: ['sort', 'rsort', 'asort', 'arsort', 'ksort', 'krsort', 'usort', 'uasort', 'uksort'],
+      linear: ['in_array', 'array_search', 'array_keys', 'array_values', 'array_sum', 'array_reverse', 'array_flip', 'max', 'min', 'implode', 'array_slice', 'array_map', 'array_filter', 'array_reduce'],
+      constant: ['count', 'strlen', 'isset', 'empty', 'array_key_exists', 'array_key_first', 'array_key_last', 'abs', 'intdiv', 'max', 'min'],
+      fails: ['array_merge', 'array_unique', 'array_column', 'array_push', 'array_pop', 'array_shift', 'array_unshift', 'array_splice', 'array_walk', 'array_fill', 'array_combine', 'array_diff', 'array_intersect', 'range', 'str_repeat', 'explode', 'str_split', 'substr', 'strpos', 'str_contains', 'str_replace', 'str_pad', 'sprintf', 'unset', 'list', 'call_user_func', 'call_user_func_array', 'compact', 'extract', 'eval', 'create_function', 'func_get_args', 'func_get_arg', 'get_defined_vars', 'iterator_to_array', 'json_encode', 'json_decode', 'serialize', 'unserialize', 'preg_match', 'preg_replace', 'echo', 'print', 'global', 'static', 'new', 'clone', 'match', 'switch', 'case', 'try', 'catch', 'finally', 'include', 'include_once', 'require', 'require_once', 'declare', 'instanceof'],
+      derive: ['array_keys', 'array_values', 'array_reverse', 'array_filter', 'array_map'],
+      mutate: ['sort', 'rsort', 'asort', 'arsort', 'ksort', 'krsort', 'usort', 'uasort', 'uksort', 'array_push', 'array_pop', 'array_shift', 'array_unshift', 'array_splice', 'unset', 'shuffle', 'array_walk'],
+      // Common PHP global functions and language constructs besides the lists above: never shown unlisted, never in a hidden line.
+      globals: ['array_chunk', 'array_count_values', 'array_diff_key', 'array_fill_keys', 'array_intersect_key', 'array_is_list', 'array_key_exists', 'array_pad', 'array_product', 'array_rand', 'array_replace', 'array_walk_recursive', 'arsort', 'boolval', 'ceil', 'chr', 'ctype_digit', 'current', 'date', 'define', 'defined', 'end', 'file_get_contents', 'file_put_contents', 'filter_var', 'floatval', 'floor', 'fn', 'function_exists', 'get_class', 'gettype', 'htmlspecialchars', 'in_array', 'intval', 'is_array', 'is_bool', 'is_callable', 'is_float', 'is_int', 'is_null', 'is_numeric', 'is_object', 'is_string', 'iterator_count', 'key', 'lcfirst', 'ltrim', 'mb_strlen', 'mb_substr', 'method_exists', 'next', 'number_format', 'ord', 'pow', 'preg_split', 'print_r', 'property_exists', 'rand', 'random_int', 'reset', 'round', 'rtrim', 'shuffle', 'sleep', 'sqrt', 'str_ends_with', 'str_starts_with', 'strcmp', 'strrev', 'strtolower', 'strtoupper', 'strval', 'time', 'trigger_error', 'trim', 'ucfirst', 'var_dump', 'var_export', 'array_flip', 'this', 'self', 'parent', 'GLOBALS'],
+      iterators: ['array_map', 'array_filter', 'array_reduce', 'usort', 'uasort', 'uksort'],
     },
   } as Record<string, Record<'sort' | 'linear' | 'constant' | 'fails' | 'derive' | 'mutate' | 'globals' | 'iterators', readonly string[]>>,
   // Spec "What the reader reads", rules 3 and 4: a hidden line holds none of

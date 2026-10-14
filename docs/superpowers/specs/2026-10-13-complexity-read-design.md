@@ -285,7 +285,10 @@ such as `Repo`, `Ids`, `T`, `Iterable`, `String`, a property such as
 `this.items`, or a call's result) **fails the unit**, but the closed
 O(1) list on a string or number value or a string or number literal
 union (TypeScript ruling C below). Cost 1 by the rule applies only to
-calls through unbound module names (`repo.fetch(x)`) and helpers.
+calls through unbound module names (`repo.fetch(x)`) and helpers, and in
+PHP to `Class::method(…)` (a method on any `$variable` fails, and a PHP
+helper is a global function, which is a closed list: see the PHP stricter
+readings).
 Iterating an untyped parameter with a for-each is allowed (size of p;
 TypeScript only: the Python reader refuses it, see its stricter readings);
 a literal-typed parameter (`'ab' | 'cd'`, `1 | 2`) is never a size,
@@ -667,6 +670,122 @@ read before its first assignment raises. Each is a test.
   a binary search's equality test only outside loops. At the root, a
   branch holding a hidden line may leave, so the code after it stands
   behind its test.
+
+### Stricter readings (PHP reader, Task 7)
+
+The PHP reader applies the TypeScript and Python families above as
+allowlists from the start (it reuses `treeByBraces`, `isInert`,
+`hiddenForm`, `isExitName` and `keyOf`), and adds PHP's own hazards:
+arrays are values (a write to a shared array copies it whole), an
+`array`'s elements are untyped, function names and keywords ignore case,
+`==` coerces, and names, calls and properties can be reached at run time.
+Each is a test.
+
+- **Closed statement set.** Each shown line is `$v = value;`, `$v += value;`
+  or `-=`, `$v++`/`$v--` (either side), `$acc[] = value;`,
+  `$acc[key] = value;`, a call, `return`, `break;`, `continue;`, or the
+  header of `if`/`elseif`/`else`, `foreach ($S as [$k =>] $v)`, a counting
+  or halving `for` (one index in all three clauses, no commas) or a binary
+  search `while`; a line may begin with the `}` that closes the block before
+  an `elseif` or `else`. `else if`, the alternative syntax (`:` and
+  `endforeach`), `switch`, `match`, `try`, `do`, `goto`, `global`, `static`,
+  `echo`, `print`, `unset`, `list()` and `[...] =` destructuring, `new`,
+  `clone`, `yield`, `include`, `require`, `declare`, `instanceof`,
+  references (`&$x`, `=&`, `foreach (… as &$v)`), `@`, casts, `$$x`, `${…}`,
+  `$f()`, `->`, `?->`, `Class::$prop`, `Class::CONST`, `$this`, magic
+  constants, bare constants, namespaced names (`\count`), named arguments
+  and spreads fail. Expressions hold no ternary, `?:`, `??`, `.`, `**`,
+  `<<`, bitwise operator, `xor`/`and`/`or`, or loose comparison (`==`,
+  `!=`, `<>`); `<=>` stands only in a comparator.
+- **Signature.** `[public|private|protected|static|final] function name(…)`
+  over at most `PUZZLE.maxSignatureLines` lines to the body's `{`; each
+  parameter `[?type | union] $name [= literal or []]`. `array` (`?array`,
+  `array|null`) is a sized array, `string` sized by `strlen`, `int` sized by
+  value where it bounds a loop, `float` and `bool` values; untyped, `mixed`,
+  `iterable`, class and other union types are no sources. `&`, `...`,
+  promoted (a modifier before the type) and `function &name` fail.
+  Parameter names keep their `$` in the question.
+- **Gate 4** matches the unit's name in any case, through `self::` and
+  `static::` too.
+- **Sources and positions.** Only an `array` parameter or a derived value
+  (`array_keys`, `array_values`, `array_reverse` of one parameter,
+  `array_filter($p[, fn])`, `array_map(fn, $p)`, assigned once outside
+  loops) is a `foreach` source; a `string` parameter is only a `strlen`
+  bound. `$S[$i]` is read only at a position its loop proves present: a
+  counting index bounded by `count($S)` / `strlen($s)` from 0 or 1 (`<`, or
+  `<= B - 1`), a `foreach` key over `$S`, or the search's mid. A `foreach`
+  key is never an element and never a bound for an inner loop (keys may be
+  any integers). An accumulator is never iterated, searched or sorted.
+- **Copies (PHP arrays are values).** No write of any kind to a parameter
+  (element, append, `unset`, `array_push` and the rest) but one in-place sort
+  of an `array` parameter as a statement outside loops (`sort`, `rsort`,
+  `asort`, `arsort`, `ksort`, `krsort` with no flags; `usort`, `uasort`,
+  `uksort` with exactly `fn($p, $q) => $p <=> $q` or its reverse), at most
+  once per parameter. No local is assigned a bare array (`$b = $a`,
+  `$b = $acc`): an accumulator starts `[]`, is only reset to `[]`, and grows
+  by `[] =` or a key write of a non-array value; a derived value is written
+  once; any other array local is fresh from a builtin, only returned or
+  counted.
+- **Elements are untyped**, so opaque: one may be compared with `===`
+  against a proven scalar, used as a key (`isset($m[$x])`, `$m[$x] = …`),
+  appended, passed as `in_array`'s needle, or returned. No arithmetic,
+  method, index, `count`, `strlen`, iteration or ordering on one, and no two
+  opaque values compared. No test on an array element is an exit or a
+  stable test.
+- **Builtins** are a closed list (`COMPLEXITY.builtins.PHP`), names
+  case-folded. Cost 1: `count` (of an array name or a builtin's result),
+  `strlen` (of a string), `isset($a[$k])`, `empty`, `array_key_exists`,
+  `array_key_first`, `array_key_last`, `abs`, `intdiv` by a nonzero
+  literal, `max`/`min` of two or more numbers. Size: `in_array` and
+  `array_search` (strict flag only as the literal `true`), `array_keys`,
+  `array_values`, `array_reverse`, `array_flip`, `array_sum`, `max($S)`,
+  `min($S)` (one argument), `array_slice($S, $off)` (no length),
+  `implode($sep, $S)` with `$sep` a string parameter (a local could feed the
+  result back), `array_filter`, `array_map` (one array), `array_reduce`
+  (a number literal start, a number body). Every other global function
+  refuses, `array_merge`, `array_unique`, `array_column`, `range`,
+  `str_repeat`, `explode`, `str_split`, `substr`, `strpos`, `str_contains`,
+  `str_replace`, `call_user_func*`, `compact`, `extract`, `eval` and
+  `func_get_args` included. Arithmetic is `+`, `-`, `*` on proven numbers,
+  `/` and `%` by a nonzero literal, `>> 1`.
+- **Callbacks.** A closure is only `fn($x) => expr` (plain parameters that
+  shadow nothing) as the callback of `array_map`, `array_filter`,
+  `array_reduce` or a user sort; `function (…) {…}`, `static fn`, a typed or
+  by-reference parameter, a variable or string callable fails. Its body is a
+  loop body over the source. A filter's body is a predicate: the grammar
+  below and the triviality check.
+- **Receivers.** A method on any `$variable` fails. `Class::method(args)`
+  costs 1 by the rule when neither name holds an exit part and each
+  argument is a number, string or null that is no variable or element (a
+  by-reference parameter could write it).
+- **Conditions.** Every if and elseif test, `&&`/`||` operand and filter
+  predicate takes the read-once grammar of TypeScript fix round 4: atoms are
+  a bool parameter, `empty($S)`, `A op B` (`===`, `!==`, an ordering) of two
+  named values of one type or a named number and an integer literal, or one
+  membership (`in_array($x, $S)`, `isset($S[$x])`,
+  `array_key_exists($x, $S)`) of an element bound over a parameter in
+  another parameter. Named values: int, float, bool and string parameters, a
+  `for` index, a search's lo, hi and mid, `count`/`strlen` of a source, a
+  character `$s[$i]` at a valid position, and a local written once outside
+  loops as one of these plus or minus a literal. `&&` and `||` stand only in
+  conditions. Root tests, size-free locals, no two sizes, consistency on a
+  path and costly work only behind stable tests follow the Python reader.
+  So a membership in an accumulator (`isset($seen[$x])`) is no atom.
+- **Exits.** An exit from a loop stands behind a positive `===` between a
+  character `$s[$i]` of a string parameter its loop walks (from 0 by 1 to
+  `strlen($s)`) and another string parameter or another string's character.
+  `exit`, `die`, `goto`, `break N`, `continue N` and any call whose function,
+  class or method name holds an exit part (case-folded) fail. The binary
+  search takes `intdiv($lo + $hi, 2)` or `($lo + $hi) >> 1` and one if/else
+  on `$S[$mid]` against a scalar parameter or literal; it has no equality
+  exit (the elements are untyped).
+- **Hidden lines** are the shared closed forms. PHP adds: a `#[` attribute,
+  a heredoc or nowdoc, a double-quoted string holding `$`, and any PHP, ASP
+  or script tag (`?>` ends a `//` or `#` comment, so `// ?><?php touch()`
+  runs code) fail; `#` and `/* */` comments pass; keywords compare
+  case-folded (`RETURN 'done';` at the end is a tail exit). A hidden opener
+  is only `} else {`, after a shown if with no else, whose body costs 1 and
+  never leaves.
 
 ### Combining
 

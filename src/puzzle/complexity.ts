@@ -5,6 +5,7 @@
 // language readers build on it.
 
 import { COMPLEXITY } from '../config'
+import { readPhp } from './complexity-php'
 import { readPython } from './complexity-py'
 import { readTypeScript } from './complexity-ts'
 import { isBlankedLine } from './readable'
@@ -153,9 +154,9 @@ export function readCost(cost: Cost, numeric: readonly string[], offset: number)
   }
 }
 
-/** A unit's answer and its parameter names for the question, by its language's reader; undefined when the reader cannot place it. PHP has no reader yet. */
+/** A unit's answer and its parameter names for the question, by its language's reader; undefined when the reader cannot place it. */
 export function costOf(unit: Unit): (Reading & { params: string[] }) | undefined {
-  const read = unit.lang === 'TypeScript' ? readTypeScript(unit) : unit.lang === 'Python' ? readPython(unit) : undefined
+  const read = unit.lang === 'TypeScript' ? readTypeScript(unit) : unit.lang === 'Python' ? readPython(unit) : unit.lang === 'PHP' ? readPhp(unit) : undefined
   if (!read) return undefined
   const reading = readCost(read.cost, read.numeric, unit.full?.offset ?? 0)
   return reading && { ...reading, params: read.params }
@@ -308,7 +309,7 @@ const decodeEscapes = (s: string): string =>
 const TOKEN_SHAPES = [/[A-Za-z0-9_]+/g, /[\p{ID_Continue}\u200c\u200d]+/gu, /[\p{ID_Continue}$\u200c\u200d]+/gu, /[A-Za-z0-9_\u0080-\u{10ffff}]+/gu]
 
 /** Compared as each language does: PHP ignores case (keywords and function names), Python reads names in NFKC. NFKC applies to all: over-strict, so safe. */
-const keyOf = (s: string, lang: string): string => (lang === 'PHP' ? s.toLowerCase() : s).normalize('NFKC')
+export const keyOf = (s: string, lang: string): string => (lang === 'PHP' ? s.toLowerCase() : s).normalize('NFKC')
 
 /** Every name the text could hold, strings and comments included, as keys. */
 function namesIn(raw: string, lang: string): Set<string> {
@@ -358,6 +359,9 @@ export function isExitName(name: string): boolean {
   const n = name.replace(/^\$/, '').normalize('NFKC')
   return COMPLEXITY.exitNameParts.some((p) => n.toLowerCase().includes(p)) || COMPLEXITY.exitWords.includes(n)
 }
+
+/** PHP's open and close tags, ASP and script tags, and the end of code: any of them in a hidden PHP line fails it. */
+const PHP_TAGS = /<\?|\?>|<%|%>|<\/?script|__halt_compiler/i
 
 /** Stands for one string literal in a line's skeleton. */
 const STR = '\u0001'
@@ -598,6 +602,8 @@ export function isInert(raw: string, kept: string, lang: 'TypeScript' | 'Python'
   if (lang === 'Python' && unpacksPython(raw)) return false
   // PHP variable variables (`${'it'.'ems'}`, `$$name`) reach a name without writing it.
   if (lang === 'PHP' && (raw.includes('${') || raw.includes('$$'))) return false
+  // Task 7: a PHP tag ends a `//` or `#` comment (`// ?><?php touch('x');` runs code), so no tag at all.
+  if (lang === 'PHP' && PHP_TAGS.test(raw)) return false
   // Rule 5: a closed set of forms. An open string or comment carries over blank lines only.
   const open = scan?.open
   if (open !== undefined) {
