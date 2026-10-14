@@ -260,12 +260,16 @@ typed `array` or `?array`. Each receiver type has a **closed method
 list** (counted and constant below). On such a receiver, any other method
 name fails the unit; on a `string` / `str` receiver only `length`, `at`,
 `charAt`, `charCodeAt`, `codePointAt` and indexing are allowed (each 1).
-A counted builtin name on any other receiver (an untyped parameter, a
-parameter of a named, aliased, generic or other type such as `Repo`,
-`Ids`, `T`, `Iterable`, a local that is not derived, a property such as
-`this.items`, or a call's result) **fails the unit**; a constant-list
-name there costs 1, and any other method there costs 1 by the rule.
-Iterating an untyped parameter with a for-each is allowed (size of p).
+A method on any other value of the function's own (an untyped
+parameter, a parameter of a named, aliased, generic, union or other type
+such as `Repo`, `Ids`, `T`, `Iterable`, `String`, a property such as
+`this.items`, or a call's result) **fails the unit**, but the closed
+O(1) list on a string or number value or a string or number literal
+union (TypeScript ruling C below). Cost 1 by the rule applies only to
+calls through unbound module names (`repo.fetch(x)`) and helpers.
+Iterating an untyped parameter with a for-each is allowed (size of p);
+a literal-typed parameter (`'ab' | 'cd'`, `1 | 2`) is never a size,
+a loop source or a `.length` size.
 Global builtins are closed lists in every language: any call to a TS
 global (`String`, `Number`, `Array`, `Object`, `JSON`, `Set`, `Map`,
 `parseInt` and the rest of the ECMAScript globals), a Python builtin
@@ -359,7 +363,9 @@ key, the TypeScript reader takes the stricter reading. Each is a test.
   (a counting header, or a local holding it, such as a search's `hi`);
   elsewhere it is a value. Tuple and object-literal types are never
   sizes. An untyped or other-typed parameter is iterated only outside
-  every loop (it may be a one-shot iterator). A count that starts at an
+  every loop (it may be a one-shot iterator). A parameter of a string or
+  number literal type or union is never a size, a loop source or a
+  `.length` size (fix round 5). A count that starts at an
   enclosing index needs that loop to run over the same size.
 - **Builtins.** `entries`, `keys` and `values` of an array are lazy:
   counted only as a for-of source. `includes`, `indexOf`, `lastIndexOf`

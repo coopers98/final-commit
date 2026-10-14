@@ -852,3 +852,15 @@ test('ruling C (fix round 4): a method on a parameter that is not a known collec
   expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'for (const x of items) {', "  if (s.charAt(0) === 'a') {", '    t += 1', '  }', '}', 'return t'))).toBe('O(n)')
   expect(answer(fn('items: number[], k: 1 | 2', 'let t = 0', 'for (const x of items) {', '  t += k.toFixed(2).length', '}', 'return t'))).toBe('O(n)')
 })
+
+test('fix round 5: a literal-typed parameter is no size, loop source or length', async () => {
+  // Reviewer.
+  expect(answer(fn("s: 'ab' | 'cd'", 'let t = 0', 'for (const c of s) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("s: 'ab'", 'let t = 0', 'for (let i = 0; i < s.length; i++) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn('s: 1 | 2', 'let t = 0', 'for (const c of s) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  // Own: a template literal type, a for-in, Object.keys, and a size test on its length.
+  expect(answer(fn('s: `ab`', 'let t = 0', 'for (const c of s) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("s: 'ab' | 'cd'", 'let t = 0', 'for (const k in s) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("s: 'ab' | 'cd'", 'let t = 0', 'for (const k of Object.keys(s)) {', '  t += 1', '}', 'return t'))).toBe(undefined)
+  expect(answer(fn("items: number[], s: 'ab' | 'cd'", 'let t = 0', 'if (s.length > 1) {', '  for (const x of items) {', '    t += x', '  }', '}', 'return t'))).toBe(undefined)
+})
